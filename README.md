@@ -5,7 +5,7 @@ One Pi chat in your terminal that never ends. It runs on the experimental
 SDK, keeps its memory with Victor Taelin's
 [UniiChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)
 recipe, and lets Pi start agents that work in the background.
-`pi-durable` is this project's launcher. It is not an upstream CLI or the ordinary Pi TUI.
+`pi-durable` is this project's launcher, with its own terminal UI built on Pi's `pi-tui`.
 
 ## Quick start
 
@@ -27,12 +27,15 @@ VPS installs, credentials, and backups are in [docs/operations.md](docs/operatio
 ## Usage
 
 There is one chat. Every launch, from any directory, reopens it; you cannot create
-another. Tools run in the directory you launch from (or `--cwd`). Answers print
-once they are complete. They are not streamed.
+another. Tools run in the directory you launch from (or `--cwd`). In a terminal it
+opens a full-screen chat: replies stream in, with a one-line footer (model, tools,
+busy, memory, agents) above the editor. On exit the transcript stays in your
+scrollback. `--plain` keeps the simple line-based chat.
 
 ```sh
 pi-durable                                  # interactive chat; tools OFF
 pi-durable --allow-tools                    # read, write, edit, bash with your user permissions
+pi-durable --plain                          # line-based chat instead of the full-screen UI
 pi-durable --print 'Explain this approach'  # one answer, then exit (also: -p, or a positional prompt)
 echo 'Summarize this' | pi-durable          # piped stdin is one prompt (max 4 MiB)
 pi-durable --history                        # print saved messages; no model request or recovery
@@ -50,7 +53,11 @@ with a different prompt.
 Other flags: `--database PATH`, `--data-dir PATH`, `--cwd PATH`, `--auth-file PATH`,
 `-v`/`--version`. The default model is `openai-codex/gpt-6.1-sol` with thinking `high`.
 
-Chat commands: `/help`, `/history`, `/agents`, `/status`, `/exit` (or `/quit`, or Ctrl+C).
+Chat commands: `/help`, `/agents` (list agents, open any agent's live chat),
+`/mem` (browse the memory view and zoom down to any message), `/status`, `/exit`.
+Keys: Enter sends, Shift+Enter adds a line, Esc interrupts Pi, Ctrl+O expands tool
+output, Ctrl+T expands thinking, Ctrl+C twice or Ctrl+D exits. `--plain` mode has
+`/history` instead of `/agents` and `/mem`.
 Closing never discards unfinished work; the next launch resumes it.
 
 ## Models

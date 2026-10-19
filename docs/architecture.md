@@ -40,6 +40,14 @@ agents, and each agent is another conversation in the same database.
   provider, checks the model and credentials (refusing a subscription token on
   `anthropic`), opens the instance, resumes pending work, then runs the chosen mode:
   `--status`, `--history`, `--resume`, one prompt, piped stdin, or interactive chat.
+  Interactive chat in a terminal is the terminal UI; `--plain` (or a stdout that is
+  not a terminal) keeps the line-by-line readline chat and its reply watcher.
+- **Terminal UI** (`src/ui/tui/`): `app.ts` runs pi-tui in Pi's default full-screen
+  (alternate screen) layout: the chat (`chat.ts`) scrolls above a one-line status
+  (`footer.ts`) and the editor; `theme.ts` is its palette, and `panels/` holds the
+  `/agents` and `/mem` overlays. It knows the host only through `src/ui/types.ts`.
+  On exit it prints the chat to the main screen, so it stays in scrollback. While it
+  runs, the host's console warnings show as chat notices.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,
   installs the three extensions, and configures Pi for this launch.
 - **Memory** (`src/memory/`): the UniiChat log, tree, view, and compactor, plus the

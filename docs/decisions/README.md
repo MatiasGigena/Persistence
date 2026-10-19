@@ -15,6 +15,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0009](0009-tools-opt-in.md) | Coding tools are opt-in per launch |
 | [0010](0010-claude-via-cli.md) | Claude through the official CLI, which only proposes tool calls |
 | [0011](0011-typescript-without-build.md) | Strict TypeScript without a build step |
+| [0012](0012-terminal-ui.md) | A full-screen terminal UI on pi-tui, as a client of the event stream |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".

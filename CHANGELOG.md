@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Terminal UI for interactive chat (pi-tui 1.3.0, full screen like Pi's): the chat
+  with streaming Markdown, collapsed thinking and tool output (ctrl+t, ctrl+o),
+  agent reports, a status line (model, thinking, tools, work, memory, agents), and
+  an editor with history and `/help`, `/agents`, `/mem`, `/status`, `/exit`.
+  Esc interrupts Pi; Ctrl+D or Ctrl+C twice exits. `--plain` keeps the line chat.
 - `claude-cli` provider: `--model claude-cli/opus`, `sonnet`, `haiku` or `fable`
   runs each request through the official `claude` CLI (`claude -p`, stream-json)
   signed in with your own Claude plan. Claude only proposes tool calls, through a

@@ -13,6 +13,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks.
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
+- `src/ui/`: the terminal UI. `types.ts` is the contract; `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents and /mem). The TUI never imports pi-durable.
 - `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
 - `tsconfig.json`, `eslint.config.ts`: the type and lint rules `npm run check` enforces.
 

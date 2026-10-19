@@ -129,8 +129,10 @@ tmux attach -t pi-durable
   replaced atomically.
 - Every work launch resumes pending tasks and submissions. Input left queued by a
   failed model request is advanced with an empty `host.resume-boundary` entry.
-- Ctrl+C, SIGTERM, and SIGHUP close the Harness and transport without aborting
-  durable work. Reopening resumes it.
+- Ctrl+C (twice within a second in the terminal UI; once with `--plain`), Ctrl+D,
+  `/exit`, SIGTERM, and SIGHUP close the Harness and transport without aborting
+  durable work, and restore the terminal. Reopening resumes it. Esc in the terminal
+  UI interrupts Pi's current run only.
 - Interrupted model requests can be reissued, which costs additional provider usage.
   A failed terminal submission is not retried with a new prompt.
 - Agent messages and reports are delivered exactly once across crashes.
@@ -144,7 +146,7 @@ tmux attach -t pi-durable
 
 ## Backups
 
-1. Stop the host: `/exit` or Ctrl+C. Check with `pi-durable --status`; a running
+1. Stop the host: `/exit` or Ctrl+D. Check with `pi-durable --status`; a running
    host makes it exit with status 75.
 2. Copy together: `chat.sqlite`, any `chat.sqlite-wal` and `chat.sqlite-shm`, and
    the whole `chat.unii/` directory.
