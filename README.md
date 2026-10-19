@@ -1,0 +1,124 @@
+# Persistence
+
+One Pi chat in your terminal that never ends. It runs on the experimental
+[`@earendil-works/pi-durable@1.3.0`](https://github.com/earendil-works/pi/tree/v1.3.0/packages/durable)
+SDK, keeps its memory with Victor Taelin's
+[UniiChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)
+recipe, and lets Pi start agents that work in the background.
+`pi-durable` is this project's launcher. It is not an upstream CLI or the ordinary Pi TUI.
+
+## Quick start
+
+You need Linux, Bash, `flock` (util-linux), and Node.js 22.19 or newer.
+
+```sh
+git clone git@github.com:MatiasGigena/Persistence.git ~/pi-durable-instance
+cd ~/pi-durable-instance
+npm ci --ignore-scripts
+npm exec -- pi                 # in Pi: /login, then exit
+mkdir -p ~/.local/bin
+ln -s "$HOME/pi-durable-instance/bin/pi-durable" "$HOME/.local/bin/pi-durable"
+cd /path/to/project && pi-durable
+```
+
+If `~/.local/bin/pi-durable` already exists, inspect it before you replace it.
+VPS installs, credentials, and backups are in [docs/operations.md](docs/operations.md).
+
+## Usage
+
+There is one chat. Every launch, from any directory, reopens it; you cannot create
+another. Tools run in the directory you launch from (or `--cwd`). Answers print
+once they are complete. They are not streamed.
+
+```sh
+pi-durable                                  # interactive chat; tools OFF
+pi-durable --allow-tools                    # read, write, edit, bash with your user permissions
+pi-durable --print 'Explain this approach'  # one answer, then exit (also: -p, or a positional prompt)
+echo 'Summarize this' | pi-durable          # piped stdin is one prompt (max 4 MiB)
+pi-durable --history                        # print saved messages; no model request or recovery
+pi-durable --status                         # print storage and pending work; no model request or recovery
+pi-durable --resume                         # finish interrupted work, wait for agents, print history
+pi-durable --request-id my-job-1 --print 'Summarize the design'
+pi-durable --model openai/gpt-4o-mini --thinking off
+pi-durable --help                           # every flag
+```
+
+`--request-id` deduplicates a one-shot prompt, also after a restart. The same ID
+returns its original answer. Use a new ID for a new task, and never reuse an ID
+with a different prompt.
+
+Other flags: `--database PATH`, `--data-dir PATH`, `--cwd PATH`, `--auth-file PATH`,
+`-v`/`--version`. The default model is `openai-codex/gpt-6.1-sol` with thinking `high`.
+
+Chat commands: `/help`, `/history`, `/agents`, `/status`, `/exit` (or `/quit`, or Ctrl+C).
+Closing never discards unfinished work; the next launch resumes it.
+
+## How memory works
+
+- The chat is the memory. Every message, reply, tool call, tool result, and agent report is logged word for word in `chat.unii/main/`.
+- In the background, a cheap model (`openai-codex/gpt-6-luna` by default) compresses the log into a binary tree of lines of at most 512 bytes (`chat.unii/tree/`).
+- Each turn is a fresh model call. It sees a 64–128 KB view of the tree (`chat.unii/view.json`): recent lines are fine, old ones coarse. Then comes the new message.
+- Pi opens a vague line with `zoom(id, n)`, down to the original message. `date(id)` gives a message's time.
+- pi-durable's own compaction is off. Only Pi has this memory; agents do not.
+- Details and the deviations from the recipe: [docs/memory.md](docs/memory.md).
+
+## How agents work
+
+Pi is the session agent. Ask it for agents and it spawns main agents. Main agents spawn sub agents.
+
+```
+Pi ─┬─ main agent ─┬─ sub agent
+    │              └─ sub agent
+    └─ main agent ─── sub agent
+```
+
+| Who | list_agents | send_message, last_message | spawn_agent | stop_agent | Pi |
+|---|---|---|---|---|---|
+| Pi | all | any agent | main agents | any agent | — |
+| main agent | all, and Pi | any agent, and Pi | sub agents | its own sub agents | send, last message |
+| sub agent | all | any other agent | no | no | no |
+
+Each agent has its own persistent chat and runs in the background. Nobody waits or
+polls. When an agent finishes a run, its reply goes to its parent as `[Name] …`:
+main to Pi (logged in memory as a `work` message), sub to its main agent.
+`zoom("Name")` shows an agent's whole chat. Delivery is exactly-once across crashes.
+Agents work only while a host is open: in chat, their reports print as they arrive;
+after `-p`, run `pi-durable --resume` to let them finish. Details: [docs/agents.md](docs/agents.md).
+
+## Safety
+
+Coding tools (read, write, edit, bash) are off on every launch unless you pass
+`--allow-tools`. With it, they act with your user permissions. There is no sandbox
+and no per-command approval. A tool call saved by an earlier launch cannot restore
+permission on a later launch without the flag. The host does not load ordinary Pi
+extensions, guards, skills, MCP servers, or project instruction files.
+
+## Project layout
+
+```
+bin/pi-durable      launcher: picks Node, runs src/cli.mjs
+src/cli.mjs         arguments, flock, spawns the host
+src/host/           terminal chat, /commands, reply watcher; CLI options and paths
+src/runtime/        Harness, extensions, Pi's agent config; resume and agent settling
+src/memory/         UniiChat memory: log, tree, view, compactor, extension
+src/agents/         agent hierarchy and messaging
+scripts/check.mjs   syntax check
+test/               offline tests, by area, with fixtures
+docs/               architecture, operations, memory, agents, decisions
+```
+
+## Docs
+
+- [docs/architecture.md](docs/architecture.md): components, turn flow, persistence, module map
+- [docs/operations.md](docs/operations.md): install, credentials, state, backups, troubleshooting
+- [docs/memory.md](docs/memory.md): UniiChat memory and recipe deviations
+- [docs/agents.md](docs/agents.md): agent roles, messaging, delivery
+- [docs/decisions/](docs/decisions/): architecture decision records
+- [CONTRIBUTING.md](CONTRIBUTING.md): development, tests, rules
+- [AGENTS.md](AGENTS.md): instructions for coding agents
+- [CHANGELOG.md](CHANGELOG.md)
+
+## Status
+
+Experimental and personal. It depends on an experimental SDK pinned at 1.3.0.
+No license yet; all rights reserved.
