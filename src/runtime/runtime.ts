@@ -1,3 +1,6 @@
+import { mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { Context } from '@earendil-works/chord';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
@@ -5,8 +8,7 @@ import { AssistantEntry, createRegistry, Harness } from '@earendil-works/pi-dura
 import type { AgentChange, Conversation, Cursor, EntryRecord, ModelRef, SubmissionRecord, ToolRegistration } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
-import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
-import type { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { agentTranscript, createAgentsExtension, listAgents, syncAgents } from '../agents/index.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
@@ -49,7 +51,39 @@ export interface Instance {
   setModel(model: ModelRef): Promise<void>;
   /** Turn the coding tools on or off for Pi and every agent, with Pi's instructions to match. Rejects on an inspection. */
   setTools(enabled: boolean): Promise<void>;
+  /**
+   * Runs `step` with the raw SQLite connection as one operation of the database's queue, after any open transaction:
+   * no commit lands during it and, since it is synchronous, no memory write either. For online backups (ADR 0022).
+   */
+  exclusive<T>(step: (database: DatabaseSync) => T): Promise<T>;
   close(): Promise<void>;
+}
+
+/** pi-durable's Node SQLite adapter, plus `exclusive`: a synchronous step in its operation queue. */
+class HostDatabase extends NodeSqliteDatabase {
+  exclusive<T>(step: (database: DatabaseSync) => T): Promise<T> {
+    const { database } = this;
+    return this.runOperation(() => step(database));
+  }
+}
+
+/**
+ * `openNodeSqliteDatabase` with the same settings (WAL, a 5 s busy timeout, the default autocheckpoint), but as a
+ * HostDatabase, and with `synchronous = FULL` (the adapter defaults to NORMAL) set before any schema or data commit,
+ * so a successful write also has SQLite's power-loss durability.
+ */
+async function openHostDatabase(path: string): Promise<HostDatabase> {
+  await mkdir(dirname(path), { recursive: true });
+  const database = new HostDatabase(new DatabaseSync(path, { timeout: 5_000 }));
+  try {
+    await database.exec('PRAGMA journal_mode = WAL');
+    await database.exec('PRAGMA synchronous = FULL');
+    await database.exec('PRAGMA wal_autocheckpoint = 1000');
+    return database;
+  } catch (error) {
+    try { await database.close(); } catch { /* preserve the configuration failure */ }
+    throw error;
+  }
 }
 
 /** Pi's enabled tools: memory and agent tools always, the coding tools only when `allowTools`. Agents copy them. */
@@ -125,13 +159,10 @@ export async function openInstance({
     instructions: piInstructions(cwd, allowTools),
   };
 
-  let database: NodeSqliteDatabase | undefined;
+  let database: HostDatabase | undefined;
   let storage: SqliteStorage | undefined;
   try {
-    database = await openNodeSqliteDatabase(databasePath);
-    // The Node adapter defaults to NORMAL; require FULL before schema or data
-    // commits so successful writes also get SQLite's power-loss durability.
-    await database.exec('PRAGMA synchronous = FULL');
+    const hostDatabase = database = await openHostDatabase(databasePath);
     storage = await SqliteStorage.open(database);
     const harness = opened = await Harness.open(storage, {
       models,
@@ -169,6 +200,7 @@ export async function openInstance({
         memory?.setSummarizer(createPiAiSummarizer({ models, model: compactionModel }), jobs);
       },
       setTools: enabled => reconfigure({ tools: piTools([Unii, Agents], enabled), instructions: piInstructions(cwd, enabled) }),
+      exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
         try { await harness.close(context); } finally { await memory?.close(); }
       },
