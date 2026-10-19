@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)"
+NODE="${PI_DURABLE_NODE:-node}"
+if [[ -z "${PI_DURABLE_NODE:-}" ]] && ! "$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)' >/dev/null 2>&1; then
+  if [[ -x "$HOME/.local/share/pi-node/current/bin/node" ]]; then
+    NODE="$HOME/.local/share/pi-node/current/bin/node"
+  fi
+fi
+exec "$NODE" "$ROOT/src/cli.mjs" "$@"
