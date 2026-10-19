@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { parseArgs, resolveOptions } from '../../src/host/config.ts';
+import { isRecord, parseArgs, resolveOptions } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 
 const exec = promisify(execFile);
@@ -26,7 +26,7 @@ test('reject malformed and conflicting CLI inputs', () => {
   for (const args of [['--session', 'named'], ['--model', 'no-provider'], ['--thinking', 'huge'],
     ['--history', '--resume'], ['--status', 'hello'],
     ['--request-id', 'key'], ['--print', ''], ['--bad'], ['--cwd'], ['-p', 'x', 'y']]) {
-    assert.throws(() => parseArgs(args), undefined, JSON.stringify(args));
+    assert.throws(() => parseArgs(args), Error, JSON.stringify(args));
   }
 });
 
@@ -53,7 +53,7 @@ test('one global chat: every directory opens the same database and memory', asyn
   t.after(() => rm(folder, { recursive: true, force: true }));
   const project = join(folder, 'project');
   await mkdir(project);
-  const resolveFor = async cwd => resolveOptions(parseArgs(['--cwd', cwd, '--data-dir', join(folder, 'state')]));
+  const resolveFor = async (cwd: string) => resolveOptions(parseArgs(['--cwd', cwd, '--data-dir', join(folder, 'state')]));
   const main = await resolveFor(project);
   assert.equal(main.databasePath, join(folder, 'state', 'chat.sqlite'));
   assert.equal(main.memoryDir, join(folder, 'state', 'chat.unii'));
@@ -74,17 +74,14 @@ test('flock rejects a second host and a symlink alias; status needs no credentia
   t.after(() => holder.kill('SIGKILL'));
   await new Promise((resolve, reject) => { holder.stdout.once('data', resolve); holder.once('error', reject); holder.once('exit', code => reject(new Error(`lock holder exited ${code}`))); });
   for (const path of [databasePath, alias]) {
-    await assert.rejects(exec(launcher, ['--database', path, '--status']), error => {
-      assert.equal(error.code, 75);
-      assert.match(error.stderr, /already open/);
-      return true;
-    });
+    await assert.rejects(exec(launcher, ['--database', path, '--status']), { code: 75, stderr: /already open/ });
   }
   const ended = new Promise(resolve => holder.once('exit', resolve));
   holder.kill('SIGKILL');
   await ended;
   const { stdout } = await exec(launcher, ['--database', alias, '--status', '--auth-file', join(folder, 'absent-auth.json')]);
-  const status = JSON.parse(stdout);
+  const status: unknown = JSON.parse(stdout);
+  assert.ok(isRecord(status));
   assert.equal(status.pendingTasks, 0);
   assert.equal(status.scheduler, 'paused');
   assert.equal(status.database, databasePath);

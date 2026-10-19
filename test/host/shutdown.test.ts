@@ -14,15 +14,15 @@ test('SIGTERM closes an open stdin producer and releases the launcher', { timeou
     env: { ...process.env, OPENAI_API_KEY: 'offline-placeholder-not-a-real-key',
       NODE_OPTIONS: `--import=${new URL('../fixtures/stdin-ready.ts', import.meta.url).href}` },
   });
-  t.after(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} });
+  t.after(() => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {} });
   let stdout = '';
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
-  const exited = new Promise((resolve, reject) => {
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     child.once('exit', (code, signal) => resolve({ code, signal }));
     child.once('error', reject);
   });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`stdin readiness timeout: ${stderr}`)), 8000);
     child.stdout.on('data', chunk => {
       stdout += chunk;

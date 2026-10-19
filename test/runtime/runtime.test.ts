@@ -5,31 +5,43 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
+import type { TestContext } from 'node:test';
+import type { Serializable } from 'node:child_process';
+import type { Message } from '@earendil-works/pi-ai';
+import type { Agent, EntryRecord } from '@earendil-works/pi-durable';
 import {
   fauxAssistantMessage, fauxThinking, fauxText, fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { isRecord } from '../../src/host/config.ts';
 import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
+import type { Instance } from '../../src/runtime/runtime.ts';
 import { resumeInstance } from '../../src/runtime/recovery.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
+import type { PendingMessage } from '../fixtures/pending-submission.ts';
 
-async function temporaryInstance(t) {
+type Pending = Extract<PendingMessage, { type: 'pending' }>;
+const isPending = (message: Serializable): message is Pending & Serializable => isRecord(message) && message.type === 'pending'
+  && typeof message.rootId === 'number' && typeof message.submissionId === 'number' && typeof message.status === 'string'
+  && (message.entryId === undefined || typeof message.entryId === 'number');
+
+async function temporaryInstance(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-runtime-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   return { cwd, databasePath: join(cwd, 'state', 'instance.sqlite') };
 }
 
-async function ask(instance, content, requestId) {
+async function ask(instance: Instance, content: string, requestId?: string) {
   const submission = await instance.root.submit({ type: 'input', content, requestId }, instance.context);
   const settled = await submission.wait(instance.context);
   return { submission, settled, text: await answerText(instance.root, settled, instance.context) };
 }
 
-function textOf(entries) {
+function textOf(entries: readonly EntryRecord[]): string[] {
   return entries.flatMap((entry) => entry.model ?? [])
     .flatMap((message) => typeof message.content === 'string'
       ? [message.content]
-      : message.content.filter((block) => block.type === 'text').map((block) => block.text));
+      : message.content.flatMap((block) => block.type === 'text' ? [block.text] : []));
 }
 
 // Serial execution is intentional: the SQLite test briefly instruments a prototype.
@@ -51,9 +63,9 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       await instance.close();
     }
 
-    let observed;
+    let observed: readonly Message[] = [];
     const secondCatalog = offlineModels([(context) => {
-      observed = context;
+      observed = context.messages;
       return fauxAssistantMessage('Second durable answer.');
     }]);
     instance = await openInstance({ ...options, ...secondCatalog });
@@ -63,7 +75,7 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       assert.equal((await ask(instance, 'What do you remember?', 'history-2')).text,
         'Second durable answer.');
       // Memory reaches the model through the UniiChat view and previous exchange, not the raw transcript.
-      const seen = JSON.stringify(observed.messages);
+      const seen = JSON.stringify(observed);
       assert.match(seen, /<chat>/);
       assert.ok(seen.includes('blue lighthouse'));
       assert.ok(seen.includes('First durable answer.'));
@@ -114,8 +126,8 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
 
   test('resume recovers queued-only input left behind by a model failure', async (t) => {
     const options = await temporaryInstance(t);
-    const started = Promise.withResolvers();
-    const releaseFailure = Promise.withResolvers();
+    const started = Promise.withResolvers<void>();
+    const releaseFailure = Promise.withResolvers<void>();
     const catalog = offlineModels([async () => {
       started.resolve();
       await releaseFailure.promise;
@@ -148,17 +160,17 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       const inspection = await instance.harness.inspect(instance.context);
       assert.equal(inspection.tasks.length, 0, 'failure leaves no task for resume() to run');
       assert.equal(inspection.submissions.length, 1);
-      assert.equal(inspection.submissions[0].id, queuedId);
-      assert.equal(inspection.submissions[0].status, 'queued');
+      assert.equal(inspection.submissions[0]?.id, queuedId);
+      assert.equal(inspection.submissions[0]?.status, 'queued');
       assert.equal(catalog.faux.state.callCount, 1);
     } finally {
       releaseFailure.resolve();
       await instance.close();
     }
 
-    let modelContext;
+    let modelMessages: readonly Message[] = [];
     const reopenedCatalog = offlineModels([(context) => {
-      modelContext = context;
+      modelMessages = context.messages;
       return fauxAssistantMessage('Answered the original queued request.');
     }]);
     instance = await openInstance({ ...options, ...reopenedCatalog });
@@ -168,11 +180,11 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       assert.ok(queued);
       assert.equal((await queued.status(instance.context)).status, 'queued');
       assert.equal(reopenedCatalog.faux.state.callCount, 0);
-      let timer;
+      let timer: NodeJS.Timeout | undefined;
       try {
         await Promise.race([
           resumeInstance(instance),
-          new Promise((_, reject) => {
+          new Promise<never>((_, reject) => {
             timer = setTimeout(() => reject(new Error('queued-only recovery did not make progress')), 5_000);
           }),
         ]);
@@ -180,19 +192,21 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
         clearTimeout(timer);
       }
       const recovered = await instance.harness.submission(queuedId, instance.context);
+      assert.ok(recovered);
       assert.equal(recovered.id, queuedId);
       const settled = await recovered.status(instance.context);
       assert.equal(settled.status, 'done');
       assert.equal(await answerText(instance.root, settled, instance.context),
         'Answered the original queued request.');
       const failed = await instance.harness.submission(failedId, instance.context);
+      assert.ok(failed);
       assert.equal((await failed.status(instance.context)).reason, 'model_error');
       assert.equal(reopenedCatalog.faux.state.callCount, 1);
       const history = await transcript(instance.root, instance.context);
       assert.deepEqual(textOf(history.filter((entry) => entry.kind === 'pi.user')), [
         'First request deliberately fails.', 'Queued request must survive the failed run.',
       ]);
-      assert.deepEqual(modelContext.messages.filter((message) => message.role === 'user')
+      assert.deepEqual(modelMessages.filter((message) => message.role === 'user')
         .map((message) => typeof message.content === 'string' ? message.content
           : message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''))
         .map((text) => text.replace(/^[\s\S]*<\/turn>/, '')), [
@@ -209,7 +223,7 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
   test('coding tools require explicit opt-in and are reset on the next launch', async (t) => {
     const options = await temporaryInstance(t);
     await writeFile(join(options.cwd, 'allowed.txt'), 'disposable tool fixture');
-    const coding = (agent) => agent.tools.map((tool) => tool.name).filter((name) => ['bash', 'edit', 'read', 'write'].includes(name));
+    const coding = (agent: Agent) => agent.tools.map((tool) => tool.name).filter((name) => ['bash', 'edit', 'read', 'write'].includes(name));
     const catalog = offlineModels([
       fauxAssistantMessage(fauxToolCall('read', { path: 'allowed.txt' }), { stopReason: 'toolUse' }),
       fauxAssistantMessage('Read the disposable fixture.'),
@@ -255,10 +269,10 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
     const options = await temporaryInstance(t);
     const catalog = offlineModels([fauxAssistantMessage('Durably committed.')]);
     const original = NodeSqliteDatabase.prototype.transaction;
-    const modes = [];
+    const modes: unknown[] = [];
     NodeSqliteDatabase.prototype.transaction = function (callback) {
-      return original.call(this, async (tx) => {
-        modes.push((await tx.get('PRAGMA synchronous')).synchronous);
+      return original.bind(this)(async (tx) => {
+        modes.push((await tx.get<Record<string, unknown>>('PRAGMA synchronous'))?.synchronous);
         return callback(tx);
       });
     };
@@ -293,8 +307,8 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       await instance.root.waitForIdle(instance.context);
       const entries = await transcript(instance.root, instance.context);
       assert.deepEqual(entries.filter((entry) => entry.kind === 'test.history')
-        .map((entry) => entry.data.index), Array.from({ length: 270 }, (_, index) => index));
-      assert.equal(entries.at(-1).kind, 'pi.reset');
+        .map((entry) => isRecord(entry.data) ? entry.data.index : undefined), Array.from({ length: 270 }, (_, index) => index));
+      assert.equal(entries.at(-1)?.kind, 'pi.reset');
       assert.equal(new Set(entries.map((entry) => entry.id)).size, entries.length);
     } finally {
       await instance.close();
@@ -308,12 +322,15 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
     ])]);
     const instance = await openInstance({ ...options, ...catalog });
     try {
-      assert.equal((await ask(instance, 'Say hello.', 'answer-text')).text, 'Hello world.');
+      const { submission, settled, text } = await ask(instance, 'Say hello.', 'answer-text');
+      assert.equal(text, 'Hello world.');
+      assert.ok(settled.status === 'done');
+      const ids = { id: submission.id, conversationId: instance.root.id };
       await assert.rejects(answerText(instance.root, {
-        type: 'input', status: 'unanswered', reason: 'aborted', detail: 'test cancellation',
+        ...ids, type: 'input', status: 'unanswered', reason: 'aborted', detail: 'test cancellation',
       }, instance.context), /not answered.*aborted.*test cancellation/i);
       await assert.rejects(answerText(instance.root, {
-        type: 'input', status: 'placed',
+        ...ids, type: 'input', status: 'placed', entry: settled.entry,
       }, instance.context), /not answered/i);
     } finally {
       await instance.close();
@@ -327,14 +344,14 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       options.databasePath, options.cwd, requestId,
     ], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     let stderr = '';
-    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
-    child.stdout.resume();
-    const exited = once(child, 'exit');
+    child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+    child.stdout?.resume();
+    const exited: Promise<unknown[]> = once(child, 'exit');
     // Also handle rejection if startup fails before the ready IPC handshake.
     exited.catch(() => {});
-    let instance;
+    let instance: Instance | undefined;
     try {
-      const ready = await new Promise((resolve, reject) => {
+      const ready = await new Promise<Pending>((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`fixture readiness timeout: ${stderr}`)), 15_000);
         const cleanup = () => {
           clearTimeout(timer);
@@ -342,16 +359,16 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
           child.off('exit', onExit);
           child.off('error', onError);
         };
-        const onMessage = (message) => {
+        const onMessage = (message: Serializable) => {
           cleanup();
-          if (message.type === 'pending') resolve(message);
-          else reject(new Error(message.message ?? JSON.stringify(message)));
+          if (isPending(message)) resolve(message);
+          else reject(new Error(isRecord(message) && typeof message.message === 'string' ? message.message : JSON.stringify(message)));
         };
-        const onExit = (code, signal) => {
+        const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
           cleanup();
           reject(new Error(`fixture exited ${code}/${signal}: ${stderr}`));
         };
-        const onError = (error) => { cleanup(); reject(error); };
+        const onError = (error: Error) => { cleanup(); reject(error); };
         child.on('message', onMessage);
         child.once('exit', onExit);
         child.once('error', onError);
@@ -366,13 +383,16 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       const catalog = offlineModels([fauxAssistantMessage('Recovered after SIGKILL.')]);
       instance = await openInstance({ ...options, ...catalog });
       assert.equal(instance.root.id, ready.rootId);
-      const pending = await instance.harness.submission(ready.submissionId, instance.context);
+      // IPC carries plain numbers: find the branded ID among the unsettled submissions.
+      const record = (await instance.harness.inspect(instance.context)).submissions.find((s) => s.id === ready.submissionId);
+      assert.ok(record, 'admitted submission must survive abrupt process death');
+      const pending = await instance.harness.submission(record.id, instance.context);
       assert.ok(pending, 'admitted submission must survive abrupt process death');
       assert.equal((await pending.status(instance.context)).status, 'placed');
       const before = await transcript(instance.root, instance.context);
       assert.equal(before.filter((entry) => entry.kind === 'pi.user').length, 1);
       assert.equal(before.filter((entry) => entry.kind === 'pi.assistant').length, 0);
-      assert.equal(before.find((entry) => entry.kind === 'pi.user').id, ready.entryId);
+      assert.equal(before.find((entry) => entry.kind === 'pi.user')?.id, ready.entryId);
       assert.equal(catalog.faux.state.callCount, 0, 'open must not start pending work before configuration');
 
       const retried = await instance.root.submit({
