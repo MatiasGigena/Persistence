@@ -87,8 +87,10 @@ tmux attach -t pi-durable
   when its credential is a Claude subscription token (a Pi "Claude Pro/Max"
   login, `ANTHROPIC_OAUTH_TOKEN`, or an `sk-ant-oat…` token). See
   [models.md](models.md).
-- Default model: `openai-codex/gpt-6.1-sol`, thinking `high`.
-  `PI_DURABLE_MODEL=PROVIDER/ID` changes the default; `--model PROVIDER/ID` wins over both.
+- Model: `--model PROVIDER/ID`, else `PI_DURABLE_MODEL=PROVIDER/ID`, else the model last
+  chosen with `/model` in the terminal UI (saved in `settings.json`), else
+  `openai-codex/gpt-6.1-sol`. Thinking defaults to `high`. `--status` shows the model
+  and where it came from (`modelSource`). See [models.md](models.md#switching-models).
   `--thinking` takes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 - Models must exist in the pinned Pi 1.3.0 catalog, or be one of the `claude-cli`
   aliases. Personal model overrides
@@ -110,11 +112,16 @@ tmux attach -t pi-durable
 | `<data dir>/chat.sqlite-wal`, `chat.sqlite-shm` | SQLite WAL files |
 | `<data dir>/chat.sqlite.lock` | the flock file |
 | `<data dir>/chat.unii/` | memory: `main/` (log), `tree/` (summaries), `view.json` |
+| `<data dir>/settings.json` | the default model chosen with `/model`: `{"model": "PROVIDER/ID"}` |
 
 - `--data-dir PATH` or `PI_DURABLE_DATA_DIR` changes the data dir.
 - `--database PATH` selects a specific SQLite file. Its memory goes beside it:
   `PATH` with `.sqlite` replaced by `.unii`, or with `.unii` appended if `PATH` does
   not end in `.sqlite`. Its lock is `PATH.lock`.
+- `settings.json` sits beside the database, so with `--database PATH` it is in `PATH`'s
+  directory. Only a work launch's `/model` writes it, under the database's lock: mode 600,
+  written to a temporary file, fsynced and renamed. Launches only read it, and
+  `--status`, `--history` and `--help` never create it. `/tools` is not saved.
 - Older per-project databases in subfolders of the data dir are left untouched and
   are not imported.
 - The CLI and host run with umask 077. New directories are 700 and new files 600.
@@ -157,7 +164,8 @@ tar -czf ~/persistence-backup-$(date +%F).tar.gz chat.sqlite* chat.unii
 ```
 
 Never copy a live SQLite file alone. The archive holds your whole chat; store it privately.
-The `.lock` file need not be copied.
+The `.lock` file need not be copied. Add `settings.json` if you want to keep your default
+model; without it a restored chat starts on the built-in default.
 
 ## Moving between hosts
 
@@ -181,7 +189,9 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `No credentials for PROVIDER` | Run `npm exec -- pi` in the install dir, then `/login`; or set the provider's API-key variable; or pass `--auth-file`. The message names the auth file it read. |
 | `No Claude Code login for claude-cli` | Run `claude auth login` (or `claude`, then `/login`). More `claude-cli` symptoms are in [models.md](models.md#troubleshooting). |
 | `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key in `ANTHROPIC_API_KEY` after removing any stored Pi `anthropic` login. |
-| `Unknown model … in pinned Pi 1.3.0 catalog` | Pick a model from the Pi 1.3.0 catalog. Check `PI_DURABLE_MODEL`. |
+| `Unknown model … in pinned Pi 1.3.0 catalog` | Pick a model from the Pi 1.3.0 catalog. Check `PI_DURABLE_MODEL` and `settings.json`. |
+| A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run. Pass `--model`, sign in again, or delete `settings.json`. |
+| `…/settings.json is not valid JSON` | Fix or delete the file. `--model` or `PI_DURABLE_MODEL` skip it meanwhile. |
 | `Node.js >=22.19.0 is required` | Install a newer Node, or set `PI_DURABLE_NODE` to one. |
 | An `ExperimentalWarning` about SQLite | Expected on Node 22. Harmless. |
 | You want to see what is pending | `pi-durable --status` prints the database, conversation ID, memory dir, scheduler state, and pending tasks and submissions. Each agent keeps one `agents.anchor` task, so the count is not zero while agents exist. |

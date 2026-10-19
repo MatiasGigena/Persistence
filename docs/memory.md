@@ -227,14 +227,19 @@ An empty reply is a failed call. See [ADR 0007](decisions/0007-cheap-compaction-
 | `anthropic` | `anthropic/claude-haiku-5-5`, if the catalog has it |
 | any other | the turn model itself |
 
-The turn model comes from `--model PROVIDER/ID`, else `PI_DURABLE_MODEL`, else `openai-codex/gpt-6.1-sol`. So the
-default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.3.0
+The turn model comes from `--model PROVIDER/ID`, else `PI_DURABLE_MODEL`, else the model last chosen with `/model`
+(`settings.json`), else `openai-codex/gpt-6.1-sol`. So the default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.3.0
 catalog it costs $0.10/$0.50 per million tokens (cache read $0.01), against $2/$10 for `gpt-6.1-sol`, with the same
 272k window.
 
 With `claude-cli`, every compaction is a full `claude` call that draws on the plan's usage limits, so the host opens the
 memory with `jobs: 2` (`src/runtime/runtime.ts`). Such calls get no tools, since the compactor sends
 `toolChoice: "none"`, and the CLI ignores `maxTokens`. See [models.md](models.md).
+
+A `/model` switch moves the compaction model with the turn model: the host builds a new default summarizer for the
+new provider's compaction model and calls `memory.setSummarizer(summarize, jobs)` (2 jobs for `claude-cli`, else 8).
+Each node is built by the summarizer it started with, its "Too long" retry included, so calls in flight finish on
+the old model; lowering `jobs` only holds back new calls until enough have finished.
 
 The host has no flag for the compaction model. Programmatically, `openMemory(dir, { compactionModel })` overrides
 it, and `openMemory(dir, { summarize })` replaces the summarizer entirely. The default summarizer

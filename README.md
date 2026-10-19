@@ -53,11 +53,15 @@ with a different prompt.
 Other flags: `--database PATH`, `--data-dir PATH`, `--cwd PATH`, `--auth-file PATH`,
 `-v`/`--version`. The default model is `openai-codex/gpt-6.1-sol` with thinking `high`.
 
-Chat commands: `/help`, `/agents` (list agents, open any agent's live chat),
-`/mem` (browse the memory view and zoom down to any message), `/status`, `/exit`.
-Keys: Enter sends, Shift+Enter adds a line, Esc interrupts Pi, Ctrl+O expands tool
-output, Ctrl+T expands thinking, Ctrl+C twice or Ctrl+D exits. `--plain` mode has
-`/history` instead of `/agents` and `/mem`.
+Chat commands: `/help`, `/model` (pick a model; type to filter, Enter switches),
+`/model provider/id` (switch directly), `/tools` (show), `/tools on` (asks first:
+`y` enables read, write, edit and bash for this launch), `/tools off`, `/agents` (list
+agents, open any agent's live chat), `/mem` (browse the memory view and zoom down to
+any message), `/status`, `/exit`. A new model applies from the next message and
+becomes the default for launches without `--model`.
+Keys: Enter sends, Shift+Enter adds a line, Esc interrupts Pi, Ctrl+L picks a model,
+Ctrl+O expands tool output, Ctrl+T expands thinking, Ctrl+C twice or Ctrl+D exits.
+`--plain` mode has `/history` instead of `/agents`, `/mem`, `/model` and `/tools`.
 Closing never discards unfinished work; the next launch resumes it.
 
 ## Models
@@ -106,7 +110,8 @@ after `-p`, run `pi-durable --resume` to let them finish. Details: [docs/agents.
 ## Safety
 
 Coding tools (read, write, edit, bash) are off on every launch unless you pass
-`--allow-tools`. With it, they act with your user permissions. There is no sandbox
+`--allow-tools`, or turn them on in the chat with `/tools on` and confirm with `y`.
+Either way they last for this launch only. When on, they act with your user permissions. There is no sandbox
 and no per-command approval. A tool call saved by an earlier launch cannot restore
 permission on a later launch without the flag. The host does not load ordinary Pi
 extensions, guards, skills, MCP servers, or project instruction files.

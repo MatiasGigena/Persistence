@@ -45,7 +45,9 @@ agents, and each agent is another conversation in the same database.
 - **Terminal UI** (`src/ui/tui/`): `app.ts` runs pi-tui in Pi's default full-screen
   (alternate screen) layout: the chat (`chat.ts`) scrolls above a one-line status
   (`footer.ts`) and the editor; `theme.ts` is its palette, and `panels/` holds the
-  `/agents` and `/mem` overlays. It knows the host only through `src/ui/types.ts`.
+  `/agents`, `/mem` and `/model` overlays (`panels/model.ts` is the model picker;
+`panels/frame.ts` also has the one-key confirmation `/tools on` asks). It knows the
+host only through `src/ui/types.ts`.
   On exit it prints the chat to the main screen, so it stays in scrollback. While it
   runs, the host's console warnings show as chat notices.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,
@@ -76,7 +78,7 @@ agents, and each agent is another conversation in the same database.
 4. The model answers. `afterResponse` logs Pi's text as `pi` and each tool call as
    `tool`. `afterTool` logs each tool result as `echo`. Every log line has a `src`
    key, so a replay never logs it twice.
-5. Tool calls run as tool tasks. Coding tools are present only with `--allow-tools`.
+5. Tool calls run as tool tasks. Coding tools are present only with `--allow-tools`, or after `/tools on`.
 6. The final answer is committed as a `pi.assistant` entry. The host's reply watcher
    subscribes to the root's view and prints each new `pi.assistant` and
    `agents.report` entry, including replies to agent reports that no prompt waited for.
@@ -99,7 +101,8 @@ declines any root compaction that still starts.
   agents have no memory view and their turns are never logged. Sub agents also lose
   `spawn_agent` and `stop_agent`.
 - `syncAgents` re-derives every agent's config on each work launch, right after Pi
-  is configured. So `--allow-tools` and `--model` apply to agents too.
+  is configured, and again after `/model` or `/tools` reconfigures Pi. So
+  `--allow-tools`, `--model` and those switches apply to agents too.
 - A new agent's first message starts with Pi's current memory view, then
   `[from Spawner] task`.
 - Every input to an agent travels in an `agents.deliver` background task. It submits
@@ -121,6 +124,7 @@ Details: [agents.md](agents.md), [decisions/](decisions/).
 | `chat.unii/tree/YYYY-MM-DD.jsonl` | tree nodes `{ l, i, text }` | the compactor | appended and fsynced per node |
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
 | `chat.sqlite.lock` | nothing; the flock target | `flock` | none needed |
+| `settings.json` (beside the database) | `{ model }`: the default model chosen with `/model` | `writeSettings` (`src/host/config.ts`), on `/model` | written to a temp file, fsynced, renamed |
 | Pi's `auth.json` | credentials | Pi's `ModelRuntime` | outside this project |
 | `$TMPDIR/pi-durable-claude-*/` | one `claude-cli` request's system prompt and tool list | the provider | removed after the request |
 
@@ -157,9 +161,10 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 |---|---|
 | `bin/pi-durable` | Bash launcher: picks Node (`PI_DURABLE_NODE`, `node`, or Pi's private Node) and runs `src/cli.ts` |
 | `src/cli.ts` | Entry: parses arguments, checks Node, resolves paths, runs the host under `flock` |
-| `src/host/config.ts` | `--help` text, argument parsing, path resolution (data dir, database, `.unii` dir, auth file) |
+| `src/host/config.ts` | `--help` text, argument parsing, path resolution (data dir, database, `.unii` dir, auth file), the model's precedence, `settings.json` |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
-| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, Pi's agent config; `transcript`, `answerText` |
+| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`; `transcript`, `answerText` |
+| `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/recovery.ts` | `resumeInstance` (pending tasks and queued input), `settleAgents` (wait until agents are idle) |
 | `src/memory/index.ts` | Public exports of the memory |
 | `src/memory/memory.ts` | `Memory`: log, tree, views, compactor scheduling, zoom, date, status; `openMemory` |

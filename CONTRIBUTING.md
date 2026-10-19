@@ -82,8 +82,8 @@ Give each test its own temporary data directory.
   - tool names `zoom`, `date`, `spawn_agent`, `list_agents`, `send_message`,
     `last_message`, `stop_agent`;
   - memory kinds `user`, `pi`, `tool`, `echo`, `work`, `note`, and the `src` key formats;
-  - the file names `chat.sqlite`, `<database>.lock`, the `.unii` directory, and its
-    `main/`, `tree/`, `view.json`.
+  - the file names `chat.sqlite`, `<database>.lock`, `settings.json` and its `model`
+    key, the `.unii` directory, and its `main/`, `tree/`, `view.json`.
   A change to any of these needs a migration and an ADR.
 - One writer per database. Keep every write under the CLI's flock.
 - Record each new design decision as an ADR in [docs/decisions/](docs/decisions/).

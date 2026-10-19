@@ -20,6 +20,50 @@ pi-durable --model claude-cli/sonnet
 ANTHROPIC_API_KEY=sk-ant-api03-… pi-durable --model anthropic/claude-sonnet-5-5
 ```
 
+## Switching models
+
+In the terminal UI, `/model` switches Pi's model without a relaunch (`src/ui/session.ts`, `src/runtime/models.ts`).
+
+- **The list** holds the models worth picking, not the whole catalog: every `claude-cli` model, the current provider's
+  models, `openai-codex/…`, `openai/…` only when it has credentials, and `anthropic/…`. Dated snapshots
+  (`claude-haiku-4-5-20251001`) are left out beside their aliases. The current model comes first, then the rest
+  grouped by provider: the current one's, `claude-cli`, `openai-codex`, `openai`, `anthropic`.
+- **Availability.** When the list opens, every listed provider's credentials are checked in parallel with
+  `checkAuth`, 5 s each, and reused for 60 s. A model without them is listed but cannot be picked, with a note:
+
+  | Note | Meaning |
+  |---|---|
+  | `uses your Claude plan via the claude CLI` | `claude-cli`, signed in |
+  | `needs claude auth login` | `claude-cli`, not signed in |
+  | `needs ANTHROPIC_API_KEY` | `anthropic` without a credential |
+  | `subscription login refused; use claude-cli` | `anthropic` with a subscription credential (see Policy) |
+  | `needs a Pi login (/login in pi)` | `openai-codex` without a login |
+  | `credential check timed out` | the check took over 5 s |
+
+- **Picking one** checks it again, as a launch does: in the catalog, credentials present, no `anthropic`
+  subscription. A failure leaves everything as it was and shows the same message a launch would print.
+- **What switches.** Pi's stored model (`root.configure({ model })`), then every agent, re-derived from Pi by
+  `syncAgents` as on a launch, then the compaction model: the new provider's cheap one (see
+  [memory.md](memory.md#the-model)), so a switch from `openai-codex` to `claude-cli` moves compaction from `gpt-6-luna`
+  to `claude-cli/haiku`, 2 calls at once. pi-durable fixes a request's model when it prepares it, so a request already
+  under way finishes on the old model; the next one, Pi's or an agent's, uses the new one. Compactions in flight
+  finish on the old model too.
+- **Saved as the default.** The choice is written to `settings.json` beside the database (mode 600, replaced
+  atomically), and later launches use it:
+
+  ```json
+  {
+    "model": "claude-cli/sonnet"
+  }
+  ```
+
+  A launch takes `--model`, else `PI_DURABLE_MODEL`, else `settings.json`, else `openai-codex/gpt-6.1-sol`.
+  `--status` prints the model and its source (`modelSource`: `flag`, `env`, `settings` or `default`); so does the
+  `--plain` banner. Only `/model` writes the file; the thinking level is not saved. `--plain` chat has no `/model`.
+
+`/tools on` and `/tools off` switch the coding tools the same way, for Pi and every agent, but never persist: every
+launch starts with them off unless it passes `--allow-tools` ([ADR 0009](decisions/0009-tools-opt-in.md)).
+
 ## Policy
 
 Anthropic's rules, as of 2026-10-19:
@@ -162,6 +206,8 @@ host's environment makes the CLI bill that key instead of your plan.
 | `claude-cli: … not signed in or its login expired (401)` | Sign in again with `claude auth login`. |
 | Requests bill your API account | `ANTHROPIC_API_KEY` is set in the host's environment. Unset it to use the plan. |
 | `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key. A stored Pi `anthropic` login wins over the variable: remove it with Pi's `/logout`. |
+| A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run (signed out, for example). Pass `--model`, sign in again, or delete the file. |
+| `…/settings.json is not valid JSON` or `must be an object like {"model":…}` | Fix the file or delete it; `--model` still works meanwhile. |
 | `claude-cli: API error 529: …` | Anthropic is overloaded; the Harness retries. |
 
 See [ADR 0010](decisions/0010-claude-via-cli.md) for the decision.

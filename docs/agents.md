@@ -165,7 +165,8 @@ await syncAgents(harness, context, { childAgent });   // re-derive every agent f
 ```
 
 So an agent follows the current launch: `--model`, `--thinking`, `--cwd` and `--allow-tools`. An agent spawned under
-`--allow-tools` loses the coding tools on the next launch without it.
+`--allow-tools` loses the coding tools on the next launch without it. The terminal UI's `/model` and `/tools` take the
+same two steps mid-launch (`Instance.setModel`, `Instance.setTools`), so agents follow them from their next request.
 
 After copying, `deriveAgent` applies the role offer (subs lose `spawn_agent` and `stop_agent`), then the host's
 `childAgent` change:

@@ -24,3 +24,12 @@ launch, for Pi and for every agent. Memory and agent tools touch only the chat.
 - Tools enabled yesterday are off today unless the flag is given again, for Pi and all agents.
 - The flag is the only switch: there is no chat command for it.
 - Agents spawned in a launch with tools lose them in the next launch without the flag.
+
+## Amended 2026-10-19
+
+- The terminal UI's `/tools on` and `/tools off` switch the coding tools in session, for Pi and every agent, through
+  the same path as a launch: `root.configure` with the tool list of `piTools()` (`src/runtime/runtime.ts`), then
+  `syncAgents`. So "the flag is the only switch" no longer holds within a launch.
+- The decision stands: the choice is never saved, and every launch still starts with the tools off unless it passes
+  `--allow-tools`. Pi's instructions are reconfigured with the tools, and name `/tools` and `--allow-tools` as the only
+  ways to turn them on.
