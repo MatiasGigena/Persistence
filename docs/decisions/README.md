@@ -17,6 +17,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0011](0011-typescript-without-build.md) | Strict TypeScript without a build step |
 | [0012](0012-terminal-ui.md) | A full-screen terminal UI on pi-tui, as a client of the event stream |
 | [0013](0013-saved-default-model.md) | A model chosen in session is saved as the default, beside the database |
+| [0014](0014-phone-layout.md) | A compact terminal layout below 60 columns, for phones |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".

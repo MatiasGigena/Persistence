@@ -48,6 +48,8 @@ agents, and each agent is another conversation in the same database.
   `/agents`, `/mem` and `/model` overlays (`panels/model.ts` is the model picker;
 `panels/frame.ts` also has the one-key confirmation `/tools on` asks). It knows the
 host only through `src/ui/types.ts`.
+  Below 60 columns (`NARROW` in `theme.ts`) every part switches to a compact layout
+  for phones (ADR 0014).
   On exit it prints the chat to the main screen, so it stays in scrollback. While it
   runs, the host's console warnings show as chat notices.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,

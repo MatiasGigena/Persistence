@@ -64,6 +64,42 @@ cd /path/to/project
 tmux attach -t pi-durable
 ```
 
+## Phone access (SSH/mosh)
+
+The terminal UI works on a phone at 40 to 60 columns and about 15 rows with the
+keyboard open. Below 60 columns it hides the header line, shortens the footer
+(the tools state always stays), shows one argument per tool call with a 2-line
+preview, removes panel margins and shortens key hints. The spinner slows to 4
+frames a second over SSH, since every frame is network traffic.
+
+Run the host in tmux on the server, and add these lines to its `~/.tmux.conf`:
+
+```tmux
+set -g default-terminal "tmux-256color"   # the colors and italics the UI uses
+set -s escape-time 10                     # Esc interrupts Pi; the 500 ms default feels broken
+set -g mouse on                           # scroll the chat with the wheel or a swipe
+set -s extended-keys on                   # pass Shift+Enter and other modified keys through
+set -as terminal-features 'xterm*:extkeys,xterm*:RGB'  # the outer terminal has them, and true color
+set -s focus-events on                    # pass focus changes through to the UI
+set -s set-clipboard on                   # copied text reaches the phone's clipboard (OSC 52)
+```
+
+Use mosh 1.4 or newer on both ends: it survives network changes and sleep, and
+echoes typing locally. Connect over the server's Tailscale IP, so mosh's UDP ports
+(60000 to 61000) stay closed to the internet. mosh needs a UTF-8 locale on both
+sides:
+
+```sh
+LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new -A -s pi-durable
+```
+
+- mosh does not pass Shift+Enter through. Use Alt+Enter (or Ctrl+J) for a newline.
+- Phone keyboards often lack Esc: `/stop` interrupts Pi, as Esc does.
+- Ctrl+D or Ctrl+C twice asks first while Pi or an agent is working; `/exit`
+  closes at once. Either way, unfinished work resumes on the next launch.
+- Clients: [Blink Shell](https://blink.sh) on iOS has mosh built in; on Android,
+  [Termux](https://termux.dev) with `pkg install mosh openssh`.
+
 ## Credentials and models
 
 - The host uses Pi's `ModelRuntime` with your existing Pi credentials:
@@ -138,8 +174,9 @@ tmux attach -t pi-durable
   failed model request is advanced with an empty `host.resume-boundary` entry.
 - Ctrl+C (twice within a second in the terminal UI; once with `--plain`), Ctrl+D,
   `/exit`, SIGTERM, and SIGHUP close the Harness and transport without aborting
-  durable work, and restore the terminal. Reopening resumes it. Esc in the terminal
-  UI interrupts Pi's current run only.
+  durable work, and restore the terminal. Reopening resumes it. In the terminal UI,
+  Ctrl+D and Ctrl+C twice ask for confirmation while Pi or an agent is working. Esc
+  or `/stop` in the terminal UI interrupts Pi's current run only.
 - Interrupted model requests can be reissued, which costs additional provider usage.
   A failed terminal submission is not retried with a new prompt.
 - Agent messages and reports are delivered exactly once across crashes.

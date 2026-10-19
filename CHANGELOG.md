@@ -16,6 +16,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the current one marked; typing filters, and models without credentials are dim
   and show what they need. `/model provider/id` switches directly, with completion.
   The new model applies from the next message and is saved as the default.
+- A phone layout for the terminal UI below 60 columns (SSH or mosh in tmux): no
+  header line; a compact footer that drops segments by priority but always shows
+  the tools state; tool calls as mark, name and one argument with a 2-line preview;
+  no Markdown padding; full-screen panels with short hints, compact rows and the
+  selection's detail. The editor stays within about 30% of the rows, and the
+  spinner slows to 250 ms over SSH or on a narrow screen. See "Phone access" in
+  `docs/operations.md` and ADR 0014.
+- `/stop` interrupts Pi, as Esc does, for keyboards without Esc.
+- Ctrl+D or Ctrl+C twice asks for confirmation while Pi or an agent is working;
+  `/exit` still closes at once.
 - `/tools on` and `/tools off` in the terminal UI switch coding tools for this
   launch; turning them on asks for a one-key `y` confirmation. The footer shows
   `tools on` in yellow.
