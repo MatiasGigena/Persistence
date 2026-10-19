@@ -18,8 +18,10 @@ the commit and in [CHANGELOG.md](CHANGELOG.md).
 ## Checks
 
 ```sh
-npm run check    # node --check on every .mjs in src/ and scripts/, bash -n on the launcher
-npm test         # every test/**/*.test.mjs
+npm run check      # tsc, eslint --max-warnings 0, and bash -n on the launcher
+npm run typecheck  # tsc alone (strict, no emit)
+npm run lint       # eslint alone
+npm test           # every test/**/*.test.ts
 npm audit --omit=dev
 ```
 
@@ -47,13 +49,21 @@ test/providers/  claude-cli with a fake CLI, stub MCP server, subscription check
 test/fixtures/   faux models, the fake claude CLI, child-process instances
 ```
 
-Put a test next to the area it covers. Use `test/fixtures/faux-model.mjs` for models, and
-`test/fixtures/fake-claude.mjs` (through `PI_DURABLE_CLAUDE_BIN`) instead of a real `claude`.
+Put a test next to the area it covers, as `<area>/<name>.test.ts`; tests are typed and
+linted like the sources. Use `test/fixtures/faux-model.ts` for models, and
+`test/fixtures/fake-claude.ts` (through `PI_DURABLE_CLAUDE_BIN`) instead of a real `claude`.
 Give each test its own temporary data directory.
 
 ## Code style
 
-- Plain ESM in `.mjs` files. No build step, no TypeScript, no bundler.
+- Strict TypeScript in `.ts` files, run by Node's type stripping (Node 22.18 or newer;
+  `engines` asks for 22.19). No build step, no bundler; `tsc` only checks.
+- Erasable syntax only: no `enum`, `namespace`, or parameter properties. Import with
+  `.ts` specifiers, and types with `import type`.
+- No `any`, written or inferred, and no `@ts-ignore`, `@ts-expect-error`, or
+  `@ts-nocheck`. tsc (strict) and typescript-eslint (`no-unsafe-*`) enforce both.
+- Parse external data (JSON, IPC, process arguments) as `unknown` and narrow it.
+  Cast only what is genuinely known, and say why.
 - Use Node built-ins and the pinned `@earendil-works/*` packages. Add a dependency
   only when there is no small alternative.
 - Write terse code: short functions, early returns, no dead code.

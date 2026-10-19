@@ -2,21 +2,24 @@
 
 Persistence is a terminal host for one never-ending Pi chat on
 `@earendil-works/pi-durable` 1.3.0. Pi's context is a UniiChat memory view, and Pi
-can spawn background agents. The launcher is `bin/pi-durable`.
+can spawn background agents. The launcher is `bin/pi-durable`. The code is strict
+TypeScript that Node runs by type stripping: there is no build step.
 
 ## Map
 
-- `src/cli.mjs`: entry. Parses arguments, takes the flock, spawns the host.
-- `src/host/`: `host.mjs` (terminal chat, /commands, reply watcher), `config.mjs` (CLI options, paths).
-- `src/runtime/`: `runtime.mjs` (Harness, extensions, Pi's agent config), `recovery.mjs` (resume, `settleAgents`).
+- `src/cli.ts`: entry. Parses arguments, takes the flock, spawns the host.
+- `src/host/`: `host.ts` (terminal chat, /commands, reply watcher), `config.ts` (CLI options, paths).
+- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
-- `src/agents/index.mjs`: agent hierarchy, tools, and delivery tasks.
+- `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks.
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
-- `test/<area>/`: offline tests per area; `test/fixtures/` holds faux models.
+- `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
+- `tsconfig.json`, `eslint.config.ts`: the type and lint rules `npm run check` enforces.
 
 ## Verify
 
-Run `npm run check && npm test` after every change. Both are offline and take seconds.
+Run `npm run check && npm test` after every change. `check` is tsc, eslint, and
+`bash -n` on the launcher; both are offline and take seconds.
 A change is done when both pass and the docs below still match the code.
 
 ## Invariants
@@ -34,6 +37,8 @@ A change is done when both pass and the docs below still match the code.
   path idempotent.
 - **Tools off by default.** Coding tools are enabled only by `--allow-tools` on the
   current launch, and every launch reconfigures Pi and its agents.
+- **No `any`.** tsc strict and eslint `no-unsafe-*` must stay at zero; never add
+  suppression comments. Parse external data as `unknown` and narrow it.
 - **State stays local.** Commit only source, tests, and docs: never `*.sqlite*`,
   `*.lock`, `*.unii/`, `auth.json`, or `.env`.
 

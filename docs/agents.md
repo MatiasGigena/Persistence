@@ -1,7 +1,7 @@
 # Agents
 
 Pi can start background agents. Each agent is its own persistent pi-durable conversation, in the same database as
-Pi. The code is `src/agents/index.mjs` (the `agents` extension); the host wiring is in `src/runtime/runtime.mjs`.
+Pi. The code is `src/agents/index.ts` (the `agents` extension); the host wiring is in `src/runtime/runtime.ts`.
 
 ## Contents
 
@@ -151,7 +151,7 @@ call's task id, in the same commit as the change. A replayed call returns the st
 last 256 results are kept. `spawn_agent` also skips `initialContext` on a replay. `stop_agent` is `replay: 'unsafe'`:
 rerunning it after a crash could stop newer work.
 
-The tests in `test/agents/agents.test.mjs` close and reopen, and SIGKILL and reopen, with a delivery in flight, and
+The tests in `test/agents/agents.test.ts` close and reopen, and SIGKILL and reopen, with a delivery in flight, and
 check that each message and report appears exactly once.
 
 ## Settings and tools on each launch

@@ -23,7 +23,7 @@ ln -s "$HOME/pi-durable-instance/bin/pi-durable" "$HOME/.local/bin/pi-durable"
 
 If that link already exists, inspect it instead of overwriting it. Make sure
 `~/.local/bin` is on PATH, or call `~/pi-durable-instance/bin/pi-durable` directly.
-Always launch through `bin/pi-durable` (or `src/cli.mjs`), never `src/host/host.mjs`:
+Always launch through `bin/pi-durable` (or `src/cli.ts`), never `src/host/host.ts`:
 the host relies on the CLI for the lock.
 
 ## Install on a VPS

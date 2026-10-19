@@ -107,14 +107,15 @@ extensions, guards, skills, MCP servers, or project instruction files.
 ## Project layout
 
 ```
-bin/pi-durable      launcher: picks Node, runs src/cli.mjs
-src/cli.mjs         arguments, flock, spawns the host
+bin/pi-durable      launcher: picks Node, runs src/cli.ts
+src/cli.ts          arguments, flock, spawns the host
 src/host/           terminal chat, /commands, reply watcher; CLI options and paths
 src/runtime/        Harness, extensions, Pi's agent config; resume and agent settling
 src/memory/         UniiChat memory: log, tree, view, compactor, extension
 src/agents/         agent hierarchy and messaging
 src/providers/      claude-cli provider (official claude CLI) and the anthropic subscription check
-scripts/check.mjs   syntax check
+tsconfig.json       strict TypeScript, run by Node's type stripping (no build)
+eslint.config.ts    lint rules: no any
 test/               offline tests, by area, with fixtures
 docs/               architecture, operations, models, memory, agents, decisions
 ```

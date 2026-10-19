@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The `anthropic` provider is refused when its credential is a Claude
   subscription token (a Pi "Claude Pro/Max" login, `ANTHROPIC_OAUTH_TOKEN`, or an
   `sk-ant-oat…` key); it works with an Anthropic Console API key.
+- Sources and tests migrated to strict TypeScript (no `any`), checked by tsc and
+  eslint; run by Node type stripping with no build step. `npm run check` runs
+  tsc, eslint and `bash -n`; `npm run typecheck` and `npm run lint` run each alone.
+  See ADR 0011.
 
 ## [0.1.0] - 2026-10-19
 

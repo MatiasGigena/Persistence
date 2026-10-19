@@ -53,12 +53,12 @@ What this host does about it:
     `claude setup-token`; Console keys start `sk-ant-api`).
 
   The check reads the stored type and env source first, so it never refreshes an OAuth login
-  (`src/providers/anthropic.mjs`). A gateway's own bearer token passes.
+  (`src/providers/anthropic.ts`). A gateway's own bearer token passes.
 - `--bare` is not used: it ignores the subscription login.
 
 ## How claude-cli works
 
-`src/providers/claude-cli.mjs` is a pi-ai provider (`createProvider`), registered on the host's models on every
+`src/providers/claude-cli.ts` is a pi-ai provider (`createProvider`), registered on the host's models on every
 launch, inspection included, because persisted agents can name `claude-cli` models. Each model request is one fresh
 CLI process:
 
@@ -71,7 +71,7 @@ claude -p --output-format stream-json --verbose --include-partial-messages --no-
 ```
 
 - **Claude only proposes tool calls.** Built-in tools are off (`--tools ''`). Pi's current tools are listed by a stub
-  stdio MCP server named `pi` (`src/providers/claude-cli-mcp.mjs`), so Claude sees them natively as
+  stdio MCP server named `pi` (`src/providers/claude-cli-mcp.ts`), so Claude sees them natively as
   `mcp__pi__<name>`. The stub never runs anything; a call that reaches it gets "deferred to host". In print mode the
   CLI also denies unapproved MCP tools before they run.
 - **The provider stops the CLI at `message_stop`.** Each `tool_use` named `mcp__pi__…` becomes a Pi `toolCall` (its
