@@ -149,8 +149,9 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
 | `<data dir>/chat.sqlite.lock` | the flock file |
 | `<data dir>/chat.unii/` | memory: `main/` (log), `tree/` (summaries), `view.json` |
 | `<data dir>/settings.json` | the default model chosen with `/model`: `{"model": "PROVIDER/ID"}` |
-| `<data dir>/chat.sqlite.sock` | reserved for `pi-durable serve` (not built yet): its Unix socket, mode 600; in `$XDG_RUNTIME_DIR` when the path is over 107 bytes |
-| `<data dir>/serve/` | reserved for `pi-durable serve`: `vapid.json`, `push.json`, `devices.json`, mode 600 |
+| `<data dir>/chat.sqlite.sock` | `pi-durable serve`'s Unix socket, mode 600, there only while it runs; in `$XDG_RUNTIME_DIR` (as `pi-durable-<hash>.sock`) when the path is over 107 bytes |
+| `<data dir>/backups/` | `pi-durable backup`'s backups, one directory each, mode 700; kept 14 days |
+| `<data dir>/serve/` | `pi-durable serve`'s state, mode 700: `vapid.json` and `push.json` (see [Push notifications](#push-notifications)), `devices.json`; files mode 600 |
 
 - `--data-dir PATH` or `PI_DURABLE_DATA_DIR` changes the data dir.
 - `--database PATH` selects a specific SQLite file. Its memory goes beside it:
@@ -185,26 +186,231 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
 - External effects are not exactly-once. An interrupted unsafe tool is reported as
   interrupted, but a shell command may already have changed something. Review such
   changes before asking the model to repeat them.
-- This is not a daemon. After exit or a machine shutdown, work stays saved but makes
-  no progress until the next launch. No boot service is installed. tmux keeps a host
-  running after you disconnect, but not while the machine is off.
+- Without `serve`, this is not a daemon. After exit or a machine shutdown, work stays saved but makes
+  no progress until the next launch. tmux keeps a host running after you disconnect, but not while the
+  machine is off. For a host that runs from boot, see [Server mode](#server-mode).
 - Process recovery does not cover storage or hardware failure, or deletions. Keep backups.
 
 ## Backups
 
-1. Stop the host: `/exit` or Ctrl+D. Check with `pi-durable --status`; a running
-   host makes it exit with status 75.
-2. Copy together: `chat.sqlite`, any `chat.sqlite-wal` and `chat.sqlite-shm`, and
-   the whole `chat.unii/` directory.
+`pi-durable backup` writes an online backup, with no need to stop anything:
 
 ```sh
-cd "${XDG_STATE_HOME:-$HOME/.local/state}/pi-durable"
-tar -czf ~/persistence-backup-$(date +%F).tar.gz chat.sqlite* chat.unii
+pi-durable backup                  # into backups/ beside the chat: <data dir>/backups/<UTC time>/
+pi-durable backup --out /srv/bak   # into /srv/bak/<UTC time>/
 ```
 
-Never copy a live SQLite file alone. The archive holds your whole chat; store it privately.
-The `.lock` file need not be copied. Add `settings.json` if you want to keep your default
-model; without it a restored chat starts on the built-in default.
+- Each backup is a new directory named for the UTC time, like `2026-10-19T03-00-00Z`, holding `chat.sqlite`,
+  `chat.unii/` and `settings.json` (when there is one): the whole chat, restorable by copying back.
+- `chat.sqlite` comes from SQLite's `VACUUM INTO`, a consistent copy. It and the `.unii` copy are made in one
+  synchronous step of the one writer, so the memory is never ahead of or behind the database (ADR 0022). Every
+  file is fsynced.
+- With a server running, the server writes it (`admin.backup` on its socket). Without one, the command takes
+  the chat's flock and writes it itself; it exits with 75 while an interactive host has the chat open.
+- After each backup, backup directories in the same place older than 14 days are deleted. Nothing else there
+  is touched.
+- A backup is the whole chat in clear. The directories are mode 700, like the data dir; keep them on the VPS
+  or copy them somewhere as private.
+- While the copy runs, the server does nothing else: seconds for a large chat, once a day.
+
+On a server, `pi-durable-backup.timer` runs it daily (see [Server mode](#server-mode)):
+
+```sh
+systemctl --user list-timers pi-durable-backup.timer    # next and last run
+journalctl --user -u pi-durable-backup                  # what each run printed
+ls ~/.local/state/pi-durable/backups/
+```
+
+To restore one, stop the host, set the current chat aside, and copy the backup into place:
+
+```sh
+systemctl --user stop pi-durable        # or close the interactive host
+cd "${XDG_STATE_HOME:-$HOME/.local/state}/pi-durable"
+mkdir -p replaced && mv chat.sqlite* chat.unii settings.json replaced/
+cp -a backups/2026-10-19T03-00-00Z/. .
+systemctl --user start pi-durable
+```
+
+Never copy a live SQLite file alone; a copy made by hand needs the host stopped and must take `chat.sqlite`, any
+`chat.sqlite-wal` and `chat.sqlite-shm`, and `chat.unii/` together.
+
+## Server mode
+
+`pi-durable serve` runs the chat without a terminal, around the clock, as a systemd user service (ADR 0016).
+The terminal UI attaches to it over its Unix socket, and the web app reaches it over Tailscale
+([Web access over Tailscale](#web-access-over-tailscale)). The unit files are in `contrib/systemd/`.
+
+### Install the service
+
+On the VPS, after [Install on a VPS](#install-on-a-vps) and the logins (`claude auth login`, or Pi's `/login`):
+
+```sh
+mkdir -p ~/projects ~/.config/systemd/user ~/.config/pi-durable
+cp ~/pi-durable-instance/contrib/systemd/pi-durable.service \
+   ~/pi-durable-instance/contrib/systemd/pi-durable-backup.service \
+   ~/pi-durable-instance/contrib/systemd/pi-durable-backup.timer ~/.config/systemd/user/
+install -m 600 /dev/null ~/.config/pi-durable/env      # then fill it in: below
+sudo loginctl enable-linger "$USER"   # user services run from boot, without a login session
+systemctl --user daemon-reload
+systemctl --user enable --now pi-durable.service pi-durable-backup.timer
+systemctl --user status pi-durable
+```
+
+- `pi-durable.service` runs `~/pi-durable-instance/bin/pi-durable serve --cwd ~/projects`: the coding tools work
+  in `~/projects`. Edit `ExecStart` if the checkout or the directory is elsewhere, then `daemon-reload`.
+- Without `enable-linger`, the server stops when you log out and starts only when you log in.
+- `systemctl --user stop pi-durable` closes it durably: every client gets "the server is stopping" (and
+  reconnects later), and unfinished work resumes at the next start. It exits with 143, which the unit counts
+  as a clean stop. On a crash, systemd restarts it after 5 s.
+
+### The environment file
+
+`~/.config/pi-durable/env` holds the server's settings as `NAME=value` lines (mode 600; systemd reads it at each
+start, without shell expansion, so write full paths). All are optional:
+
+```sh
+# The model; else the last /model choice (settings.json), else openai-codex/gpt-6.1-sol.
+PI_DURABLE_MODEL=claude-cli/sonnet
+# systemd's PATH may lack ~/.local/bin: add the directories of node and claude if they live there.
+PATH=/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The web app: both, or neither for socket only (see Web access over Tailscale).
+PI_DURABLE_ORIGIN=https://vps.example-tailnet.ts.net
+PI_DURABLE_ALLOW_LOGIN=me@github
+# PI_DURABLE_PORT=7433             # the loopback port tailscale serve proxies to
+# PI_DURABLE_REMOTE_TOOLS=confirm  # off: only a terminal on the VPS may turn coding tools on
+# PI_DURABLE_TOOLS_IDLE_MIN=30     # coding tools turn off after this many minutes without a run
+# PI_DURABLE_PUSH_PREVIEW=off      # on: notifications show the reply's first words
+# PI_DURABLE_DATA_DIR=/home/me/.local/state/pi-durable
+```
+
+A malformed value stops the server at start with a message naming the variable (see the journal).
+`systemctl --user restart pi-durable` applies a change.
+
+### What it does
+
+- It always starts with the coding tools off; `serve` refuses `--allow-tools`. A client turns them on, after a
+  confirmation: the terminal UI's `/tools on`, or the web app unless `PI_DURABLE_REMOTE_TOOLS=off`. They turn off
+  by themselves after `PI_DURABLE_TOOLS_IDLE_MIN` minutes in which neither Pi nor an agent ran. Every change is
+  shown to every client and written to the journal, naming who made it (ADR 0019).
+- It listens on the socket `<data dir>/chat.sqlite.sock` (mode 600) as soon as the chat is open, and on
+  `127.0.0.1:7433` when the web app is configured; never on another address. It resumes interrupted work behind
+  the scenes, so clients can watch it.
+- An interactive `pi-durable` in a shell on the VPS attaches to the running server (its model, tools and
+  directory apply). One-shot launches (`-p`, `--status`, `--history`, `--resume`) and `--local` need the chat's
+  flock, which the server holds: they exit with 75 until it stops.
+- `pi-durable serve pair`, `serve devices [--revoke NAME]` and `backup` talk to it over the socket.
+
+### Logs
+
+```sh
+journalctl --user -u pi-durable -f       # follow
+journalctl --user -u pi-durable -b       # since boot
+```
+
+The server logs its start (`listening on …`, `ready: …`, whether the web app is on), tool switches
+(`coding tools on, by …`, `coding tools off: idle for 30 minutes`), pairings and revocations, `push: …` and
+`web: …` lines, host warnings (which clients also see as notices), and `stopping`.
+
+### Updating
+
+```sh
+cd ~/pi-durable-instance
+git pull --ff-only && npm ci --ignore-scripts && npm run check && npm test
+systemctl --user restart pi-durable
+```
+
+Clients reconnect by themselves; the web app reloads when its files changed. If the unit files in
+`contrib/systemd/` changed, copy them again and run `systemctl --user daemon-reload` first.
+
+## Web access over Tailscale
+
+`pi-durable serve` serves the web app on `127.0.0.1:7433` (or `--port`, `PI_DURABLE_PORT`) and nowhere else.
+`tailscale serve` gives it HTTPS on your tailnet. A browser gets in only with all three of: a tailnet login in
+`PI_DURABLE_ALLOW_LOGIN`, the exact origin in `PI_DURABLE_ORIGIN`, and a device paired with a one-time code
+(ADR 0019, "Web peers" in [protocol.md](protocol.md#web-peers)). The VPS and the phone must be on the same
+tailnet.
+
+1. In the Tailscale admin console, under DNS: enable **MagicDNS**, then **HTTPS Certificates**.
+2. On the VPS, proxy tailnet HTTPS to the loopback port (`--bg` keeps it across reboots; without
+   `sudo tailscale set --operator=$USER` once, run it with `sudo`):
+
+   ```sh
+   tailscale serve --bg --https=443 http://127.0.0.1:7433
+   tailscale serve status   # shows https://<vps>.<tailnet>.ts.net
+   ```
+
+3. Find your login: `tailscale whois <the phone's 100.x.y.z address>` prints it (for example
+   `alice@example.com` or `alice@github`).
+4. Put both in `~/.config/pi-durable/env` (mode 600), then restart the server
+   (`systemctl --user restart pi-durable`):
+
+   ```sh
+   PI_DURABLE_ORIGIN=https://<vps>.<tailnet>.ts.net
+   PI_DURABLE_ALLOW_LOGIN=<login>
+   ```
+
+   `PI_DURABLE_ORIGIN` is exactly what the browser's address bar shows: `https://`, the name, no path, no
+   trailing slash. Several logins are separated by commas. Without both variables, `serve` runs socket only and
+   says so when it starts. A login removed from the list is refused from the next start.
+
+The listener must stay loopback-only. The server trusts the `Tailscale-User-Login` header only because nothing
+but `tailscale serve` reaches the port from outside, and only to check it against the allow-list. Never forward
+the port, put another proxy in front of it, or use `tailscale funnel` for it.
+
+### Pairing a phone
+
+1. On the VPS: `pi-durable serve pair`. It prints a one-time code, `XXXX-XXXX`, valid for 5 minutes.
+2. On the phone, open `https://<vps>.<tailnet>.ts.net`. On an iPhone, first add it to the home screen (Share,
+   Add to Home Screen) and pair from there: the home-screen app keeps its own cookies, apart from Safari's.
+3. Enter the code and a name for the device (1 to 40 characters, unique). Five wrong tries spend the code;
+   run `serve pair` again for a new one.
+
+The browser keeps a `pd_device` cookie for 400 days; the server stores only its sha256, in
+`<data dir>/serve/devices.json`. A device that clears its site data pairs again.
+
+### Listing and revoking devices
+
+```sh
+pi-durable serve devices                  # names, when paired, when last seen (to about 10 minutes)
+pi-durable serve devices --revoke phone   # forget it and disconnect it now
+```
+
+A revoked device sees the pairing screen and needs a new code. For a lost phone, also remove it from the tailnet
+in the admin console.
+
+### Certificate names are public
+
+The HTTPS certificate comes from Let's Encrypt, so its name, `<vps>.<tailnet>.ts.net`, is published in the
+public Certificate Transparency logs: anyone can learn the machine name and the tailnet name, though not reach
+them. Choose a machine name you don't mind, and consider renaming the tailnet's DNS name to a generated one in
+the admin console, before enabling HTTPS.
+
+### When it does not connect
+
+- 403: the login is not in `PI_DURABLE_ALLOW_LOGIN`, or `PI_DURABLE_ORIGIN` differs from the address bar.
+- The pairing screen keeps coming back: the device is not paired (or was revoked); pair it.
+- The server's log (`journalctl --user -u pi-durable`) shows `web: …` lines for pairings and failures.
+
+## Push notifications
+
+`pi-durable serve` can notify a phone when Pi answers or an agent reports while no client is visible
+(ADR 0021). It needs the web app on its HTTPS origin (`PI_DURABLE_ORIGIN`).
+
+- Android (Chrome, Firefox) and desktop browsers subscribe from the web app. On iPhone and iPad, push works
+  only for the app added to the home screen (Share, Add to Home Screen) on iOS or iPadOS 16.4 or newer;
+  Safari tabs cannot subscribe.
+- By default a notification says only that Pi answered or which agent reported. `PI_DURABLE_PUSH_PREVIEW=on`
+  adds the reply's first words, which then show on the lock screen and pass through the push service
+  (encrypted, but under its retention).
+- The server keeps its VAPID key pair in `<data dir>/serve/vapid.json` and the subscriptions in
+  `serve/push.json`, both mode 600. It posts only to the known push services (Google FCM, Apple, Windows,
+  Mozilla). A subscription the service reports gone (404 or 410) is dropped, as are a device's subscriptions
+  when the device is revoked.
+- To reset push, stop the server and delete `serve/vapid.json`. The next start makes new keys and drops every
+  subscription, since push services refuse them under another key; each device subscribes again when it next
+  opens the app. Deleting only `serve/push.json` forgets the subscriptions and keeps the keys.
+- Failures go to the server's log (the systemd journal) as `push: …` lines, with the push service's origin and
+  the device name, never the full endpoint.
 
 ## Moving between hosts
 
@@ -239,6 +445,12 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `unii: compaction … failed` | The compaction model call failed. The line shows a placeholder and is retried at the next message or after 10 s. `/status` shows `failed` and `lastError`. |
 | `unii: log … is not contiguous` | The memory log has a gap. Restore `chat.unii/` from a backup. |
 | `--request-id` returns an old answer | That ID was used before. Use a new ID for a new task. |
+| The server keeps restarting | `journalctl --user -u pi-durable -b` shows why: often missing credentials (sign in on the VPS as the same user), a model that cannot run, a malformed `PI_DURABLE_*` value, or `node`/`claude` not on the service's `PATH` (set it in `~/.config/pi-durable/env`). |
+| Exit 75 from `serve`, `-p`, `--status` or `--local` while the server runs | The server holds the chat's flock. Use the attached terminal UI, or `systemctl --user stop pi-durable` first. |
+| `No server is running for this chat` | `serve pair` and `serve devices` need the server: `systemctl --user start pi-durable` (or `pi-durable serve`). `backup` works without one. |
+| `The socket path … is over 107 bytes and XDG_RUNTIME_DIR is unset` | Use a shorter `--database` or `--data-dir` path, or run under a login session or systemd, which set `XDG_RUNTIME_DIR`. |
+| `… exists and is not a socket; move it away` | Something else sits at `<db>.sock`. Move it; the server replaces only a stale socket. |
+| `web devices unavailable: …/devices.json is damaged` | The server runs without web pairing. Fix the file, or delete it and pair the devices again. |
 
 Exit statuses: 0 success, 1 error, 75 lock busy, 130 SIGINT, 129 SIGHUP, 143 SIGTERM.
 

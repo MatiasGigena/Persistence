@@ -35,7 +35,15 @@ agents, and each agent is another conversation in the same database.
   Node strips the types at load: there is no build step ([ADR 0011](decisions/0011-typescript-without-build.md)).
 - **CLI** (`src/cli.ts`): sets umask 077, parses arguments, resolves paths, and
   starts the host under `flock`. `--help`, `--version`, and inspection of a missing
-  database finish here without a lock.
+  database finish here without a lock. An interactive full-screen launch first probes the
+  chat's socket and, when a server answers, attaches to it instead (below).
+- **Attached client** (`src/client/`, [ADR 0018](decisions/0018-tui-attach.md)): `attach.ts` decides whether a
+  launch probes (`--local`, `--plain`, `-p`, a pipe, `--status`, `--history` and `--resume` never do; `--attach`
+  must find a server), then runs the terminal UI in the CLI's own process, with no flock, `ModelRuntime` or
+  Harness. `remote-session.ts` is a `UiSession` over the protocol: feeds mirrored with `applyOps`, the last
+  status, requests with ids and timeouts. `unix-link.ts` is the reconnecting link: NDJSON on `<db>.sock` (its
+  owner checked first), hello within 1.5 s, a ping every 20 s, backoff from 0.25 s to 5 s. Exiting detaches;
+  the server keeps working.
 - **Host** (`src/host/`): creates the model runtime, registers the `claude-cli`
   provider, checks the model and credentials (refusing a subscription token on
   `anthropic`), opens the instance, resumes pending work, then runs the chosen mode:
@@ -56,8 +64,15 @@ host only through `src/ui/types.ts`.
 - **Protocol** (`src/protocol/`): the wire protocol of server mode ([protocol.md](protocol.md)): message
   types, parser, and the item diff and mirror that sync a `UiSession` across a link. Plain TypeScript for Node
   and the browser alike. The server (`src/server/`), the attaching client (`src/client/`) and the web app
-  (`src/web/`) are being built on it ([plan](plans/server-and-web.md), ADRs 0016 to 0022, proposed); until
-  then `serve`, `serve pair`, `serve devices`, `backup` and `--attach` are parsed and refused.
+  (`src/web/`) are built on it ([plan](plans/server-and-web.md), ADRs 0016 to 0022).
+- **Server** (`src/server/`, ADR 0016): `pi-durable serve` runs the host without a terminal, under the same
+  flock (`serve.ts`, entered from `host.ts`). It opens the chat with the tools off, listens on the Unix socket
+  (`transport-unix.ts`) and, when configured, the web listener (`transport-ws.ts`), then serves one
+  `createUiSession()` through the hub. `hub.ts` fans the session out: one `Connection` per peer
+  (`connection.ts`: handshake, ops, per-feed sync by `diffItems`, backpressure, keepalive), agent feeds opened
+  once by refcount, the remote tools policy and idle tools-off, and the push triggers. `admin.ts` is the CLI's
+  side of `backup`, `serve pair` and `serve devices`; `backup.ts` writes backups as the writer (ADR 0022);
+  `store.ts` holds `serve/`'s JSON files.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,
   installs the three extensions, and configures Pi for this launch.
 - **Memory** (`src/memory/`): the UniiChat log, tree, view, and compactor, plus the
@@ -144,6 +159,9 @@ Details: [agents.md](agents.md), [decisions/](decisions/).
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
 | `chat.sqlite.lock` | nothing; the flock target | `flock` | none needed |
 | `settings.json` (beside the database) | `{ model }`: the default model chosen with `/model` | `writeSettings` (`src/host/config.ts`), on `/model` | written to a temp file, fsynced, renamed |
+| `serve/devices.json`, `push.json`, `vapid.json` | paired devices, push subscriptions, the VAPID keys | the server (`store.ts` `writeJson`) | written to a temp file, fsynced, renamed, directory fsynced |
+| `backups/<UTC time>/` | `VACUUM INTO` copy, `.unii` and `settings.json` copies | `backup.ts`, as the writer | every file and directory fsynced |
+| `chat.sqlite.sock` | nothing; the server's socket | `serve` | removed at stop; a stale one is replaced under the flock |
 | Pi's `auth.json` | credentials | Pi's `ModelRuntime` | outside this project |
 | `$TMPDIR/pi-durable-claude-*/` | one `claude-cli` request's system prompt and tool list | the provider | removed after the request |
 
@@ -165,8 +183,15 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
   the same database is also refused. A second host exits with status 75.
 - The memory directory sits beside the database and is covered by the same lock.
   In one process, a second `openMemory` of the same directory throws.
-- No daemon, boot service, or inbound listener. Agents and the compactor run inside
+- Without `serve`: no daemon, boot service, or inbound listener. Agents and the compactor run inside
   the host. They stop when it exits and continue at the next work launch.
+- `pi-durable serve` is the same host process without a terminal, normally run by systemd
+  (`contrib/systemd/`). It listens on a mode 600 Unix socket and, for the web app, on loopback TCP only.
+  SIGTERM, SIGINT and SIGHUP send every client `bye` 1012, then close the session and the Harness as above.
+  Clients write nothing: they ask the server, which is the one writer.
+- `backup` with a server asks it over the socket, and the server copies in one synchronous step
+  (`Instance.exclusive`: one operation of the SQLite adapter's queue). Without one, the CLI takes the flock
+  and `host.ts` copies.
 - With `claude-cli`, each model request runs a short-lived `claude -p` child (with
   its stub MCP server), killed when the reply's message ends or the request aborts.
   A crash mid-request leaves no CLI session behind; the Harness reissues the request.
@@ -182,7 +207,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/cli.ts` | Entry: parses arguments, checks Node, resolves paths, runs the host under `flock` |
 | `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
-| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`; `transcript`, `answerText` |
+| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups); `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/recovery.ts` | `resumeInstance` (pending tasks and queued input), `settleAgents` (wait until agents are idle) |
 | `src/memory/index.ts` | Public exports of the memory |
@@ -201,12 +226,37 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/protocol/diff.ts` | `diffItems` (item ops between what a peer has and the current items), `wireItem` and `clip` |
 | `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |
 | `src/protocol/version.ts` | `PROTOCOL` |
+| `src/client/attach.ts` | `probes`, `connect` (the probe), `attachChat` (the CLI's attach routing), `runAttached` (the TUI on a server, "Detached; the server keeps working."), `serverAnswers` |
+| `src/client/remote-session.ts` | `RemoteSession`: a `UiSession` over a `ServerLink`; mirrors, status, notices, requests, `send` resent with its requestId after a reconnect, agent feeds re-opened; `attached` for `TuiInfo` |
+| `src/client/unix-link.ts` | `ClientLink` (hello and welcome, ping, `bye`, reconnect with backoff), `unixConnector` (NDJSON over the socket, owner checked), `checkSocket` |
+| `src/server/serve.ts` | `serve`: opens the chat with tools off, the socket, the web listener and push when configured, the session and the hub; resumes pending work; stops on the signal with `bye` 1012 |
+| `src/server/hub.ts` | `Hub` (the `PeerHub`): connections, the op handlers, agent feeds by refcount, notices, the tools policy and idle tools-off, push triggers and their suppression |
+| `src/server/connection.ts` | `Connection`: one peer's handshake, requests (peer checks, in-flight limit), feed and status sync (`diffItems`, ≤50 ms, gated on `buffered()`, status ≤4/s), slow-peer and silence closes, visibility |
+| `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing; `lineSplitter` |
+| `src/server/admin.ts` | The CLI's admin client: `adminRequest` over the socket (owner checked), `backupOverSocket`, `pairCommand`, `devicesCommand` |
+| `src/server/backup.ts` | `backup` (`VACUUM INTO` and the `.unii` and settings copies in one step, then `prune`), `backupOffline`, `stamp` |
+| `src/server/store.ts` | `writeJson`, `readJson`, `jsonFile`, and narrowing helpers for `serve/`'s JSON files (mode 600, atomic) |
+| `src/server/link.ts` | The seams: `PeerLink`, `PeerHub`, `DeviceRegistry`, `PushNotifier` |
+| `contrib/systemd/` | `pi-durable.service` (`serve --cwd %h/projects`), `pi-durable-backup.service` and its daily `.timer` |
+| `src/server/auth.ts` | `Devices` (the `DeviceRegistry`: pairing codes, `pd_device` cookies by sha256 in `serve/devices.json`), `gate` and `authenticate` (login allow-list, Origin, device) |
+| `src/server/static.ts` | The web app's files: `src/web/` at `/`, `src/protocol/`, `marked`; type stripping, ETags, the CSP; `assetsHash` for `welcome.assets` |
+| `src/web/index.html`, `manifest.webmanifest`, `offline.html`, `styles.css`, icons | The installable app shell; the only inline script is the `marked` import map, allowed by its CSP hash |
+| `src/web/main.ts` | Boots the app: pairing screen, connection banner, header, composer, menus |
+| `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |
+| `src/web/store.ts` | Mirrors feeds with `applyOps`, status, notices, pending sends (resent with their requestId) |
+| `src/web/chat-view.ts`, `markdown.ts`, `format.ts` | Keyed DOM chat, sanitized Markdown, TUI-parity text helpers |
+| `src/web/panels/*` | Sheets: agents, memory zoom, model picker, tools (confirm dialog), settings |
+| `src/web/push.ts`, `sw.ts` | Push subscribe on a tap; service worker: network-first shell, offline page, push and click handlers |
+| `src/server/transport-ws.ts` | `startWebListener`: HTTP on 127.0.0.1, `/api/me`, `/api/pair`, the app, and `/ws` WebSockets handed to the hub as `PeerLink`s |
+| `src/server/push.ts` | `createPush`: Web Push on `node:crypto` (VAPID, aes128gcm), the key pair in `serve/vapid.json` and the subscriptions in `serve/push.json`; the `PushNotifier` the hub calls |
 | `tsconfig.json` | Strict TypeScript for `tsc` (no emit): erasable syntax only, `.ts` import specifiers |
 | `eslint.config.ts` | typescript-eslint rules: no `any`, written or inferred, and no suppression comments |
 | `test/host/` | CLI parsing, paths, global chat, flock, shutdown |
 | `test/runtime/` | Reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript |
 | `test/memory/` | Log, tree, view, compactor, extension |
 | `test/agents/` | Roles, messaging, stops, reports, `zoom("Name")` pages, exactly-once delivery across close and SIGKILL; an agent's view and compaction through the host wiring |
+| `test/client/` | `RemoteSession` against the fake server (snapshot and ops, resync, status and notices, request errors, reconnects, resent sends), the link over real sockets (framing, probe failures, pings, `bye`, backoff), attach routing and the launcher's exit 75 hint, and an end-to-end attach to `serve` with a restart |
 | `test/protocol/` | Random feed sequences through `diffItems` and `applyOps`, clipping, every message through JSON and the parsers, malformed input |
+| `test/server/` | The hub with a fake session and in-memory links (handshake, version, ops, peer checks, feed refcounts, slow peers, status coalescing, keepalive, tools policy and idle off, push triggers); the Unix socket; `serve` end to end in a child process with a faux model and through the launcher; backups that open, and pruning. Auth: allow-list, Origin, pairing codes, cookies, revoke; static files: stripping, CSP, traversal; the web listener: refused upgrades, links, close codes, frame limits, pairing over HTTP. Push: RFC 8291's vector, the VAPID JWT, endpoint checks, sends to a local server (201, 410, 429, 5xx) |
 | `test/providers/` | `claude-cli` against a fake CLI, through the Harness; the stub MCP server; the subscription check |
-| `test/fixtures/` | Faux models, the fake `claude` CLI, and child-process instances for the tests |
+| `test/fixtures/` | Faux models, the fake `claude` CLI, child-process instances (`serve-faux.ts`: the server on a faux model), `server-fakes.ts` (a fake `UiSession`, `PeerLink` and push for hub tests), and `fake-server.ts` (an in-memory, transport-agnostic server written from protocol.md, for client tests) |

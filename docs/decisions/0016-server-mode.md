@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-10-19. Amends [0008](0008-one-writer.md) and [0012](0012-terminal-ui.md).
+Accepted, 2026-10-19. Amends [0008](0008-one-writer.md) and [0012](0012-terminal-ui.md).
 
 ## Context
 
@@ -41,3 +41,13 @@ reached from a phone's browser and a laptop, and still from a shell on the VPS. 
 - The terminal UI can run remote: `memoryView` and `zoom` became async and `onNotice` was added to the contract.
 - `serve/` sits beside the database, like `settings.json`: with the default layout that is the data dir, as the
   plan says; with `--database` it follows the database.
+
+## Implementation notes
+
+- `serve` listens on the socket as soon as the chat is open, and answers `hello` with `welcome` at once;
+  `status`, the root `snapshot` and `ready` follow when the session is up. It resumes interrupted work after the
+  session is up, in the background, so clients watch the resumed run instead of waiting for it.
+- A stale `<db>.sock` is removed only under the flock, so it can only be a dead server's.
+- Server-side limits the protocol left open: at most 32 requests pending per connection (`unavailable` beyond),
+  a connection silent for 60 s is closed with `bye` 1000, and `status` goes to a peer at most 4 times a second.
+- The admin commands' socket client is `src/server/admin.ts`, so the CLI loads no runtime for them.

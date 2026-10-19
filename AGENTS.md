@@ -15,9 +15,9 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
 - `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents and /mem). The TUI never imports pi-durable.
 - `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`.
-- `src/server/` (phase 2–6, not yet): `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
-- `src/client/` (phase 3, not yet): `RemoteSession` (a `UiSession` over the socket) and attach.
-- `src/web/` (phase 4–6, not yet): the phone web app, vanilla DOM TypeScript served type-stripped.
+- `src/server/`: `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
+- `src/client/`: the attached TUI: `attach.ts` (probe and routing), `remote-session.ts` (a `UiSession` over the protocol), `unix-link.ts` (the reconnecting socket link).
+- `src/web/`: the phone web app, vanilla DOM TypeScript served type-stripped (own `tsconfig.json`; `sw.ts` has `sw/tsconfig.json`). `format.ts`, `store.ts`, `link.ts` and `markdown.ts` stay DOM-free so `test/web/` runs them in Node.
 - `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
 - `tsconfig.json`, `eslint.config.ts`: the type and lint rules `npm run check` enforces.
 

@@ -27,14 +27,15 @@ Every message is one JSON object with a string field `t`, its type. Text is UTF-
 |---|---|---|
 | Who | the attached TUI and the admin commands, on the VPS | the web app, through `tailscale serve` |
 | Where | `statePaths(db).socket`: `<db>.sock`, or `$XDG_RUNTIME_DIR/pi-durable-<hash>.sock` when that is over 107 bytes | `ws://127.0.0.1:<port>/ws` (the browser sees `wss://<PI_DURABLE_ORIGIN host>/ws`) |
-| Framing | NDJSON: one message per line, `\n`-terminated (JSON escapes newlines inside strings) | one message per text frame; a binary frame closes with 1003 |
+| Framing | NDJSON: one message per line, `\n`-terminated (JSON escapes newlines inside strings) | one message per text frame; a binary frame closes with 1003, a frame over 12 MiB (`3 × LIMITS.clientMessage` bytes, the most that many code units take in UTF-8) with 1009 |
 | Auth | the socket file is mode 600 in the user's own directory | see [Authentication](#authentication) |
 | `welcome.peer` | `socket` | `web` |
 
 - The server never listens elsewhere: not on a public address, not on `0.0.0.0`. See the invariant in AGENTS.md.
 - Before connecting, a socket client checks that the socket is owned by its own uid, and refuses otherwise.
 - A client message longer than `LIMITS.clientMessage` (4 Mi code units) is not parsed (on the socket, the line
-  is skipped up to its newline). The server answers `bad_request` with `id` -1 and keeps the connection.
+  is skipped up to its newline). The server answers `bad_request` with `id` -1 and keeps the connection. On the
+  WebSocket the transport answers it and does not hand it to the hub.
 - Malformed messages (`parseClientMessage` returns a `ParseError`): with a readable request `id`, the server
   answers that id with `unknown_op` (for `invalid: 'unknown_op'`) or `bad_request`; an unknown `t` is ignored;
   anything else gets `bad_request` with `id` -1. None closes the connection.
@@ -61,13 +62,17 @@ client                                         server
    `bye {code: 4000}` and closes. Without a valid `hello` within `LIMITS.helloMs` (10 s), the same.
 2. Before `hello`, a `req` is answered with `res` error `version`; `visible` and `ping` are ignored.
 3. The server answers with `welcome`, `status`, the root feed's `snapshot`, then `ready`. From `ready` on the
-   client has the whole state, and the server sends changes as they happen.
+   client has the whole state, and the server sends changes as they happen. A server that is still starting (it
+   listens as soon as the chat is open) sends `welcome` at once and the rest when its session is up; meanwhile
+   every request but the `admin.*` ones gets `unavailable`.
 4. The client may send requests any time after its `hello`. Each `req` gets exactly one `res` with the same `id`.
-   Responses may come in any order; ids are the client's, and must not repeat while one is pending.
+   Responses may come in any order; ids are the client's, and must not repeat while one is pending. At most 32
+   requests may be pending on one connection; another gets `unavailable`.
 5. Messages on one connection arrive in the order sent. A feed's `snapshot` precedes any `items` for it; the
    `res` of `feed.open` precedes that feed's first `snapshot`.
-6. The client sends `ping {n}` every `LIMITS.pingMs` (25 s) while open; the server answers `pong {n}`. A client
-   that receives nothing for 2 × `LIMITS.pingMs` treats the link as dead and reconnects.
+6. The client sends `ping {n}` at least every `LIMITS.pingMs` (25 s) while open (the attached TUI: every 20 s); the
+   server answers `pong {n}`. A client that receives nothing for twice its ping interval treats the link as dead
+   and reconnects. The server ends a connection that sent nothing for 60 s with `bye {code: 1000}`.
 7. The server ends a connection by sending `bye {code, reason}`, then closing: on a WebSocket with a close frame
    of the same code, on the socket by ending it. A client detaches by closing (WebSocket code 1000).
 
@@ -91,24 +96,41 @@ proxies HTTPS on the tailnet to it. Every HTTP request, the WebSocket upgrade in
 3. **Device.** The `pd_device` cookie's sha256 (hex) is in `serve/devices.json`. Otherwise 401. Exempt: the
    static app and `/api/pair`, so an unpaired browser can load the pairing screen and pair.
 
+The header is trusted only because nothing but `tailscale serve` reaches the loopback port from outside, and only
+for this allow-list: the server never uses it as an identity beyond naming the peer in notices (`who` is
+`<login>/<device>`). A refused `/api/*` request or upgrade has the body `{"error":"login" | "origin" | "unpaired"}`.
+
 A local user of the VPS can reach the loopback port and forge the login header, so the device cookie is what
 stops them; the checks hold only together. The VPS is assumed to have one user.
 
 | Endpoint | Checks | Answer |
 |---|---|---|
-| `GET /`, `GET /<app file>` | 1 | the web app; `.ts` files type-stripped to JavaScript; a strict CSP |
+| `GET /`, `GET /<app file>` | 1 | the web app; `.ts` files type-stripped to JavaScript; a strict CSP; 404 for any other path |
 | `GET /api/me` | 1, 3 | 200 `{"device":"<name>"}`; 401 `{"error":"unpaired"}` |
-| `POST /api/pair` | 1, 2 | body `{"code":"XXXX-XXXX","name":"<device name>"}` → 204 and the cookie; 400 malformed, 401 wrong or expired code, 409 name taken, 429 too many tries |
+| `POST /api/pair` | 1, 2 | body `{"code":"XXXX-XXXX","name":"<device name>"}` (at most 1 KiB) → 204 and the cookie; 400 malformed, 401 wrong, spent or expired code, 409 name taken, 429 over 10 tries a minute from one address (with `Retry-After`) |
 | `GET /ws` (upgrade) | 1, 2, 3 | 101, then this protocol as a `web` peer; 403 or 401 without upgrading |
 
 - The web app calls `/api/me` before opening `/ws`: a browser cannot read why an upgrade failed, and the app must
   tell "pair this device" from "offline".
+- **App files** ([src/server/static.ts](../src/server/static.ts), ADR [0020](decisions/0020-web-client-without-build.md)):
+  `src/web/` at `/` (`/` is `index.html`), `src/protocol/` at `/protocol/`, `src/ui/types.ts` at `/ui/types.ts`, and
+  marked's ESM build at `/vendor/marked.esm.js` (with its source map). So `src/web/x.ts` imports
+  `../protocol/messages.ts` as in the source tree, and `marked` through an import map in `index.html`. Served
+  extensions: `.html .ts .js .css .json .map .webmanifest .svg .png .ico .woff2`; never dot-files or `tsconfig.json`.
+  Every file has an ETag and `Cache-Control: no-cache` (nothing is content-hashed). Every response carries the CSP
+  (`default-src 'self'`; `script-src 'self'` plus the sha256 of each inline `<script type="importmap">` in
+  `index.html`, and no other inline script; `connect-src 'self'` and the origin's `wss:`; `object-src 'none'`,
+  `base-uri 'none'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+  `welcome.assets` hashes every served file's path and bytes.
 - **Pairing.** `pi-durable serve pair` calls `admin.pair` and prints a one-time code: 8 characters of Crockford
-  base32, shown as `XXXX-XXXX`, valid 10 minutes, one use; 5 wrong tries spend it. The phone enters it with a
-  device name on the pairing screen. The server answers with
-  `Set-Cookie: pd_device=<32 random bytes, base64url>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=31536000`
-  and stores only `{name, hash: sha256 hex, pairedAt}` in `serve/devices.json` (mode 600). Device names are unique,
-  1 to 40 characters.
+  base32, shown as `XXXX-XXXX`, valid 5 minutes, one use; 5 wrong tries spend it. One code is pending at a time:
+  a new one replaces it, and a server restart forgets it. Case, dashes and spaces do not matter, and `I`/`L` read
+  as `1`, `O` as `0`; the comparison is constant-time. The right code with a taken name gets 409 and stays valid. The
+  phone enters it with a device name on the pairing screen. The server answers with
+  `Set-Cookie: pd_device=<32 random bytes, base64url>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=34560000`
+  (400 days, the most browsers keep) and stores only `{name, hash: sha256 hex, pairedAt, lastSeen?}` in
+  `serve/devices.json` (mode 600) as `{"devices": [...]}`; `lastSeen` is written at most every 10 minutes. Device
+  names are unique (exact match), 1 to 40 characters after trimming, without control characters.
 - **Revocation.** `pi-durable serve devices --revoke NAME` calls `admin.revoke`: the device leaves
   `devices.json`, and its open connections get `bye {code: 4001}`.
 - A login removed from `PI_DURABLE_ALLOW_LOGIN` takes effect at the next `serve` start.
@@ -157,12 +179,12 @@ reads as `undefined`, and `memory` may also be `null`.
 | `models` | — | `{models: ModelChoice[]}` | both | |
 | `model.set` | `provider`, `id` | `null` | both | `failed` |
 | `tools.set` | `enabled`, `confirm?: 'enable-tools'` | `null` | both | `forbidden`, `failed` |
-| `push.subscribe` | `subscription: {endpoint, expirationTime?, keys: {p256dh, auth}}` | `null` | web | `forbidden` |
-| `push.unsubscribe` | `endpoint` | `null` | web | `forbidden` |
+| `push.subscribe` | `subscription: {endpoint, expirationTime?, keys: {p256dh, auth}}` | `null` | web | `forbidden`, `unavailable` |
+| `push.unsubscribe` | `endpoint` | `null` | web | `forbidden`, `unavailable` |
 | `admin.backup` | `out?` | `{path, bytes}` | socket | `forbidden`, `failed` |
-| `admin.pair` | — | `{code, expiresAt}` | socket | `forbidden` |
-| `admin.devices` | — | `{devices: {name, pairedAt, lastSeen?}[]}` | socket | `forbidden` |
-| `admin.revoke` | `name` | `null` | socket | `forbidden`, `not_found` |
+| `admin.pair` | — | `{code, expiresAt}` | socket | `forbidden`, `unavailable` |
+| `admin.devices` | — | `{devices: {name, pairedAt, lastSeen?}[]}` | socket | `forbidden`, `unavailable` |
+| `admin.revoke` | `name` | `null` | socket | `forbidden`, `not_found`, `unavailable` |
 
 Times are milliseconds since the epoch. Every op answers `bad_request` to malformed params, `unknown_op` when the
 server does not know it, and `unavailable` while the server shuts down. Each maps to one `UiSession` method:
@@ -175,7 +197,8 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   sub agents first, and is empty for an unknown name.
 - **`feed.open`** opens an agent's conversation by name (case-insensitive) and returns its feed id, an opaque
   string (`ROOT_FEED`, `"root"`, is Pi's). A `snapshot` of it follows the `res`. Opening an open feed again returns
-  the same id and sends a fresh snapshot. The server ends the feed with `feed.end` if the agent disappears.
+  the same id and sends a fresh snapshot. The server ends the feed with `feed.end` if the agent disappears: once
+  the agent has been in `status.agents`, it leaving that list ends its feed.
 - **`feed.close`** closes an agent feed this connection opened: no more messages for it. The root feed cannot be
   closed (`bad_request`).
 - **`feed.resync`** asks for a fresh `snapshot` of a feed, after `applyOps` returned `'resync'`.
@@ -187,7 +210,7 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   - Turning tools on needs `confirm: 'enable-tools'` (the client asked its user first); without it,
     `bad_request`. Turning them off needs nothing.
   - A web peer may turn them on only when `welcome.tools.remote` is `confirm` (`PI_DURABLE_REMOTE_TOOLS`);
-    otherwise `forbidden`. Socket peers always may.
+    otherwise `forbidden`, checked before the `confirm`. Socket peers always may.
   - Every change is broadcast as a `notice` (`warn` for on, `info` for off) naming who made it (the device, or
     "terminal"), and written to the server's log (the systemd journal).
   - The server starts with tools off. After `welcome.tools.idleMinutes` minutes with no run (Pi and agents idle),
@@ -195,10 +218,26 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 - **`push.subscribe`** stores the browser's push subscription for this device, replacing one with the same
   endpoint; `endpoint` must be an `https:` URL. **`push.unsubscribe`** removes it; an unknown endpoint is not an
   error. The server pushes when Pi finishes a run or an agent reports while no client is visible.
+  - The endpoint must be a known push service on port 443: `fcm.googleapis.com`, `*.push.apple.com`,
+    `*.notify.windows.com`, `updates.push.services.mozilla.com` or `*.push.services.mozilla.com`. Anything else
+    (`http:`, an IP, `localhost`, another host) is `bad_request`, so a forged subscription cannot point the
+    server's requests inside the network. `keys.p256dh` must be an uncompressed P-256 point and `keys.auth` 16
+    bytes, both unpadded base64url as `PushSubscription.toJSON()` gives them.
+  - **The push payload**, what the service worker reads with `event.data.json()`, is `{title, body, tag}`: three
+    strings, UTF-8 JSON of at most 3993 bytes (the server cuts `body`, ending it with `…`, to fit). Pass `tag` to
+    `showNotification` as its `tag`, so a newer notification replaces an older one with the same tag. The same
+    tag is the push's `Topic` (hashed when it is not 1 to 32 base64url characters), so a push service holding
+    undelivered pushes keeps only the newest per tag. With `PI_DURABLE_PUSH_PREVIEW=off`, `body` holds no chat
+    text. Pushes are aes128gcm-encrypted (RFC 8291) and sent with `TTL: 86400` and `Urgency: normal`.
+- **`push.subscribe`** and **`push.unsubscribe`** answer `unavailable` when the server has no push (no web
+  listener, or its keys could not be made).
 - **`admin.backup`** writes an online backup (`VACUUM INTO`, then a copy of the `.unii` directory and
-  `settings.json`) into a new directory under `out` (an absolute path; default `backups/` beside the database),
-  and returns that directory and its size in bytes.
-- **`admin.pair`**, **`admin.devices`**, **`admin.revoke`**: see [Web peers](#web-peers).
+  `settings.json`) into a new directory under `out` (an absolute path, else `bad_request`; default `backups/`
+  beside the database), and returns that directory and its size in bytes. The directory is named for the UTC
+  time, `2026-10-19T03-00-00Z` (with `-2`, `-3`, … for another in the same second); afterwards such directories
+  in `out` older than 14 days are deleted, and nothing else there.
+- **`admin.pair`**, **`admin.devices`**, **`admin.revoke`**: see [Web peers](#web-peers). They answer
+  `unavailable` when `serve/devices.json` could not be read at the server's start.
 
 ## Feeds and item ops
 
@@ -243,6 +282,7 @@ The server syncs state rather than queueing events, so a slow client gets the la
 
 - Each connection holds `sent` per feed and the last status sent. A change (feed or status) schedules a flush
   at most `LIMITS.flushMs` (50 ms) later; a flush diffs the current state against what was sent.
+- A `status` goes at most every 250 ms (4 a second; it changes with every streamed token), carrying the latest.
 - A flush is skipped while the connection has more than `LIMITS.highWater` (256 KiB) unsent (WebSocket
   `bufferedAmount`, socket `writableLength`), and retried at the next tick. Skipping loses nothing: the next diff
   covers it.
@@ -254,11 +294,12 @@ The server syncs state rather than queueing events, so a slow client gets the la
 
 There is no session resumption: every connection starts from `hello` and gets the whole state again.
 
-- After a close other than 4000 and 4001, or a dead link, the client reconnects with backoff: 0.5 s, doubling to
-  10 s, ±20% jitter. While it does, a client shows its last state and says it is reconnecting (the attached TUI's
-  footer: `reconnecting…`).
-- Requests pending when the link dropped reject on the client with "connection lost". Request ids start over
-  on the new connection.
+- After a close other than 1000, 4000 and 4001, or a dead link, the client reconnects with backoff: 0.5 s, doubling
+  to 10 s, ±20% jitter (the attached TUI, whose server is on the same machine: 0.25 s doubling to 5 s). While it
+  does, a client shows its last state and says it is reconnecting (the attached TUI's footer: `reconnecting…`).
+- Requests pending when the link dropped reject on the client with "connection lost", except a `send` with a
+  `requestId`, which a client may keep and resend on the next connection (the attached TUI does). Request ids
+  may start over on the new connection.
 - After `ready`, the client opens again the agent feeds it had open; their ids may differ.
 - `welcome.boot` different from the last one: the server restarted. `welcome.assets` different: the web app
   reloads itself (after a service worker update).

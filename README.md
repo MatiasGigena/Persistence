@@ -46,6 +46,26 @@ pi-durable --model openai/gpt-4o-mini --thinking off
 pi-durable --help                           # every flag
 ```
 
+### Attaching to a server
+
+When `pi-durable serve` runs the chat (on a VPS, under systemd: see [docs/operations.md](docs/operations.md)),
+a plain `pi-durable` in a terminal attaches to it over the chat's Unix socket instead of opening the chat itself.
+It is the same full-screen chat, but Pi and its agents run in the server, with the server's model, tools and
+directory; `/model` and `/tools` change them there. The footer says `reconnecting…` while the server restarts.
+`/exit`, Ctrl+D or Ctrl+C twice detach at once, and Pi keeps working: the terminal prints
+`Detached; the server keeps working.`
+
+```sh
+pi-durable            # attaches when a server answers; otherwise opens the chat here
+pi-durable --attach   # attach, or fail when no server answers
+pi-durable --local    # never attach; with a server running this exits 75, as any second launch does
+```
+
+Only interactive full-screen chat attaches. `-p`, piped stdin, `--status`, `--history`, `--resume` and `--plain`
+open the chat locally, so with a server running they exit 75 with
+"A server runs this chat; run `pi-durable` to attach." Launch settings (`--allow-tools`, `--model`, `--thinking`,
+`--cwd`, `--auth-file`) are refused when a server answers, since the server's apply.
+
 `--request-id` deduplicates a one-shot prompt, also after a restart. The same ID
 returns its original answer. Use a new ID for a new task, and never reuse an ID
 with a different prompt.

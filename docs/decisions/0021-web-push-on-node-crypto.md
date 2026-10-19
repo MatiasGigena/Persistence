@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-10-19.
+Accepted, 2026-10-19.
 
 ## Context
 
@@ -24,6 +24,13 @@ RFC 8292) and payload encryption (aes128gcm, RFC 8291). The `web-push` package d
 
 ## Consequences
 
-- About 150 lines of crypto to own, tested against the RFCs' example vectors.
+- About 150 lines of crypto to own, tested against RFC 8291's Appendix A vector and by decrypting real sends.
+- The server posts only to the known push services (FCM, Apple, Windows, Mozilla), over https on port 443, so a
+  forged subscription cannot aim its requests at the tailnet or the machine (SSRF). Redirects are refused.
+- The VAPID `sub` claim is `mailto:pi-durable@<PI_DURABLE_ORIGIN's host>` (`@localhost` without an origin).
+- Deleting `vapid.json` makes new keys at the next start, and the server then drops every subscription: push
+  services refuse them under another key. Each browser subscribes again when it next opens the app.
+- A push service's 404 or 410 drops the subscription; a 429, a 5xx or a network failure is retried once, after
+  its `Retry-After` when that is at most 60 s (5 s when absent), and otherwise logged.
 - Push needs the HTTPS origin (`PI_DURABLE_ORIGIN`) and, on iOS, the app installed to the home screen.
 - With previews off, a notification carries no content: the app shows it after opening.

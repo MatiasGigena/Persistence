@@ -7,6 +7,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Server mode (phase 2, ADRs 0016 and 0022 accepted): `pi-durable serve [--cwd D] [--port N]` runs the chat
+  headless under its flock, with coding tools off, on a mode 600 Unix socket (NDJSON) and, when configured,
+  the web listener. One session is fanned out to every client (`src/server/hub.ts`, `connection.ts`): item
+  diffs at most every 50 ms and only while a peer's buffer is under 256 KiB, status at most 4 times a second,
+  agent feeds shared by refcount, `bye` 4008 for a peer stuck over 8 MiB for 60 s, 1000 after 60 s of silence,
+  and 1012 to everyone on SIGTERM, SIGINT or SIGHUP. Coding tools turned on remotely need a confirmation, are
+  refused to the web with `PI_DURABLE_REMOTE_TOOLS=off`, are announced to every client and the journal, and
+  turn off after `PI_DURABLE_TOOLS_IDLE_MIN` minutes without a run. Push fires when Pi finishes or an agent
+  reports, unless a client was visible in the last minute, at most once per kind per 30 s.
+- `pi-durable backup [--out DIR]`: an online backup (`VACUUM INTO`, then `chat.unii/` and `settings.json`, in
+  one synchronous step of the writer) into `backups/<UTC time>/` beside the chat; through the server when one
+  runs, else under the flock. Backups older than 14 days are deleted. `serve pair` and `serve devices
+  [--revoke NAME]` work over the socket.
+- `contrib/systemd/`: `pi-durable.service` (`serve --cwd %h/projects`, settings from
+  `~/.config/pi-durable/env`) and a daily `pi-durable-backup.timer`. See "Server mode" and "Backups" in
+  `docs/operations.md`.
+- `UiSession.send` takes an optional `requestId` (pi-durable's submission dedup), which the server passes on.
+
+- The terminal UI attaches to a running server (phase 3, ADR 0018 accepted): an interactive `pi-durable`
+  probes the chat's socket and, when `serve` answers, runs the TUI on it with no flock or model runtime of its
+  own; `/exit`, Ctrl+D and Ctrl+C twice detach ("Detached; the server keeps working."), the footer shows
+  `reconnecting…` while the server restarts, and a message sent across a reconnect arrives once (its
+  requestId). `--attach` fails when no server answers; `--local` never attaches. A launch that finds the flock
+  busy because a server holds it says "A server runs this chat; run `pi-durable` to attach." New:
+  `src/client/` (`attach.ts`, `remote-session.ts`, `unix-link.ts`) and `test/fixtures/fake-server.ts`, an
+  in-memory server written from `docs/protocol.md` for client tests.
+- The web listener of server mode (phase 4, server half; ADR 0019's access and ADR 0020's server half
+  accepted): `src/server/transport-ws.ts` serves HTTP on 127.0.0.1 only, behind `tailscale serve`, with
+  `/api/me`, `/api/pair` and the `/ws` WebSocket (`ws` 8.22.0); `src/server/auth.ts` checks the Tailscale login
+  allow-list, the Origin and the paired device's `pd_device` cookie (only its sha256 is kept, in
+  `serve/devices.json`), and issues one-time pairing codes (5 minutes, 5 tries); `src/server/static.ts` serves
+  the web app with TypeScript type-stripped at request time, `marked` 18.0.11 from `node_modules`, ETags, and a
+  strict CSP. `ws`, `marked` and `@types/ws` are now pinned directly. See "Web access over Tailscale" in
+  `docs/operations.md`.
+- Web Push for server mode, on `node:crypto` (phase 6, ADR 0021 accepted): `src/server/push.ts` keeps a VAPID
+  key pair in `serve/vapid.json` and the subscriptions in `serve/push.json` (both mode 600), encrypts with
+  aes128gcm (RFC 8291, checked against its Appendix A vector), posts only to the known push services, drops a
+  subscription on 404 or 410, and retries a 429 or 5xx once. The payload is `{title, body, tag}`; see
+  "Push notifications" in `docs/operations.md`.
 - The wire protocol for server mode (phase 0 of `docs/plans/server-and-web.md`):
   `src/protocol/` (messages, parser, item diff and mirror, shared by Node and the
   browser) and its spec, `docs/protocol.md`. ADRs 0016 to 0022, proposed.

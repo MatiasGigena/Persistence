@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-10-19. Amends [0009](0009-tools-opt-in.md).
+Access accepted, 2026-10-19 (phase 4: `src/server/auth.ts`, `src/server/transport-ws.ts`); the tools policy proposed. Amends [0009](0009-tools-opt-in.md).
 
 ## Context
 

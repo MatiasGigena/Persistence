@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-10-19. Extends [0011](0011-typescript-without-build.md).
+Server half accepted, 2026-10-19 (phase 4: `src/server/static.ts`); the web app's half proposed. Extends [0011](0011-typescript-without-build.md).
 
 ## Context
 
@@ -15,14 +15,15 @@ dependencies, and its protocol code (`src/protocol/`) is plain, erasable TypeScr
 - `src/web/` is vanilla DOM TypeScript: `main.ts`, `link.ts` (WebSocket and reconnect), `store.ts` (the mirror),
   `chat-view.ts`, `markdown.ts`, `panels/*`, `push.ts`, and the service worker `sw.ts`. No framework, no bundler.
 - The server serves `.ts` files type-stripped at request time with `node:module` `stripTypeScriptTypes` (cached
-  by content hash), as `text/javascript`; the browser loads them as ES modules. `src/protocol/` is served the same
+  until the file's mtime or size changes), as `text/javascript`; the browser loads them as ES modules. `src/protocol/` is served the same
   way, so the browser runs the exact parser and mirror the server tests.
 - `src/web/tsconfig.json` (lib DOM) and `src/web/sw/tsconfig.json` (lib WebWorker) type-check them; `npm run check`
   runs both. `src/ui/types.ts` imports nothing, so they resolve it without Node types.
 - Markdown uses `marked`, already installed through pi-tui (18.0.11), pinned as a direct dependency and served
   from `node_modules`. The WebSocket server uses `ws` (8.22.0, already installed), pinned likewise.
-- A strict Content-Security-Policy: `default-src 'self'`, no inline scripts, no `eval`, `connect-src` the origin
-  only. Rendered Markdown is sanitized (no raw HTML).
+- A strict Content-Security-Policy: `default-src 'self'`, no inline scripts but `index.html`'s import map (allowed
+  by its sha256, computed when the server reads the file), no `eval`, `connect-src` the origin only. Rendered
+  Markdown is sanitized (no raw HTML).
 - `welcome.assets` is a hash of the served files; a client seeing it change reloads.
 
 ## Consequences
