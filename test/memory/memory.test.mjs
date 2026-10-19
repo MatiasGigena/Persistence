@@ -1,0 +1,294 @@
+import assert from 'node:assert/strict';
+import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, test } from 'node:test';
+import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
+import { createPiAiSummarizer, defaultCompactionModel, openMemory, PROMPT } from '../../src/memory/index.mjs';
+import { offlineModels } from '../fixtures/faux-model.mjs';
+import { RULER } from '../../src/memory/prompt.mjs';
+import { bytes, cutLine, NODE } from '../../src/memory/util.mjs';
+
+const fake = async (_system, messages, { node }) => `summary of ${node.name} (${messages[0].content.length} chars in)`;
+
+function temp(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'unii-memory-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+async function until(cond, ms = 3000) {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error('timeout');
+    await new Promise(r => setTimeout(r, 5));
+  }
+}
+const owed = m => { let n = 0; for (let k = m.T; k > 0; k = Math.floor(k / 2)) n += k; return n - m.tree.size; };
+const quiet = { warn: () => {} };
+
+describe('unii memory', { concurrency: false }, () => {
+  test('log records {i, kind, text, size, date} in main/YYYY-MM-DD.jsonl, appended and readable', async (t) => {
+    const dir = temp(t);
+    const m = openMemory(dir, { summarize: fake, ...quiet });
+    const [r] = m.append({ kind: 'user', text: 'hola €', date: '2026-01-02T03:04:05.000Z' });
+    assert.deepEqual(r, { i: 0, kind: 'user', text: 'hola €', size: bytes('user: hola €'), date: '2026-01-02T03:04:05.000Z' });
+    const files = readdirSync(join(dir, 'main'));
+    assert.equal(files.length, 1);
+    assert.match(files[0], /^\d{4}-\d{2}-\d{2}\.jsonl$/);
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'main', files[0]), 'utf8')), r);
+    assert.throws(() => m.append({ kind: 'thought', text: 'x' }), /unknown kind/);
+    assert.throws(() => m.append({ kind: 'work', text: 'no name' }), /\[Name\]/);
+    assert.deepEqual(m.append({ kind: 'pi', text: '   ' }), []);
+    await m.close();
+    assert.throws(() => m.append({ kind: 'user', text: 'late' }), /closed/);
+  });
+
+  test('tool output is clipped head+tail to 30,000 chars; other long text is split over consecutive messages', async (t) => {
+    const m = openMemory(temp(t), { summarize: fake, ...quiet });
+    const echo = `${'h'.repeat(20_000)}MIDDLE${'t'.repeat(20_000)}`;
+    const [clipped] = m.append({ kind: 'echo', text: echo });
+    assert.ok(clipped.text.startsWith('h'.repeat(15_000)) && clipped.text.endsWith('t'.repeat(15_000)));
+    assert.ok(!clipped.text.includes('MIDDLE'));
+    assert.match(clipped.text, /\[… 10006 characters clipped …\]/);
+    const long = Array.from({ length: 1000 }, (_, n) => `line ${n} ${'x'.repeat(60)}`).join('\n');
+    const parts = m.append({ kind: 'user', text: long, src: 'long' });
+    assert.ok(parts.length === 3 && parts.every(p => p.text.length <= 30_000));
+    assert.equal(parts.map(p => p.text).join(''), long);
+    assert.deepEqual(parts.map(p => p.i), [1, 2, 3]);
+    assert.deepEqual(parts.map(p => p.src), ['long', 'long#1', 'long#2']);
+    assert.match(m.zoom(1, 1), /^1\+1 \(page 1 of 2; zoom\(1, 1, page\) for the others\)\|user: line 0/);
+    assert.match(m.zoom(1, 1, 2), /^1\+1 \(page 2 of 2/);
+    await m.close();
+  });
+
+  test('src makes an append idempotent, also after a restart', async (t) => {
+    const dir = temp(t);
+    let m = openMemory(dir, { summarize: fake, ...quiet });
+    assert.equal(m.append({ kind: 'user', text: 'once', src: 'e:7' }).length, 1);
+    assert.equal(m.append({ kind: 'user', text: 'once', src: 'e:7' }).length, 0);
+    await m.close();
+    m = openMemory(dir, { summarize: fake, ...quiet });
+    assert.equal(m.append({ kind: 'user', text: 'once', src: 'e:7' }).length, 0);
+    assert.equal(m.T, 1);
+    const [w] = m.report({ name: 'Bob', text: 'tests pass', id: 'r1' });
+    assert.equal(w.kind, 'work');
+    assert.equal(w.text, '[Bob] tests pass');
+    assert.deepEqual(m.report({ name: 'Bob', text: 'tests pass', id: 'r1' }), []);
+    assert.equal(m.report({ name: 'Bob', text: '[Bob] again' })[0].text, '[Bob] again');
+    await m.close();
+  });
+
+  test('short messages are their own nodes, long ones call the model; the whole tree builds; reopen renders byte-identically', async (t) => {
+    const dir = temp(t);
+    let calls = 0;
+    const counting = async (...args) => { calls++; return fake(...args); };
+    const m = openMemory(dir, { summarize: counting, jobs: 4, ...quiet });
+    for (let i = 0; i < 20; i++) m.append({ kind: i % 3 === 0 ? 'user' : 'echo', text: i % 3 === 0 ? `short ${i}` : 'x'.repeat(700 + i) });
+    await until(() => owed(m) === 0);
+    assert.equal(m.tree.get('0/0').text, 'user: short 0');
+    assert.match(m.tree.get('0/1').text, /^summary of 1\+1/);
+    assert.ok([...m.tree.values()].every(n => bytes(n.text) <= NODE));
+    assert.equal(m.tree.get('1/0').text, 'user: short 0\nsummary of 1+1 (1307 chars in)'.replace('1307', m.tree.get('0/1').text.match(/\((\d+)/)[1]));
+    assert.ok(m.view.tiles(20));
+    const rendered = m.render();
+    const callsBefore = calls;
+    await m.close();
+    const again = openMemory(dir, { summarize: counting, ...quiet });
+    assert.equal(again.render(), rendered);
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(calls, callsBefore, 'every node is built once, never again');
+    assert.equal(readFileSync(join(dir, 'tree', readdirSync(join(dir, 'tree'))[0]), 'utf8').trim().split('\n').length, again.tree.size);
+    await again.close();
+  });
+
+  test('the saved view is loaded, never refolded: it survives a budget change at restart', async (t) => {
+    const dir = temp(t);
+    const small = { hi: 600, lo: 300 };
+    const m = openMemory(dir, { summarize: fake, view: small, ...quiet });
+    for (let i = 0; i < 40; i++) m.append({ kind: 'user', text: `message number ${i}` });
+    await until(() => owed(m) === 0);
+    m.refit();
+    const saved = m.view.parts.map(p => `${p.l}/${p.i}`);
+    await m.close();
+    const viewJson = JSON.parse(readFileSync(join(dir, 'view.json'), 'utf8'));
+    assert.deepEqual(viewJson.view.map(([l, i]) => `${l}/${i}`), saved);
+    const reopened = openMemory(dir, { summarize: fake, ...quiet }); // default 64-128 KB budget
+    assert.deepEqual(reopened.view.parts.map(p => `${p.l}/${p.i}`), saved);
+    reopened.append({ kind: 'user', text: 'one more' });
+    assert.deepEqual(reopened.view.parts.map(p => `${p.l}/${p.i}`), [...saved, '0/40'], 'a new message only appends its line');
+    await reopened.close();
+  });
+
+  test('a log ahead of view.json (crash before the save) gets its lines appended; a gap in the log refuses to open', async (t) => {
+    const dir = temp(t);
+    const m = openMemory(dir, { summarize: fake, ...quiet });
+    m.append({ kind: 'user', text: 'a' });
+    await m.close();
+    const file = join(dir, 'main', readdirSync(join(dir, 'main'))[0]);
+    appendFileSync(file, `${JSON.stringify({ i: 1, kind: 'pi', text: 'b', size: 5, date: new Date().toISOString() })}\n`);
+    const m2 = openMemory(dir, { summarize: fake, ...quiet });
+    assert.equal(m2.T, 2);
+    assert.ok(m2.view.tiles(2));
+    await m2.close();
+    appendFileSync(file, `${JSON.stringify({ i: 5, kind: 'pi', text: 'gap', size: 7, date: new Date().toISOString() })}\n`);
+    assert.throws(() => openMemory(dir, { summarize: fake, ...quiet }), /not contiguous/);
+  });
+
+  test('one open per directory in a process', async (t) => {
+    const dir = temp(t);
+    const m = openMemory(dir, { summarize: fake, ...quiet });
+    assert.throws(() => openMemory(dir, { summarize: fake, ...quiet }), /already open/);
+    await m.close();
+    await (openMemory(dir, { summarize: fake, ...quiet })).close();
+  });
+
+  test('zoom addressing and date', async (t) => {
+    const m = openMemory(temp(t), { summarize: fake, ...quiet });
+    for (let i = 0; i < 8; i++) m.append({ kind: 'user', text: `msg ${i} ${'y'.repeat(600)}`, date: new Date(2026, 0, 1 + i, 12) });
+    await until(() => owed(m) === 0);
+    assert.deepEqual(m.zoom(0, 8).split('\n').map(l => l.split('|')[0]), ['0+4', '4+4']);
+    assert.deepEqual(m.zoom(4, 2).split('\n').map(l => l.split('|')[0]), ['4+1', '5+1']);
+    assert.match(m.zoom(5, 1), /^5\+1\|user: msg 5 y/);
+    assert.throws(() => m.zoom(3, 2), /multiple/);
+    assert.throws(() => m.zoom(0, 3), /power of 2/);
+    assert.throws(() => m.zoom(0, 16), /at most 8/);
+    assert.match(m.date(2), /^2026-01-03 12:00:00 [+-]\d\d:\d\d \(Saturday\)$/);
+    assert.throws(() => m.date(9), /No message 9/);
+    await m.close();
+  });
+
+  test('a failed compaction shows a placeholder and is retried', async (t) => {
+    let fails = 2;
+    const flaky = async (...args) => { if (fails-- > 0) throw new Error('boom'); return fake(...args); };
+    const m = openMemory(temp(t), { summarize: flaky, jobs: 1, retryMs: 20, ...quiet });
+    m.append({ kind: 'echo', text: 'z'.repeat(800) });
+    assert.match(m.render(), /^<chat>\n0\+1\|\(not summarized yet: zoom it\)\n<\/chat>$/);
+    await until(() => owed(m) === 0);
+    assert.match(m.render(), /0\+1\|summary of 0\+1/);
+    assert.equal(m.lastError, undefined);
+    await m.close();
+  });
+
+  test('settle: false on timeout, true once built', async (t) => {
+    let release;
+    const slow = () => new Promise(r => { release = () => r('done'); });
+    const m = openMemory(temp(t), { summarize: slow, jobs: 1, ...quiet });
+    m.append({ kind: 'echo', text: 'w'.repeat(600) });
+    assert.equal(await m.settle(30), false);
+    const waiting = m.settle(2000);
+    await until(() => release);
+    release();
+    assert.equal(await waiting, true);
+    assert.equal(m.ready(), true);
+    await m.close();
+  });
+
+  test('size: a too-long reply gets one "Too long" retry in the same conversation, then the cut', async (t) => {
+    const seen = [];
+    const items = n => Array.from({ length: n }, (_, k) => `user: item ${k} decided`).join('; ');
+    const summarize = async (system, messages) => { seen.push(messages.map(x => ({ ...x }))); return seen.length === 1 ? items(40) : items(30); };
+    const m = openMemory(temp(t), { summarize, ...quiet });
+    m.append({ kind: 'echo', text: 'q'.repeat(900) });
+    await until(() => m.tree.has('0/0'));
+    assert.equal(seen.length, 2);
+    assert.deepEqual(seen[1].map(x => x.role), ['user', 'assistant', 'user']);
+    assert.match(seen[1][2].content, /^Too long: your line is \d+ bytes, over the 512-byte limit\./);
+    assert.match(seen[1][2].content, /\| ← LIMIT$/);
+    const line = m.tree.get('0/0').text;
+    assert.ok(bytes(line) <= NODE);
+    assert.match(line, /decided$/, 'cut at the last "; "');
+    await m.close();
+
+    let one = 0;
+    const m2 = openMemory(temp(t), { summarize: async () => { one++; return items(40); }, tooLongRetries: 0, ...quiet });
+    m2.append({ kind: 'echo', text: 'q'.repeat(900) });
+    await until(() => m2.tree.has('0/0'));
+    assert.equal(one, 1);
+    assert.ok(bytes(m2.tree.get('0/0').text) <= NODE);
+    await m2.close();
+  });
+
+  test('cutLine strips echoed heads and fences and cuts safely', () => {
+    assert.equal(cutLine('12+4|hello world').line, 'hello world');
+    assert.equal(cutLine('263|pi: removed it').line, 'pi: removed it');
+    assert.equal(cutLine('```\nhello\n```').line, 'hello');
+    const r = cutLine(Array.from({ length: 40 }, (_, i) => `user: decisión ${i} en /a/b/${i}`).join('; '));
+    assert.ok(r.cut && bytes(r.line) <= NODE);
+    assert.match(r.line, /\/a\/b\/\d+$/);
+    assert.ok(bytes(cutLine('é'.repeat(400)).line) <= NODE);
+  });
+
+  test('compaction calls: the turns\' system prompt, a <chat> view that ends at the node, the task with the 512-dash ruler', async (t) => {
+    const calls = [];
+    const summarize = async (system, messages, options) => { calls.push({ system, text: messages[0].content, ...options }); return `S${options.node.name} ${'s'.repeat(490)}`; };
+    const m = openMemory(temp(t), { summarize, ...quiet });
+    m.setCompactionPrompt({ system: `${PROMPT}\n\nINSTRUCTIONS`, tools: [{ name: 'zoom' }] });
+    m.append({ kind: 'user', text: 'first short' });
+    m.append({ kind: 'echo', text: `OUTPUT ${'o'.repeat(700)}` });
+    await until(() => m.tree.has('1/0'));
+    const leaf = calls.find(c => c.node.name === '1+1');
+    assert.equal(leaf.system, `${PROMPT}\n\nINSTRUCTIONS`);
+    assert.deepEqual(leaf.tools, [{ name: 'zoom' }]);
+    assert.ok(leaf.text.startsWith('<chat>\n0+1|user: first short\n</chat>\n\nCompaction: compress message 1 into one line of at most 512 bytes\n(about 70 words), the length of this ruler:\n'));
+    assert.ok(leaf.text.includes(`\n${RULER}\n<input>\necho: OUTPUT o`));
+    assert.equal(RULER.length, 512);
+    const merge = calls.find(c => c.node.name === '0+2');
+    assert.ok(merge.text.includes('Compaction: merge lines 0+1 and 1+1, adjacent, into one line of at most\n512 bytes'));
+    assert.ok(merge.text.includes('<chat> may hold their messages, 0 to 1, in more detail'));
+    assert.ok(merge.text.includes(`<input>\n0+1|user: first short\n1+1|S1+1 ${'s'.repeat(490)}\n</input>`));
+    assert.ok(merge.text.startsWith(`<chat>\n0+1|user: first short\n1+1|S1+1 ${'s'.repeat(490)}\n</chat>`), 'a merge sees the lines up to its last message');
+    await m.close();
+  });
+
+  test('order: at most 8 calls; a leaf starts once fewer than 8 leaves before it are unbuilt; a merge once both halves are built', async (t) => {
+    const pending = new Map(), started = [], early = [];
+    let m, inFlight = 0, most = 0;
+    const summarize = (_s, _m, { node }) => new Promise(r => {
+      started.push(node.name);
+      most = Math.max(most, ++inFlight);
+      if (node.l > 0 && !(m.tree.has(`${node.l - 1}/${2 * node.i}`) && m.tree.has(`${node.l - 1}/${2 * node.i + 1}`))) early.push(node.name);
+      pending.set(node.name, () => { inFlight--; pending.delete(node.name); r(`S${node.name} ${'s'.repeat(490)}`); });
+    });
+    m = openMemory(temp(t), { summarize, ...quiet });
+    for (let i = 0; i < 20; i++) m.append({ kind: 'echo', text: `${i} ${'e'.repeat(700)}` });
+    await until(() => started.length === 8);
+    await new Promise(r => setTimeout(r, 10));
+    assert.deepEqual(started, ['0+1', '1+1', '2+1', '3+1', '4+1', '5+1', '6+1', '7+1']);
+    pending.get('1+1')();
+    await until(() => started.length === 9);
+    assert.equal(started[8], '8+1', 'leaf 0 still unbuilt, 7 open before 8: it may start');
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(started.length, 9, 'leaf 9 has 8 unbuilt leaves before it: it waits');
+    pending.get('0+1')();
+    await until(() => started.length === 10);
+    assert.equal(started[9], '9+1');
+    while (owed(m) > 0) {
+      for (const release of [...pending.values()]) release();
+      await new Promise(r => setTimeout(r, 2));
+    }
+    assert.deepEqual(early, []);
+    assert.ok(most <= 8);
+    assert.ok(started.includes('0+16'));
+    await m.close(0);
+  });
+
+  test('default summarizer: one pi-ai completion with the system prompt, the conversation, tools with toolChoice none', async () => {
+    let seen;
+    const { models, model } = offlineModels([
+      (ctx, options) => { seen = { ctx, options }; return fauxAssistantMessage('a line'); },
+      fauxAssistantMessage('', { stopReason: 'error', errorMessage: 'rate limited' }),
+    ]);
+    const summarize = createPiAiSummarizer({ models, model, maxTokens: 300 });
+    const tools = [{ name: 'zoom', description: 'z', parameters: { type: 'object', properties: {} } }];
+    const text = await summarize('SYSTEM', [{ role: 'user', content: 'task' }, { role: 'assistant', content: 'long line' }, { role: 'user', content: 'Too long' }], { tools });
+    assert.equal(text, 'a line');
+    assert.equal(seen.options.toolChoice, 'none');
+    assert.equal(seen.options.maxTokens, 300);
+    assert.deepEqual(seen.ctx.messages.map(m => m.role), ['system', 'user', 'assistant', 'user']);
+    assert.equal(seen.ctx.messages[0].content, 'SYSTEM');
+    await assert.rejects(summarize('SYSTEM', [{ role: 'user', content: 'task' }]), /rate limited/);
+    const catalog = { getModel: (provider, id) => (id === 'gpt-6-luna' ? { id } : undefined) };
+    assert.deepEqual(defaultCompactionModel({ provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, catalog), { provider: 'openai-codex', modelId: 'gpt-6-luna' });
+    assert.deepEqual(defaultCompactionModel({ provider: 'anthropic', modelId: 'x' }, catalog), { provider: 'anthropic', modelId: 'x' });
+  });
+});
