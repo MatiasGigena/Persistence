@@ -5,7 +5,11 @@ import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { agentTranscript, createAgentsExtension, syncAgents } from '../agents/index.mjs';
-import { createUniiExtension, openMemory } from '../memory/index.mjs';
+import { createUniiExtension, defaultCompactionModel, openMemory } from '../memory/index.mjs';
+import { CLAUDE_CLI } from '../providers/claude-cli.mjs';
+
+// Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
+const CLAUDE_CLI_JOBS = 2;
 
 /**
  * Open the one persisted root (Pi, the UniiChat chat) without starting interrupted work.
@@ -24,7 +28,9 @@ export async function openInstance({
 }) {
   const context = BACKGROUND_CONTEXT;
   // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
-  const memory = configureAgent ? openMemory(memoryDir, { models, model }) : undefined;
+  const compactionModel = defaultCompactionModel(model, models);
+  const memory = configureAgent ? openMemory(memoryDir, { models, model, compactionModel,
+    ...(compactionModel?.provider === CLAUDE_CLI ? { jobs: CLAUDE_CLI_JOBS } : {}) }) : undefined;
   let harness;
   const Unii = createUniiExtension({ memory: memory ?? {},
     resolveAgentChat: name => agentTranscript(harness, name, context) });

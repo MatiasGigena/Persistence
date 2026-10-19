@@ -290,5 +290,8 @@ describe('unii memory', { concurrency: false }, () => {
     const catalog = { getModel: (provider, id) => (id === 'gpt-6-luna' ? { id } : undefined) };
     assert.deepEqual(defaultCompactionModel({ provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, catalog), { provider: 'openai-codex', modelId: 'gpt-6-luna' });
     assert.deepEqual(defaultCompactionModel({ provider: 'anthropic', modelId: 'x' }, catalog), { provider: 'anthropic', modelId: 'x' });
+    const claude = { getModel: (provider, id) => (`${provider}/${id}` === 'claude-cli/haiku' || `${provider}/${id}` === 'anthropic/claude-haiku-5-5' ? { id } : undefined) };
+    assert.deepEqual(defaultCompactionModel({ provider: 'claude-cli', modelId: 'opus' }, claude), { provider: 'claude-cli', modelId: 'haiku' });
+    assert.deepEqual(defaultCompactionModel({ provider: 'anthropic', modelId: 'claude-opus-5-5' }, claude), { provider: 'anthropic', modelId: 'claude-haiku-5-5' });
   });
 });

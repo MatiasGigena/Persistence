@@ -3,7 +3,8 @@
 
 // Cheapest sensible model per provider in the pinned pi-ai 1.3.0 catalog: gpt-6-luna is $0.10/$0.50 per M tokens
 // (cache read $0.01), against $2/$10 for the host's default gpt-6.1-sol, with the same 272k window and reasoning.
-export const CHEAP_MODELS = { 'openai-codex': 'gpt-6-luna', openai: 'gpt-6-luna' };
+// Claude Haiku 5.5 is the same price on the API; through claude-cli it spends the least of the plan's limits.
+export const CHEAP_MODELS = { 'openai-codex': 'gpt-6-luna', openai: 'gpt-6-luna', 'claude-cli': 'haiku', anthropic: 'claude-haiku-5-5' };
 
 const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };

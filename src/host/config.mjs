@@ -26,6 +26,12 @@ you launch from (or --cwd).
   -h, --help             Show this help
   -v, --version          Show host version
 
+Models: openai-codex/... (default, Pi login); claude-cli/opus, claude-cli/sonnet,
+claude-cli/haiku, claude-cli/fable (your Claude plan, through the official claude
+CLI signed in with claude auth login); anthropic/claude-sonnet-5-5 and other
+anthropic/... models with an API key in ANTHROPIC_API_KEY (never a subscription
+login). See docs/models.md.
+
 Chat commands: /help, /history, /agents, /status, /exit
 Ctrl+C or /exit closes the host; unfinished work resumes next launch.
 No background daemon, boot service, inbound listener, or approval guards.

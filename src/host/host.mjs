@@ -5,6 +5,8 @@ import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { openInstance, transcript, answerText } from '../runtime/runtime.mjs';
 import { resumeInstance, settleAgents } from '../runtime/recovery.mjs';
 import { listAgents, REPORT_KIND } from '../agents/index.mjs';
+import { anthropicSubscriptionSource } from '../providers/anthropic.mjs';
+import { CLAUDE_CLI, claudeCliProvider } from '../providers/claude-cli.mjs';
 
 // Internal entry point: src/cli.mjs owns the database flock for this process.
 process.umask(0o077);
@@ -91,18 +93,37 @@ async function send(prompt, requestId, { print = true } = {}) {
   if (print) console.log(answer);
 }
 
+async function checkCredentials(models) {
+  const { provider, modelId } = config.model;
+  const signal = AbortSignal.any([shutdown.signal, AbortSignal.timeout(15000)]);
+  if (!await models.checkAuth(provider, { signal })) {
+    throw new Error(provider === CLAUDE_CLI
+      ? 'No Claude Code login for claude-cli. Install Claude Code, run claude, then /login (or run claude auth login). PI_DURABLE_CLAUDE_BIN selects another claude binary.'
+      : `No credentials for ${provider}. Run pi (or npm exec -- pi from the installation directory), then /login. API-key providers also accept their usual environment variable. Auth file: ${config.authFile}`);
+  }
+  const subscription = provider === 'anthropic' && await anthropicSubscriptionSource(models, { signal });
+  if (subscription) {
+    throw new Error(`Refusing anthropic/${modelId}: its credential is a Claude subscription (${subscription}), which Anthropic allows only in its own apps such as Claude Code. Use --model claude-cli/opus (or sonnet, haiku, fable), which runs the official claude CLI with your login, or an Anthropic Console API key in ANTHROPIC_API_KEY (remove a stored anthropic login first). See docs/models.md.`);
+  }
+}
+
 async function main() {
   let models;
-  if (config.inspectOnly) models = createModels();
-  else {
+  // Registered on every launch, inspection included: persisted agents may name claude-cli models.
+  const claude = claudeCliProvider();
+  if (config.inspectOnly) {
+    models = createModels();
+    models.setProvider(claude);
+  } else {
     models = await ModelRuntime.create({ authPath: config.authFile, modelsPath: null,
       allowModelNetwork: false, refreshOnCreate: false, signal: shutdown.signal });
+    models.registerNativeProvider(claude);
     if (!models.getModel(config.model.provider, config.model.modelId)) {
-      throw new Error(`Unknown model ${config.model.provider}/${config.model.modelId} in pinned Pi 1.3.0 catalog`);
+      throw new Error(config.model.provider === CLAUDE_CLI
+        ? `Unknown model claude-cli/${config.model.modelId}. Use opus, sonnet, haiku or fable.`
+        : `Unknown model ${config.model.provider}/${config.model.modelId} in pinned Pi 1.3.0 catalog`);
     }
-    if (!await models.checkAuth(config.model.provider, { signal: AbortSignal.any([shutdown.signal, AbortSignal.timeout(15000)]) })) {
-      throw new Error(`No credentials for ${config.model.provider}. Run pi (or npm exec -- pi from the installation directory), then /login. API-key providers also accept their usual environment variable. Auth file: ${config.authFile}`);
-    }
+    await checkCredentials(models);
   }
   if (stopping) return;
   instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly,
