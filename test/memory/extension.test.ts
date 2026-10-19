@@ -7,12 +7,13 @@ import type { TestContext } from 'node:test';
 import type { Context } from '@earendil-works/chord';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import type { AssistantMessage, Message, TranscriptContext, UserMessage } from '@earendil-works/pi-ai';
-import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
+import { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import type { FauxResponseFactory, FauxResponseStep } from '@earendil-works/pi-ai/providers/faux';
 import { createRegistry, Harness, MemoryStorage, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
 import type { Conversation, InputSubmissionDraft } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { createUniiExtension, openMemory, PROMPT } from '../../src/memory/index.ts';
+import { TURN_HEAD } from '../../src/memory/extension.ts';
 import type { ContextEntries, RequestApi, Summarizer } from '../../src/memory/index.ts';
 import { answerText } from '../../src/runtime/runtime.ts';
 import { hash } from '../../src/memory/util.ts';
@@ -38,16 +39,17 @@ function scratch(t: TestContext): string {
 }
 
 async function open(t: TestContext, dir: string, responses: FauxResponseStep[],
-  { summarize = fake, settleMs = 3000, sqlite = false }: { summarize?: Summarizer; settleMs?: number; sqlite?: boolean } = {}) {
+  { summarize = fake, settleMs = 3000, sqlite = false, compaction = false }:
+  { summarize?: Summarizer; settleMs?: number; sqlite?: boolean; compaction?: boolean } = {}) {
   const memory = openMemory(join(dir, 'memory'), { summarize, warn: () => {} });
   const extension = createUniiExtension({
-    memory, settleMs, resolveAgentChat: name => (name === 'Bob' ? 'Bob: wrote build.sh, ran it, exit 0' : 'unknown agent'),
+    memory, settleMs, resolveAgentChat: (name, page) => (name === 'Bob' ? 'Bob: wrote build.sh, ran it, exit 0' : name === 'Long' ? `Long's chat, page ${page}` : 'unknown agent'),
   });
   const registry = createRegistry();
   registry.install(extension);
   const catalog = offlineModels(responses);
   const storage = sqlite ? await openNodeSqliteStorage(join(dir, 'chat.sqlite')) : new MemoryStorage();
-  const harness = await Harness.open(storage, { models: catalog.models, registry, settings: { compaction: { enabled: false } } }, context);
+  const harness = await Harness.open(storage, { models: catalog.models, registry, settings: { compaction: { enabled: compaction } } }, context);
   const agent = { model: catalog.model, tools: extension.tools, instructions: 'USER INSTRUCTIONS' };
   const root = await harness.root(context, { agent });
   let closed = false;
@@ -68,6 +70,11 @@ const capture = (seen: Message[][], reply: AssistantMessage | ((ctx: TranscriptC
 type BeforeRequest = (request: { readonly messages: readonly Message[] }, api: RequestApi, context: Context) => Promise<{ messages: Message[] } | undefined>;
 const hasBeforeRequest = (handlers: object | undefined): handlers is { beforeRequest: BeforeRequest } =>
   handlers !== undefined && 'beforeRequest' in handlers && typeof handlers.beforeRequest === 'function';
+function beforeRequestOf(options: Parameters<typeof createUniiExtension>[0]): BeforeRequest {
+  const handlers = createUniiExtension(options).hooks?.[0]?.handlers;
+  assert.ok(hasBeforeRequest(handlers));
+  return handlers.beforeRequest;
+}
 
 describe('unii extension in a real Harness (faux model)', { concurrency: false, timeout: 30_000 }, () => {
   test('each turn sees [system] [view] [turn state] [previous exchange] [message], never the raw old transcript', async (t) => {
@@ -88,9 +95,9 @@ describe('unii extension in a real Harness (faux model)', { concurrency: false, 
     assert.equal(view, '<chat>\n0+1|summary 0+1: user asked about the lighthouse\n1+1|pi: A1\n2+1|user: second question\n3+1|pi: A2\n</chat>');
     assert.match(state ?? '', /^<turn>\nnow: \d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d\d:\d\d \(\w+day\)\n<\/turn>$/);
     assert.equal(previous, '<previous_exchange>\nuser: second question\n\npi: A2\n</previous_exchange>');
-    assert.equal(message, 'third question');
+    assert.equal(message, `${TURN_HEAD}third question`);
     assert.ok(!JSON.stringify(seen[2]).includes('lighthouse lighthouse'), 'the long first message is only a summary now');
-    assert.deepEqual(texts(seen[0]?.[1]), ['<chat>\n</chat>', texts(seen[0]?.[1])[1], long]);
+    assert.deepEqual(texts(seen[0]?.[1]), ['<chat>\n</chat>', texts(seen[0]?.[1])[1], `${TURN_HEAD}${long}`]);
 
     assert.deepEqual(memory.log.map(r => `${r.kind}: ${r.text}`), [`user: ${long}`, 'pi: A1', 'user: second question', 'pi: A2', 'user: third question', 'pi: A3']);
   });
@@ -127,12 +134,13 @@ describe('unii extension in a real Harness (faux model)', { concurrency: false, 
     const seen: Message[][] = [];
     const { root, memory } = await open(t, scratch(t), ['ok 1', 'ok 2'].map(a => capture(seen, fauxAssistantMessage(a))));
     memory.report({ name: 'Bob', text: 'built it', id: 'r1' }); // the agents extension's onReport
-    await ask(root, '[Bob] built it', { entry: { kind: 'agents.report', data: { name: 'Bob', text: 'built it', id: 'r1' } } });
-    await ask(root, '[Ann] found the bug', { entry: { kind: 'agents.report', data: { name: 'Ann', text: 'found the bug', id: 'r2' } } });
-    assert.deepEqual(memory.log.map(r => `${r.kind}: ${r.text}`), ['work: [Bob] built it', 'pi: ok 1', 'work: [Ann] found the bug', 'pi: ok 2']);
+    const bob = '[Bob]\nbuilt it\n\nFull chat: zoom("Bob")', ann = '[Ann]\nfound the bug\n\nFull chat: zoom("Ann")'; // piReportText
+    await ask(root, bob, { entry: { kind: 'agents.report', data: { name: 'Bob', text: 'built it', id: 'r1' } } });
+    await ask(root, ann, { entry: { kind: 'agents.report', data: { name: 'Ann', text: 'found the bug', id: 'r2' } } });
+    assert.deepEqual(memory.log.map(r => `${r.kind}: ${r.text}`), [`work: ${bob}`, 'pi: ok 1', `work: ${ann}`, 'pi: ok 2'], 'logged as Pi saw it');
     assert.deepEqual(texts(seen[0]?.[1]).at(0), '<chat>\n</chat>', 'the report itself comes whole after the view');
-    assert.equal(texts(seen[0]?.[1]).at(-1), '[Bob] built it');
-    assert.equal(texts(seen[1]?.[1]).at(2), '<previous_exchange>\nwork: [Bob] built it\n\npi: ok 1\n</previous_exchange>');
+    assert.equal(texts(seen[0]?.[1]).at(-1), `${TURN_HEAD}${bob}`);
+    assert.equal(texts(seen[1]?.[1]).at(2), `<previous_exchange>\nwork: ${bob}\n\npi: ok 1\n</previous_exchange>`);
   });
 
   test('other conversations (spawned agents) are left alone', async (t) => {
@@ -166,7 +174,7 @@ describe('unii extension in a real Harness (faux model)', { concurrency: false, 
     const [view, , previous, message] = texts(seen[0]?.[1]);
     assert.match(view ?? '', /^<chat>\n0\+1\|user: Q1\n1\+1\|tool: date \{"id":0\}\n2\+1\|echo: date: \d{4}-[^\n]+\n3\+1\|pi: A1\n<\/chat>$/);
     assert.equal(previous, '<previous_exchange>\nuser: Q1\n\npi: A1\n</previous_exchange>');
-    assert.equal(message, 'Q2');
+    assert.equal(message, `${TURN_HEAD}Q2`);
     assert.deepEqual(seen[0]?.map(m => m.role), ['system', 'user']);
   });
 
@@ -182,6 +190,103 @@ describe('unii extension in a real Harness (faux model)', { concurrency: false, 
     assert.equal(texts(seen[1]?.[1])[0], '<chat>\n0+1|(not summarized yet: zoom it)\n1+1|pi: A1\n</chat>');
     release?.();
     await memory.settle(1000);
+  });
+
+  test('parallel tool calls: each call is logged right before its result; zoom("Name") passes its page', async (t) => {
+    const seen: Message[][] = [];
+    const { root, memory } = await open(t, scratch(t), [
+      fauxAssistantMessage([fauxToolCall('zoom', { id: 'Long', page: 2 }, { id: 'call-z' }), fauxToolCall('date', { id: 0 }, { id: 'call-d' })], { stopReason: 'toolUse' }),
+      capture(seen, fauxAssistantMessage('done')),
+    ]);
+    assert.equal(await ask(root, 'go'), 'done');
+    const log = memory.log.map(r => `${r.kind}: ${r.text}`);
+    assert.equal(log.length, 6);
+    assert.deepEqual([log[0], log[5]], ['user: go', 'pi: done']);
+    for (const i of [1, 3]) {
+      const call = memory.at(i), result = memory.at(i + 1);
+      assert.equal(call.kind, 'tool');
+      assert.equal(result.kind, 'echo');
+      assert.equal(result.src, call.src?.replace(/^c:/, 'r:'), 'a call and its result are adjacent');
+    }
+    const zoomed = texts(seen[0]?.find(m => m.role === 'toolResult' && m.toolName === 'zoom')).join('');
+    assert.equal(zoomed, 'Long\'s chat, page 2', 'zoom passes its page on');
+  });
+
+  test('a failed run is not carried into the next: its message is in the view, the next request carries only the new one', async (t) => {
+    const seen: Message[][] = [];
+    const { root, memory } = await open(t, scratch(t), [
+      capture(seen, fauxAssistantMessage('half an answer', { stopReason: 'error', errorMessage: 'prompt is too long: context window exceeded' })),
+      capture(seen, fauxAssistantMessage('A2')),
+    ]);
+    const settled = await (await root.submit({ type: 'input', content: 'Q1' }, context)).wait(context);
+    assert.equal(settled?.status, 'unanswered');
+    assert.equal(await ask(root, 'Q2'), 'A2');
+    assert.deepEqual(seen[1]?.map(m => m.role), ['system', 'user'], 'Q1 is not sent again raw');
+    const [view, , previous, message] = texts(seen[1]?.[1]);
+    assert.equal(view, '<chat>\n0+1|user: Q1\n1+1|pi: half an answer [cut off: prompt is too long: context window exceeded]\n</chat>');
+    assert.equal(previous, '<previous_exchange>\nuser: Q1\n\npi: half an answer\n[cut off: prompt is too long: context window exceeded]\n</previous_exchange>');
+    assert.equal(message, `${TURN_HEAD}Q2`);
+    assert.deepEqual(memory.log.map(r => r.kind), ['user', 'pi', 'user', 'pi']);
+  });
+
+  test('a stopped run: its partial reply is logged with a cut mark and its unanswered call alone, before the next input', async (t) => {
+    const memory = openMemory(join(scratch(t), 'memory'), { summarize: fake, warn: () => {} });
+    closers.get(t)?.push(() => memory.close(0));
+    memory.append({ kind: 'user', text: 'Q1', src: 'e:1' });
+    const asked: UserMessage = { role: 'user', content: 'Q1', timestamp: 1 };
+    const partial = fauxAssistantMessage([fauxText('partial'), fauxThinking('never logged'), fauxToolCall('date', { id: 0 }, { id: 'call-p' })], { stopReason: 'aborted', timestamp: 2 });
+    const next: UserMessage = { role: 'user', content: 'Q2', timestamp: 3 };
+    const view: ContextEntries = {
+      entries: [{ id: 1, kind: 'pi.user' }, { id: 2, kind: 'pi.assistant', byTaskId: 7, model: [partial] }, { id: 3, kind: 'pi.user' }],
+      contributions: [[asked], [], [next]], // pi-durable keeps the aborted reply out of the model's context
+    };
+    const api: RequestApi = { conversationId: ROOT_CONVERSATION_ID, taskId: 9, context: async () => view };
+    const out = await beforeRequestOf({ memory, atWork: () => ['Bob', 'Ann'] })(
+      { messages: [{ role: 'system', content: 'S', timestamp: 0 }, asked, next] }, api, context);
+    assert.deepEqual(out?.messages.map(m => m.role), ['system', 'user']);
+    const [shown, state, message] = texts(out?.messages[1]);
+    assert.equal(shown, '<chat>\n0+1|user: Q1\n1+1|pi: partial [cut off: stopped]\n2+1|tool: date {"id":0}\n</chat>');
+    assert.match(state ?? '', /\nagents at work: Bob, Ann\n<\/turn>$/);
+    assert.equal(message, `${TURN_HEAD}Q2`);
+    assert.deepEqual(memory.log.map(r => r.src), ['e:1', `a:2:${hash('partial')}`, 'c:call-p', 'e:3']);
+  });
+
+  test('a huge paste: its first parts are summarized into the view, the message is only its tail; compactions get no tools', async (t) => {
+    const seen: Message[][] = [];
+    const asked: { system: string; tools: boolean }[] = [];
+    const spy: Summarizer = async (system, messages, options) => {
+      asked.push({ system, tools: options.tools !== undefined });
+      return fake(system, messages, options);
+    };
+    const { root, memory } = await open(t, scratch(t), ['A1', 'A2'].map(a => capture(seen, fauxAssistantMessage(a))), { summarize: spy });
+    assert.equal(await ask(root, 'hi'), 'A1');
+    const paste = `HEAD-${'a'.repeat(150_000)}${'b'.repeat(150_000)}-TAIL`;
+    assert.equal(await ask(root, paste), 'A2');
+
+    const parts = memory.log.filter(r => r.kind === 'user').length - 1;
+    assert.equal(parts, 11, 'the paste is logged whole, split at 30,000 characters');
+    const k = memory.whole(2);
+    assert.ok(k > 2 && k < memory.T - 1);
+    assert.deepEqual(seen[1]?.map(m => m.role), ['system', 'user']);
+    const [view, , message] = texts(seen[1]?.[1]);
+    assert.equal(message, TURN_HEAD + memory.say(k, 2 + parts));
+    assert.ok(message?.endsWith('-TAIL') && !message.includes('HEAD-'));
+    assert.ok(Buffer.byteLength(message ?? '') <= 128_000 + TURN_HEAD.length);
+    assert.match(view ?? '', /\n2\+1\|summary 2\+1: other\n/, 'the head is in the view, summarized');
+    assert.ok(!(view ?? '').includes(`\n${k}+1|`), 'the tail is not');
+    assert.equal(texts(seen[1]?.[1]).length, 3, 'no previous exchange inside the paste');
+    assert.ok(asked.length > 0 && asked.every(a => !a.tools && a.system.includes(PROMPT)), 'compactions: the turns\' system prompt, no tools');
+  });
+
+  test('with pi-durable compaction on (for agents, as the host runs it), a compaction of the root is declined', async (t) => {
+    const { root, harness, catalog } = await open(t, scratch(t), ['A1', 'A2'].map(a => fauxAssistantMessage(a)), { compaction: true });
+    await ask(root, 'Q1');
+    await ask(root, 'Q2');
+    const calls = catalog.faux.state.callCount;
+    await harness.waitForTask(await root.compact(undefined, context), context);
+    const kinds = (await root.entries({ order: 'ascending' }, 256, undefined, context)).items.map(e => e.kind);
+    assert.ok(!kinds.includes('pi.compaction'), 'no compaction entry on the root');
+    assert.equal(catalog.faux.state.callCount, calls, 'no summarization request');
   });
 
   test('a run resumed after a restart renders the view before its own, already logged, messages', async (t) => {

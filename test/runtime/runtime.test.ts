@@ -206,12 +206,13 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       assert.deepEqual(textOf(history.filter((entry) => entry.kind === 'pi.user')), [
         'First request deliberately fails.', 'Queued request must survive the failed run.',
       ]);
-      assert.deepEqual(modelMessages.filter((message) => message.role === 'user')
+      // The failed run is not carried raw into the next: its request is in the view, before the queued one.
+      const sent = modelMessages.filter((message) => message.role === 'user')
         .map((message) => typeof message.content === 'string' ? message.content
-          : message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''))
-        .map((text) => text.replace(/^[\s\S]*<\/turn>/, '')), [
-        'First request deliberately fails.', 'Queued request must survive the failed run.',
-      ]);
+          : message.content.filter((block) => block.type === 'text').map((block) => block.text).join(''));
+      assert.equal(sent.length, 1);
+      assert.match(sent[0] ?? '', /\|user: First request deliberately fails\.\n<\/chat>/);
+      assert.equal(sent[0]?.replace(/^[\s\S]*<\/turn>/, ''), 'Turn: the user\'s new message:\n\nQueued request must survive the failed run.');
       const inspection = await instance.harness.inspect(instance.context);
       assert.equal(inspection.tasks.length, 0);
       assert.equal(inspection.submissions.length, 0);
