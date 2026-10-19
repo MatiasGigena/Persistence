@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The wire protocol for server mode (phase 0 of `docs/plans/server-and-web.md`):
+  `src/protocol/` (messages, parser, item diff and mirror, shared by Node and the
+  browser) and its spec, `docs/protocol.md`. ADRs 0016 to 0022, proposed.
+- The command line of server mode: `serve [--cwd D] [--port N]`, `serve pair`,
+  `serve devices [--revoke NAME]`, `backup [--out DIR]`, `--local` and `--attach`,
+  and the `PI_DURABLE_ORIGIN`, `PI_DURABLE_ALLOW_LOGIN`, `PI_DURABLE_PORT`,
+  `PI_DURABLE_REMOTE_TOOLS`, `PI_DURABLE_TOOLS_IDLE_MIN` and `PI_DURABLE_PUSH_PREVIEW`
+  variables are parsed and checked; the commands say which phase implements them.
+  `serve` refuses `--allow-tools`.
+- The terminal UI's `/mem` loads asynchronously ("Loading…") and reloads while open
+  when the memory changes; host warnings reach the chat through the session
+  (`onNotice`); an attached TUI detaches on `/exit`, Ctrl+D or Ctrl+C twice and shows
+  `reconnecting…` in the footer.
 - Terminal UI for interactive chat (pi-tui 1.3.0, full screen like Pi's): the chat
   with streaming Markdown, collapsed thinking and tool output (ctrl+t, ctrl+o),
   agent reports, a status line (model, thinking, tools, work, memory, agents), and
@@ -50,6 +63,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- A launch whose first word is `serve` or `backup` runs that command; send such a
+  prompt with `-p` or after `--`.
 - Memory aligned with UniiChat's published source (Apache-2.0, superseding the
   gist; see NOTICE and the rewritten deviations list in `docs/memory.md`). New
   tree nodes only; nodes already built are never rebuilt:

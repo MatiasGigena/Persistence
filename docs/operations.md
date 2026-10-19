@@ -149,6 +149,8 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
 | `<data dir>/chat.sqlite.lock` | the flock file |
 | `<data dir>/chat.unii/` | memory: `main/` (log), `tree/` (summaries), `view.json` |
 | `<data dir>/settings.json` | the default model chosen with `/model`: `{"model": "PROVIDER/ID"}` |
+| `<data dir>/chat.sqlite.sock` | reserved for `pi-durable serve` (not built yet): its Unix socket, mode 600; in `$XDG_RUNTIME_DIR` when the path is over 107 bytes |
+| `<data dir>/serve/` | reserved for `pi-durable serve`: `vapid.json`, `push.json`, `devices.json`, mode 600 |
 
 - `--data-dir PATH` or `PI_DURABLE_DATA_DIR` changes the data dir.
 - `--database PATH` selects a specific SQLite file. Its memory goes beside it:

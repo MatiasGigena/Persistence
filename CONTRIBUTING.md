@@ -46,6 +46,7 @@ test/runtime/    reopen, request IDs, recovery, tool opt-in, synchronous FULL, t
 test/memory/     log, tree, view, compactor, uniichat extension
 test/agents/     roles, messaging, delivery across close and SIGKILL
 test/providers/  claude-cli with a fake CLI, stub MCP server, subscription check
+test/protocol/   wire messages and parsers, item diff and mirror (randomized, seeded)
 test/fixtures/   faux models, the fake claude CLI, child-process instances
 ```
 

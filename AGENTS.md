@@ -13,7 +13,11 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks.
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
-- `src/ui/`: the terminal UI. `types.ts` is the contract; `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents and /mem). The TUI never imports pi-durable.
+- `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents and /mem). The TUI never imports pi-durable.
+- `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`.
+- `src/server/` (phase 2–6, not yet): `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
+- `src/client/` (phase 3, not yet): `RemoteSession` (a `UiSession` over the socket) and attach.
+- `src/web/` (phase 4–6, not yet): the phone web app, vanilla DOM TypeScript served type-stripped.
 - `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
 - `tsconfig.json`, `eslint.config.ts`: the type and lint rules `npm run check` enforces.
 
@@ -40,6 +44,9 @@ A change is done when both pass and the docs below still match the code.
   `--allow-tools` is passed. `/tools on` enables them for the current launch only,
   after a confirmation; never persist that choice. Launch config and the toggle share
   one tool list (`piTools`), and both reconfigure Pi and its agents.
+- **No unauthenticated listener.** The server listens on loopback TCP (behind `tailscale serve`, with login,
+  device and origin checks) or a 0600 Unix socket only; never on a public address. See
+  [docs/protocol.md](docs/protocol.md#authentication).
 - **No `any`.** tsc strict and eslint `no-unsafe-*` must stay at zero; never add
   suppression comments. Parse external data as `unknown` and narrow it.
 - **State stays local.** Commit only source, tests, and docs: never `*.sqlite*`,
@@ -52,5 +59,7 @@ A change is done when both pass and the docs below still match the code.
 - Changing `src/memory/`: [docs/memory.md](docs/memory.md); keep its recipe deviations list current.
 - Changing `src/agents/`: [docs/agents.md](docs/agents.md).
 - Changing `src/providers/` or model routes: [docs/models.md](docs/models.md).
+- Changing `src/protocol/`, or what the server or a client sends: [docs/protocol.md](docs/protocol.md); bump
+  `PROTOCOL` for anything not additive.
 - Making a design decision: add an ADR in [docs/decisions/](docs/decisions/).
 - Code style and commit messages: [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -19,6 +19,13 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0013](0013-saved-default-model.md) | A model chosen in session is saved as the default, beside the database |
 | [0014](0014-phone-layout.md) | A compact terminal layout below 60 columns, for phones |
 | [0015](0015-agent-compaction.md) | pi-durable compacts agents; Pi's compactions stay declined |
+| [0016](0016-server-mode.md) | Server mode: one headless host that clients attach to (proposed) |
+| [0017](0017-wire-protocol.md) | Wire protocol: JSON messages, state synced by item id diffs (proposed) |
+| [0018](0018-tui-attach.md) | The terminal UI attaches to a running server (proposed) |
+| [0019](0019-private-access.md) | Private access over Tailscale, and the remote tools policy (proposed; amends 0009) |
+| [0020](0020-web-client-without-build.md) | A web client without a build step (proposed) |
+| [0021](0021-web-push-on-node-crypto.md) | Web Push on node:crypto (proposed) |
+| [0022](0022-online-backups.md) | Online backups (proposed) |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".

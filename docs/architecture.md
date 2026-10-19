@@ -51,7 +51,13 @@ host only through `src/ui/types.ts`.
   Below 60 columns (`NARROW` in `theme.ts`) every part switches to a compact layout
   for phones (ADR 0014).
   On exit it prints the chat to the main screen, so it stays in scrollback. While it
-  runs, the host's console warnings show as chat notices.
+  runs, the host's console warnings go to the session's `notify()`, and every client shows them as chat
+  notices (`UiSession.onNotice`).
+- **Protocol** (`src/protocol/`): the wire protocol of server mode ([protocol.md](protocol.md)): message
+  types, parser, and the item diff and mirror that sync a `UiSession` across a link. Plain TypeScript for Node
+  and the browser alike. The server (`src/server/`), the attaching client (`src/client/`) and the web app
+  (`src/web/`) are being built on it ([plan](plans/server-and-web.md), ADRs 0016 to 0022, proposed); until
+  then `serve`, `serve pair`, `serve devices`, `backup` and `--attach` are parsed and refused.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,
   installs the three extensions, and configures Pi for this launch.
 - **Memory** (`src/memory/`): the UniiChat log, tree, view, and compactor, plus the
@@ -174,7 +180,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 |---|---|
 | `bin/pi-durable` | Bash launcher: picks Node (`PI_DURABLE_NODE`, `node`, or Pi's private Node) and runs `src/cli.ts` |
 | `src/cli.ts` | Entry: parses arguments, checks Node, resolves paths, runs the host under `flock` |
-| `src/host/config.ts` | `--help` text, argument parsing, path resolution (data dir, database, `.unii` dir, auth file), the model's precedence, `settings.json` |
+| `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
 | `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`; `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
@@ -190,11 +196,17 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/providers/claude-cli-mcp.ts` | Stub stdio MCP server that lists Pi's tools to the CLI and runs none |
 | `src/providers/anthropic.ts` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
 | `src/agents/index.ts` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
+| `src/protocol/messages.ts` | Wire protocol v1: every message, the op table (`Ops`), item ops, error and close codes, limits |
+| `src/protocol/parse.ts` | `parseClientMessage`, `parseServerMessage`: JSON checked field by field from `unknown` |
+| `src/protocol/diff.ts` | `diffItems` (item ops between what a peer has and the current items), `wireItem` and `clip` |
+| `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |
+| `src/protocol/version.ts` | `PROTOCOL` |
 | `tsconfig.json` | Strict TypeScript for `tsc` (no emit): erasable syntax only, `.ts` import specifiers |
 | `eslint.config.ts` | typescript-eslint rules: no `any`, written or inferred, and no suppression comments |
 | `test/host/` | CLI parsing, paths, global chat, flock, shutdown |
 | `test/runtime/` | Reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript |
 | `test/memory/` | Log, tree, view, compactor, extension |
 | `test/agents/` | Roles, messaging, stops, reports, `zoom("Name")` pages, exactly-once delivery across close and SIGKILL; an agent's view and compaction through the host wiring |
+| `test/protocol/` | Random feed sequences through `diffItems` and `applyOps`, clipping, every message through JSON and the parsers, malformed input |
 | `test/providers/` | `claude-cli` against a fake CLI, through the Harness; the stub MCP server; the subscription check |
 | `test/fixtures/` | Faux models, the fake `claude` CLI, and child-process instances for the tests |
