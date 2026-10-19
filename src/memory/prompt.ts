@@ -1,4 +1,4 @@
-import { cutBytes, NODE } from './util.mjs';
+import { cutBytes, NODE } from './util.ts';
 
 export const PLACEHOLDER = '(not summarized yet: zoom it)';
 export const RULER = '-'.repeat(NODE);

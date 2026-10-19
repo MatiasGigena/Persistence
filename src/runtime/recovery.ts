@@ -1,4 +1,4 @@
-import { answerText } from './runtime.mjs';
+import { answerText } from './runtime.ts';
 
 // A failed run can leave only queued input, with no task for resume() to run.
 // An empty context-affecting write advances that queue without adding a prompt.

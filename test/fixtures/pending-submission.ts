@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
-import { openInstance } from '../../src/runtime/runtime.mjs';
-import { offlineModels } from './faux-model.mjs';
+import { openInstance } from '../../src/runtime/runtime.ts';
+import { offlineModels } from './faux-model.ts';
 
 const [databasePath, cwd, requestId] = process.argv.slice(2);
 const started = Promise.withResolvers();

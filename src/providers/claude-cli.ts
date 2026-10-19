@@ -13,7 +13,7 @@ import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/u
 export const CLAUDE_CLI = 'claude-cli';
 const API = 'claude-cli';
 const PREFIX = 'mcp__pi__';
-const STUB = fileURLToPath(new URL('./claude-cli-mcp.mjs', import.meta.url));
+const STUB = fileURLToPath(new URL('./claude-cli-mcp.ts', import.meta.url));
 const EFFORT = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' };
 const STOP = { end_turn: 'stop', stop_sequence: 'stop', refusal: 'stop', tool_use: 'toolUse', max_tokens: 'length',
   model_context_window_exceeded: 'length' };

@@ -4,9 +4,9 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { agentTranscript, createAgentsExtension, syncAgents } from '../agents/index.mjs';
-import { createUniiExtension, defaultCompactionModel, openMemory } from '../memory/index.mjs';
-import { CLAUDE_CLI } from '../providers/claude-cli.mjs';
+import { agentTranscript, createAgentsExtension, syncAgents } from '../agents/index.ts';
+import { createUniiExtension, defaultCompactionModel, openMemory } from '../memory/index.ts';
+import { CLAUDE_CLI } from '../providers/claude-cli.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;

@@ -7,9 +7,9 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, test } from 'node:test';
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
-import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents } from '../../src/agents/index.mjs';
-import { call, openAgents, router, say } from '../fixtures/agents-instance.mjs';
-import { offlineModels } from '../fixtures/faux-model.mjs';
+import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents } from '../../src/agents/index.ts';
+import { call, openAgents, router, say } from '../fixtures/agents-instance.ts';
+import { offlineModels } from '../fixtures/faux-model.ts';
 
 async function temporary(t) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-agents-'));
@@ -240,7 +240,7 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
 
   test('SIGKILL mid-flight, then reopen: every delivery happens exactly once', async (t) => {
     const options = await temporary(t);
-    const child = fork(new URL('../fixtures/agents-pending.mjs', import.meta.url), [options.databasePath, options.cwd],
+    const child = fork(new URL('../fixtures/agents-pending.ts', import.meta.url), [options.databasePath, options.cwd],
       { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     let stderr = '';
     child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });

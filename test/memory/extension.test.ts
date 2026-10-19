@@ -7,10 +7,10 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { createRegistry, Harness, MemoryStorage } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { createUniiExtension, openMemory, PROMPT } from '../../src/memory/index.mjs';
-import { answerText } from '../../src/runtime/runtime.mjs';
-import { hash } from '../../src/memory/util.mjs';
-import { offlineModels } from '../fixtures/faux-model.mjs';
+import { createUniiExtension, openMemory, PROMPT } from '../../src/memory/index.ts';
+import { answerText } from '../../src/runtime/runtime.ts';
+import { hash } from '../../src/memory/util.ts';
+import { offlineModels } from '../fixtures/faux-model.ts';
 
 const fake = async (_system, messages, { node }) => `summary ${node.name}: ${messages[0].content.includes('lighthouse') ? 'user asked about the lighthouse' : 'other'}`;
 const texts = message => typeof message.content === 'string' ? [message.content]

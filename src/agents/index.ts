@@ -21,7 +21,7 @@ import {
  * request IDs make every resubmission return the first one, so nothing is lost or delivered twice.
  * Tool calls that create deliveries are replay-safe and keyed by their tool task ID.
  *
- * Host wiring (src/runtime/runtime.mjs):
+ * Host wiring (src/runtime/runtime.ts):
  *   const Agents = createAgentsExtension({ initialContext, onReport });
  *   registry.install(Agents);                       // also on inspect-only launches: tasks stay known
  *   agent.extensions = [CodingTools, Agents, ...];  // the root's array selects exactly these

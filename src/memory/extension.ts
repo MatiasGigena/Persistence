@@ -3,9 +3,9 @@ import { getCurrentSystemMessage, getCurrentSystemPrompt, getCurrentTools } from
 import {
   CompactionTask, defineExtension, defineTool, GenerationTask, hook, ROOT_CONVERSATION_ID, section, ToolTask,
 } from '@earendil-works/pi-durable';
-import { reportSrc } from './memory.mjs';
-import { PROMPT } from './prompt.mjs';
-import { CAP, clip, formatDate, hash } from './util.mjs';
+import { reportSrc } from './memory.ts';
+import { PROMPT } from './prompt.ts';
+import { CAP, clip, formatDate, hash } from './util.ts';
 
 export const REPORT_KIND = 'agents.report';
 const LOGGED = new Set(['stop', 'length', 'toolUse']);

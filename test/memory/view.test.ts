@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { cut, end, start, View } from '../../src/memory/view.mjs';
+import { cut, end, start, View } from '../../src/memory/view.ts';
 
 // Taelin's rollback push (recipe §3.1), the reference for the view's merge order.
 function push(s, states) {

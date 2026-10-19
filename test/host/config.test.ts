@@ -6,8 +6,8 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { parseArgs, resolveOptions } from '../../src/host/config.mjs';
-import { openInstance } from '../../src/runtime/runtime.mjs';
+import { parseArgs, resolveOptions } from '../../src/host/config.ts';
+import { openInstance } from '../../src/runtime/runtime.ts';
 
 const exec = promisify(execFile);
 const launcher = resolve('bin/pi-durable');

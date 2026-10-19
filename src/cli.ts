@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { HELP, VERSION, parseArgs, resolveOptions } from './host/config.mjs';
+import { HELP, VERSION, parseArgs, resolveOptions } from './host/config.ts';
 
 process.umask(0o077);
 try {
@@ -16,7 +16,7 @@ try {
       console.log(`No saved session yet.\nDatabase: ${config.databasePath}`);
     } else {
       const child = spawn('flock', ['--nonblock', '--conflict-exit-code', '75', '--no-fork', `${config.databasePath}.lock`, process.execPath,
-        fileURLToPath(new URL('./host/host.mjs', import.meta.url)), JSON.stringify(config)], { stdio: 'inherit' });
+        fileURLToPath(new URL('./host/host.ts', import.meta.url)), JSON.stringify(config)], { stdio: 'inherit' });
       const listeners = new Map(['SIGINT', 'SIGTERM', 'SIGHUP'].map(signal => [signal, () => child.kill(signal)]));
       for (const [signal, listener] of listeners) process.on(signal, listener);
       child.once('error', error => {

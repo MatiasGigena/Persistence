@@ -9,9 +9,9 @@ import {
   fauxAssistantMessage, fauxThinking, fauxText, fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { answerText, openInstance, transcript } from '../../src/runtime/runtime.mjs';
-import { resumeInstance } from '../../src/runtime/recovery.mjs';
-import { offlineModels } from '../fixtures/faux-model.mjs';
+import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
+import { resumeInstance } from '../../src/runtime/recovery.ts';
+import { offlineModels } from '../fixtures/faux-model.ts';
 
 async function temporaryInstance(t) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-runtime-'));
@@ -323,7 +323,7 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
   test('SIGKILL/reopen resumes pending input without duplicate admission', async (t) => {
     const options = await temporaryInstance(t);
     const requestId = 'survives-sigkill';
-    const child = fork(new URL('../fixtures/pending-submission.mjs', import.meta.url), [
+    const child = fork(new URL('../fixtures/pending-submission.ts', import.meta.url), [
       options.databasePath, options.cwd, requestId,
     ], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     let stderr = '';

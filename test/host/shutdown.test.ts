@@ -12,7 +12,7 @@ test('SIGTERM closes an open stdin producer and releases the launcher', { timeou
     '--model', 'openai/gpt-4o-mini', '--auth-file', join(folder, 'auth.json')], {
     detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, OPENAI_API_KEY: 'offline-placeholder-not-a-real-key',
-      NODE_OPTIONS: `--import=${new URL('../fixtures/stdin-ready.mjs', import.meta.url).href}` },
+      NODE_OPTIONS: `--import=${new URL('../fixtures/stdin-ready.ts', import.meta.url).href}` },
   });
   t.after(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} });
   let stdout = '';

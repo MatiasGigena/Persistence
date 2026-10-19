@@ -10,12 +10,12 @@ import { fileURLToPath } from 'node:url';
 import { createModels, Type } from '@earendil-works/pi-ai';
 import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
 import { isRetryableAssistantError } from '@earendil-works/pi-ai/utils/retry';
-import { anthropicSubscriptionSource } from '../../src/providers/anthropic.mjs';
-import { claudeArgs, claudeCliProvider, CONVENTION, MODELS, renderPrompt } from '../../src/providers/claude-cli.mjs';
-import { answerText, openInstance, transcript } from '../../src/runtime/runtime.mjs';
+import { anthropicSubscriptionSource } from '../../src/providers/anthropic.ts';
+import { claudeArgs, claudeCliProvider, CONVENTION, MODELS, renderPrompt } from '../../src/providers/claude-cli.ts';
+import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
 
-const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.mjs', import.meta.url));
-const STUB = fileURLToPath(new URL('../../src/providers/claude-cli-mcp.mjs', import.meta.url));
+const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.ts', import.meta.url));
+const STUB = fileURLToPath(new URL('../../src/providers/claude-cli-mcp.ts', import.meta.url));
 
 // stream-json lines as claude 2.1.303 prints them with --include-partial-messages.
 const ev = event => ({ type: 'stream_event', event, session_id: 's', parent_tool_use_id: null });

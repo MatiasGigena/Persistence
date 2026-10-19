@@ -4,7 +4,7 @@
 //   const extension = createUniiExtension({ memory, resolveAgentChat });
 //   memory.append({ kind: 'work', text: '[Name] report…' });       // or memory.report({ name, text, id })
 //   memory.render();                                              // the current view in <chat> tags
-export { KINDS, Memory, openMemory } from './memory.mjs';
-export { createUniiExtension, REPORT_KIND } from './extension.mjs';
-export { createPiAiSummarizer, defaultCompactionModel } from './summarizer.mjs';
-export { PROMPT } from './prompt.mjs';
+export { KINDS, Memory, openMemory } from './memory.ts';
+export { createUniiExtension, REPORT_KIND } from './extension.ts';
+export { createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
+export { PROMPT } from './prompt.ts';

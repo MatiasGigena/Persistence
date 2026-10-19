@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { call, openAgents, router, say } from './agents-instance.mjs';
-import { offlineModels } from './faux-model.mjs';
+import { call, openAgents, router, say } from './agents-instance.ts';
+import { offlineModels } from './faux-model.ts';
 
 // Pi spawns M, M spawns S; S's model request stays in flight until the parent SIGKILLs us.
 const [databasePath, cwd] = process.argv.slice(2);

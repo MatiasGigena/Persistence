@@ -2,13 +2,13 @@ import { createInterface } from 'node:readline/promises';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { cleanupSessionResources } from '@earendil-works/pi-ai';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { openInstance, transcript, answerText } from '../runtime/runtime.mjs';
-import { resumeInstance, settleAgents } from '../runtime/recovery.mjs';
-import { listAgents, REPORT_KIND } from '../agents/index.mjs';
-import { anthropicSubscriptionSource } from '../providers/anthropic.mjs';
-import { CLAUDE_CLI, claudeCliProvider } from '../providers/claude-cli.mjs';
+import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
+import { resumeInstance, settleAgents } from '../runtime/recovery.ts';
+import { listAgents, REPORT_KIND } from '../agents/index.ts';
+import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
+import { CLAUDE_CLI, claudeCliProvider } from '../providers/claude-cli.ts';
 
-// Internal entry point: src/cli.mjs owns the database flock for this process.
+// Internal entry point: src/cli.ts owns the database flock for this process.
 process.umask(0o077);
 const config = JSON.parse(process.argv[2]);
 let instance;

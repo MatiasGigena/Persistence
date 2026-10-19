@@ -7,4 +7,4 @@ if [[ -z "${PI_DURABLE_NODE:-}" ]] && ! "$NODE" -e 'const [a,b]=process.versions
     NODE="$HOME/.local/share/pi-node/current/bin/node"
   fi
 fi
-exec "$NODE" "$ROOT/src/cli.mjs" "$@"
+exec "$NODE" "$ROOT/src/cli.ts" "$@"

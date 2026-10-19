@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { leafTask, mergeTask, PLACEHOLDER, PROMPT, tooLong } from './prompt.mjs';
-import { createPiAiSummarizer, defaultCompactionModel } from './summarizer.mjs';
+import { leafTask, mergeTask, PLACEHOLDER, PROMPT, tooLong } from './prompt.ts';
+import { createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
 import {
   appendJson, atomicWrite, bytes, CAP, cleanLine, clip, cutLine, flat, formatDate, hash, localDay, NODE, split,
-} from './util.mjs';
-import { cut, end, key, name, parentOf, start, View } from './view.mjs';
+} from './util.ts';
+import { cut, end, key, name, parentOf, start, View } from './view.ts';
 
 export const KINDS = new Set(['user', 'pi', 'tool', 'echo', 'work', 'note']);
 export const VIEW = { hi: 128_000, lo: 64_000 };

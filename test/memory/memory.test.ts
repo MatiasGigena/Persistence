@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
-import { createPiAiSummarizer, defaultCompactionModel, openMemory, PROMPT } from '../../src/memory/index.mjs';
-import { offlineModels } from '../fixtures/faux-model.mjs';
-import { RULER } from '../../src/memory/prompt.mjs';
-import { bytes, cutLine, NODE } from '../../src/memory/util.mjs';
+import { createPiAiSummarizer, defaultCompactionModel, openMemory, PROMPT } from '../../src/memory/index.ts';
+import { offlineModels } from '../fixtures/faux-model.ts';
+import { RULER } from '../../src/memory/prompt.ts';
+import { bytes, cutLine, NODE } from '../../src/memory/util.ts';
 
 const fake = async (_system, messages, { node }) => `summary of ${node.name} (${messages[0].content.length} chars in)`;
 

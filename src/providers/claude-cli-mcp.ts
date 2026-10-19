@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 /**
- * Stub stdio MCP server for the claude-cli provider: `node claude-cli-mcp.mjs TOOLS.json`. It lists Pi's tools so
+ * Stub stdio MCP server for the claude-cli provider: `node claude-cli-mcp.ts TOOLS.json`. It lists Pi's tools so
  * Claude can propose calls to them natively, and never runs anything: the provider stops the CLI at the first
  * tool_use and the Pi Harness executes the call. A call that still arrives gets DEFERRED back.
  */

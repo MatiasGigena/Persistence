@@ -5,7 +5,7 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { createAgentsExtension, syncAgents } from '../../src/agents/index.mjs';
+import { createAgentsExtension, syncAgents } from '../../src/agents/index.ts';
 
 const context = BACKGROUND_CONTEXT;
 
