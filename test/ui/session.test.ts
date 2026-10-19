@@ -143,7 +143,7 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
       const said = lastUserText(context);
       if (last?.role === 'toolResult') return fauxAssistantMessage('Bob is on it.');
       if (said.includes('[from Pi] count the boats')) return fauxAssistantMessage('There are 3 boats.');
-      if (said.includes('[Bob] There are 3 boats.')) return fauxAssistantMessage('Bob counted 3 boats.');
+      if (said.includes('[Bob]\nThere are 3 boats.')) return fauxAssistantMessage('Bob counted 3 boats.');
       return fauxAssistantMessage(fauxToolCall('spawn_agent', { name: 'Bob', task: 'count the boats' }, { id: 'spawn-1' }), { stopReason: 'toolUse' });
     };
     const { session } = await open(t, Array.from({ length: 8 }, () => respond));
@@ -248,7 +248,7 @@ async function openRoutes(t: TestContext, { inspect = false } = {}) {
     const said = lastUserText(context);
     if (context.messages.at(-1)?.role === 'toolResult') return fauxAssistantMessage('Bob is on it.');
     if (said.includes('[from Pi] count the boats')) return fauxAssistantMessage('There are 3 boats.');
-    if (said.includes('[Bob] There are 3 boats.')) return fauxAssistantMessage('Bob counted 3 boats.');
+    if (said.includes('[Bob]\nThere are 3 boats.')) return fauxAssistantMessage('Bob counted 3 boats.');
     if (said.includes('spawn Bob')) {
       return fauxAssistantMessage(fauxToolCall('spawn_agent', { name: 'Bob', task: 'count the boats' }, { id: 'spawn-1' }), { stopReason: 'toolUse' });
     }

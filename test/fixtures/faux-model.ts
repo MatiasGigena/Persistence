@@ -6,9 +6,9 @@ import type { ModelRef } from '@earendil-works/pi-durable';
 
 export type OfflineModels = { models: MutableModels; faux: FauxProviderHandle; model: ModelRef };
 
-// Explicit in-memory catalog: never loads credentials or real providers.
-export function offlineModels(responses: FauxResponseStep[] = []): OfflineModels {
-  const faux = fauxProvider();
+// Explicit in-memory catalog: never loads credentials or real providers. `contextWindow` sizes its one model.
+export function offlineModels(responses: FauxResponseStep[] = [], { contextWindow }: { contextWindow?: number } = {}): OfflineModels {
+  const faux = fauxProvider(contextWindow === undefined ? undefined : { models: [{ id: 'faux-small', contextWindow }] });
   faux.setResponses(responses);
   const models = createModels();
   models.setProvider(faux.provider);

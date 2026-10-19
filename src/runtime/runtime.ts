@@ -8,13 +8,15 @@ import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import type { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { agentTranscript, createAgentsExtension, syncAgents } from '../agents/index.ts';
+import { agentTranscript, createAgentsExtension, listAgents, syncAgents } from '../agents/index.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;
+// How long a spawn waits for the view's pending summaries, as a turn does: an agent cannot zoom a placeholder.
+const AGENT_VIEW_SETTLE_MS = 8_000;
 
 /** Options of `openInstance()`. */
 export interface InstanceOptions {
@@ -93,13 +95,20 @@ export async function openInstance({
   const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models) }) : undefined;
   let opened: Harness | undefined;
   const Unii = createUniiExtension({ memory,
-    resolveAgentChat: async name => {
+    resolveAgentChat: async (name, page) => {
       if (!opened) throw new Error('Harness is not open');
-      return agentTranscript(opened, name, context);
-    } });
+      return agentTranscript(opened, name, context, page);
+    },
+    // Upstream's "Agents at work now", read from the agents' runs so it never drifts from them.
+    atWork: async () => opened ? (await listAgents(opened, context)).filter(agent => agent.busy).map(agent => agent.name) : [],
+  });
   // Spawned agents copy Pi's choices; the chat's memory is Pi's alone.
   const childAgent: AgentChange = { extensions: { remove: [Unii] } };
-  const Agents = createAgentsExtension({ initialContext: () => memory?.render(), childAgent });
+  const Agents = createAgentsExtension({ childAgent, initialContext: async (_agent, _api, spawn) => {
+    if (!memory) return undefined;
+    await memory.settle(AGENT_VIEW_SETTLE_MS, spawn.abortSignal);
+    return memory.render();
+  } });
   const registry = createRegistry();
   // Register implementations even in chat-only mode, so pending tasks remain
   // recognizable. The persisted agent's enabled tools are replaced below.
@@ -129,8 +138,9 @@ export async function openInstance({
       registry,
       env: ({ cwd: directory }) => new NodeExecutionEnv({ cwd: directory ?? cwd }),
       onReport,
-      // UniiChat replaces pi-durable's compaction: the view keeps the context a constant size.
-      settings: { compaction: { enabled: false } },
+      // pi-durable compacts agents, which have no view, so their contexts stay bounded (ADR 0015). Pi's own
+      // compactions are declined by the uniichat extension: its view keeps Pi's context a constant size.
+      settings: { compaction: { enabled: true } },
     }, context);
     const root = await harness.root(context, configureAgent ? { agent } : undefined);
     // root({ agent }) only applies choices on creation. Every work launch must

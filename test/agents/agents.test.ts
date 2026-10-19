@@ -7,13 +7,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { describe, test, type TestContext } from 'node:test';
 import type { JsonValue } from '@earendil-works/chord';
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import {
   AssistantEntry, type ConversationId, createRegistry, type Cursor, defineEntry, type Entry, type EntryRecord,
-  type Harness, type JsonObject, ROOT_CONVERSATION_ID, type TaskId, type ToolExecutionApi, type ToolExecutionResult,
+  type Harness, type JsonObject, LiveDoc, ROOT_CONVERSATION_ID, type TaskId, type ToolExecutionApi, type ToolExecutionResult,
   type ToolRegistration, ToolResultEntry, type TypedEntry, UserEntry,
 } from '@earendil-works/pi-durable';
 import {
-  type AgentReport, AgentsDoc, agentTranscript, createAgentsExtension, listAgents, MESSAGE_KIND, REPORT_KIND,
+  type AgentReport, AgentsDoc, agentTranscript, createAgentsExtension, listAgents, MESSAGE_KIND, REPORT_KIND, stopAgents, TRANSCRIPT_PAGE,
 } from '../../src/agents/index.ts';
 import { type AgentsInstance, call, openAgents, router, say, type Turn } from '../fixtures/agents-instance.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
@@ -189,17 +190,23 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
       assert.equal(new Set(texts).size, texts.length, `duplicate report: ${texts.join(',')}`);
       assert.ok(texts.includes('Delegated to A and B.'));
       assert.ok(texts.includes('A finished.'));
-      assert.ok(userTexts(rootReports).includes('[Lead] Delegated to A and B.'));
-      assert.ok(userTexts(rootReports).includes('[Lead] A finished.'));
+      // Inputs to Pi take upstream's report format; inputs to agents stay `[Name] text`.
+      assert.ok(userTexts(rootReports).includes('[Lead]\nDelegated to A and B.\n\nFull chat: zoom("Lead")'));
+      assert.ok(userTexts(rootReports).includes('[Lead]\nA finished.\n\nFull chat: zoom("Lead")'));
+      assert.ok(userTexts(reportsToLead).includes('[A] A done.'));
       assert.deepEqual(reports.map((report) => report.text).sort(), [...texts].sort());
       assert.ok(reports.every((report) => report.name === 'Lead'));
-      assert.ok(seen.some((turn) => turn.who === 'Pi' && turn.user === '[Lead] A finished.'));
+      assert.ok(seen.some((turn) => turn.who === 'Pi' && turn.user === '[Lead]\nA finished.\n\nFull chat: zoom("Lead")'));
 
-      // Transcript rendering for zoom().
+      // Transcript rendering for zoom(): upstream's `i|kind: text` lines, inputs from their entries, no view preamble.
       const zoom = await agentTranscript(harness, 'B', context);
-      assert.match(zoom, /> \[from A\] hello from A/);
-      assert.match(zoom, /B: B got hello\./);
-      assert.match(await agentTranscript(harness, 'Pi', context), /spawn_agent\(\{"name":"Lead"/);
+      assert.match(zoom, /^0\|note: the first message also held Pi's view at the spawn \(not shown\)\n\n1\|user: \[from Lead\] Do part B\.\n\n/);
+      assert.match(zoom, /\n\n\d+\|user: \[from A\] hello from A\n\n\d+\|B: B got hello\./);
+      assert.doesNotMatch(zoom, /<view>/);
+      const leadChat = await agentTranscript(harness, 'Lead', context);
+      assert.match(leadChat, /\d+\|tool: spawn_agent\(\{"name":"B","task":"Do part B\."\}\)\n\n\d+\|echo: spawn_agent: Started sub agent B\./);
+      assert.match(leadChat, /\d+\|user: \[A\] A done\./);
+      assert.match(await agentTranscript(harness, 'Pi', context), /\d+\|tool: spawn_agent\(\{"name":"Lead"/);
     } finally {
       await instance.close();
     }
@@ -244,9 +251,159 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
       assert.match(await execute('spawn_agent', { name: 'M', task: 'x' }, ROOT_CONVERSATION_ID), /already exists/);
       assert.match(await execute('spawn_agent', { name: 'bad name', task: 'x' }, ROOT_CONVERSATION_ID), /Invalid name/);
       assert.match(await execute('spawn_agent', { name: 'pi', task: 'x' }, ROOT_CONVERSATION_ID), /Invalid name/);
+      // zoom() reads an id of digits as a message id, so a name starts with a letter.
+      assert.match(await execute('spawn_agent', { name: '42', task: 'x' }, ROOT_CONVERSATION_ID), /Invalid name/);
+      assert.match(await execute('spawn_agent', { name: '_x', task: 'x' }, ROOT_CONVERSATION_ID), /Invalid name/);
       assert.deepEqual(Object.keys((await harness.snapshot(AgentsDoc, context))?.agents ?? {}).sort(), ['M', 'S']);
     } finally {
       await instance.close();
+    }
+  });
+
+  test('stopping a main also stops its busy sub; a stopped run reports nothing', async (t) => {
+    const options = await temporary(t);
+    const started = Promise.withResolvers<void>();
+    const catalog = offlineModels(router({
+      Pi: ({ user, last }) => {
+        if (user === 'go') return last ? say('spawned') : call(['spawn_agent', { name: 'Lead', task: 'delegate' }]);
+        if (user.startsWith('[Lead]')) return say('noted');
+        if (user === 'stop Lead') return last ? say('stopped') : call(['stop_agent', { name: 'Lead' }]);
+        if (user === 'stop S') return last ? say('stopped S') : call(['stop_agent', { name: 'S' }]);
+      },
+      Lead: ({ last }) => last ? say('S is on it') : call(['spawn_agent', { name: 'S', task: 'slow job' }]),
+      S: async ({ signal }) => { started.resolve(); await delay(60_000, undefined, { signal }).catch(() => {}); return say('never'); },
+    }));
+    const instance = await openAgents({ ...options, ...catalog });
+    try {
+      const { harness, root, context } = instance;
+      const ask = async (content: string) => (await root.submit({ type: 'input', content }, context)).wait(context);
+      await ask('go');
+      await started.promise;
+      // Lead's report has reached Pi and Pi is idle again; only S still works.
+      for (const until = Date.now() + 15_000; ; await delay(10)) {
+        const reported = ofKind(await entries(harness, ROOT_CONVERSATION_ID, context), ReportEntry).length === 1;
+        const busy = (await listAgents(harness, context)).filter((agent) => agent.busy).map((agent) => agent.name);
+        const piIdle = (await harness.snapshot(LiveDoc, ROOT_CONVERSATION_ID, context))?.run === undefined;
+        if (reported && busy.join() === 'S' && piIdle) break;
+        assert.ok(Date.now() < until, 'Lead never reported');
+      }
+      await ask('stop Lead');
+      await settle(instance);
+      const piResults = results(await entries(harness, ROOT_CONVERSATION_ID, context)).map((result) => firstText(result.content));
+      assert.ok(piResults.includes('Stopped Lead and its sub agents S.'), piResults.join(' | '));
+      assert.deepEqual((await listAgents(harness, context)).filter((agent) => agent.busy), []);
+      assert.deepEqual(ofKind(await entries(harness, await agentId(instance, 'S'), context), AssistantEntry), []);
+      assert.deepEqual(ofKind(await entries(harness, await agentId(instance, 'Lead'), context), ReportEntry), []);
+      assert.deepEqual(ofKind(await entries(harness, ROOT_CONVERSATION_ID, context), ReportEntry).map((entry) => entry.data.text), ['S is on it']);
+      // Pi stopping a sub is told that the sub's main agent does not know.
+      await ask('stop S');
+      const last = results(await entries(harness, ROOT_CONVERSATION_ID, context)).at(-1);
+      assert.equal(firstText(last?.content), 'Stopped S. Its main agent Lead is not told; message it if it should know.');
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('stopAgents() stops every agent, subs first, for a host-wide stop; Pi is untouched', async (t) => {
+    const options = await temporary(t);
+    const started = Promise.withResolvers<void>();
+    const catalog = offlineModels(router({
+      Pi: ({ user, last }) => user === 'go' ? (last ? say('spawned') : call(['spawn_agent', { name: 'Lead', task: 'delegate' }])) : say('noted'),
+      Lead: ({ last }) => last ? say('S is on it') : call(['spawn_agent', { name: 'S', task: 'slow job' }]),
+      S: async ({ signal }) => { started.resolve(); await delay(60_000, undefined, { signal }).catch(() => {}); return say('never'); },
+    }));
+    const instance = await openAgents({ ...options, ...catalog });
+    try {
+      const { harness, root, context } = instance;
+      await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context);
+      await started.promise;
+      assert.deepEqual(await stopAgents(harness, context, 'nobody'), []);
+      assert.deepEqual(await stopAgents(harness, context), ['S', 'Lead']);
+      await settle(instance);
+      assert.deepEqual((await listAgents(harness, context)).filter((agent) => agent.busy), []);
+      assert.deepEqual(ofKind(await entries(harness, await agentId(instance, 'S'), context), AssistantEntry), []);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('a failed run reports why, and an empty reply reports "(no reply)"', async (t) => {
+    const options = await temporary(t);
+    const catalog = offlineModels(router({
+      Pi: ({ user, last }) => {
+        if (user === 'go') return last ? say('spawned') : call(['spawn_agent', { name: 'E', task: 'say nothing' }], ['spawn_agent', { name: 'F', task: 'fail' }]);
+        if (user.startsWith('[E]') || user.startsWith('[F]')) return say('noted');
+      },
+      E: () => say(''),
+      F: () => fauxAssistantMessage('', { stopReason: 'error', errorMessage: 'the model broke' }),
+    }));
+    const instance = await openAgents({ ...options, ...catalog });
+    try {
+      const { harness, root, context } = instance;
+      await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context);
+      await settle(instance);
+      const reports = Object.fromEntries(ofKind(await entries(harness, ROOT_CONVERSATION_ID, context), ReportEntry)
+        .map((entry) => [entry.data.name, entry.data.text]));
+      assert.equal(reports.E, '(no reply)');
+      assert.match(reports.F ?? '', /^failed: \w+: the model broke$/);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('zoom("Name") pages a long chat at line ends, 30,000 characters at most', async (t) => {
+    const options = await temporary(t);
+    const long = Array.from({ length: 1_500 }, (_, i) => `line ${i} ${'.'.repeat(40)}`).join('\n');
+    const catalog = offlineModels(router({
+      Pi: ({ last }) => last ? say('spawned') : call(['spawn_agent', { name: 'Long', task: long }]),
+      Long: () => say('ok'),
+    }));
+    const instance = await openAgents({ ...options, ...catalog });
+    try {
+      const { harness, root, context } = instance;
+      await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context);
+      await settle(instance);
+      const whole = await agentTranscript(harness, 'Long', context);
+      assert.ok(whole.length > 60_000 && whole.length < 90_000, String(whole.length));
+      const pages = [1, 2, 3].map((page) => agentTranscript(harness, 'long', context, page));
+      const [one, two, three] = await Promise.all(pages);
+      assert.match(one ?? '', /\n\[page 1 of 3; go on with page 2\]$/);
+      assert.match(two ?? '', /\n\[page 2 of 3; go on with page 3\]$/);
+      const body = (page: string | undefined) => (page ?? '').replace(/\n\[page \d of 3; go on with page \d\]$/, '');
+      assert.ok([one, two].every((page) => body(page).length <= TRANSCRIPT_PAGE && body(page).endsWith('\n')));
+      assert.equal(body(one) + body(two) + body(three), whole);
+      assert.equal(await agentTranscript(harness, 'Long', context, 4), 'No page 4: Long\'s chat has 3.');
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('each role\'s system section: the view only with initialContext, and the report is never sent twice', async (t) => {
+    const options = await temporary(t);
+    for (const initialContext of [undefined, () => '<chat>\n</chat>']) {
+      const catalog = offlineModels(router({
+        Pi: ({ last }) => last ? say('spawned') : call(['spawn_agent', { name: 'M', task: 'spawn S' }]),
+        M: ({ user, last }) => user.startsWith('[S]') ? say('relayed') : last ? say('done') : call(['spawn_agent', { name: 'S', task: 'idle' }]),
+        S: () => say('idle'),
+      }));
+      const databasePath = join(options.cwd, `${initialContext ? 'with' : 'without'}.sqlite`);
+      const instance = await openAgents({ ...options, databasePath, ...catalog, hooks: initialContext ? { initialContext } : {} });
+      try {
+        const { harness, root, context } = instance;
+        await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context);
+        await settle(instance);
+        const system = async (name: string) => JSON.stringify((await entries(harness, await agentId(instance, name), context))
+          .flatMap((entry) => entry.model ?? []).filter((message) => message.role === 'system'));
+        const [m, s] = [await system('M'), await system('S')];
+        assert.match(m, /Do not also send it with send_message/);
+        assert.match(s, /it reaches M automatically as \[S\] reply/);
+        for (const text of [m, s]) {
+          if (initialContext) assert.match(text, /Use it as context only/);
+          else assert.doesNotMatch(text, /Use it as context only/);
+        }
+      } finally {
+        await instance.close();
+      }
     }
   });
 

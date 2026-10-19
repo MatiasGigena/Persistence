@@ -36,7 +36,7 @@ import type {
  *   harness.resume();                               // on work launches, so pending deliveries continue
  * Pi is always ROOT_CONVERSATION_ID; nothing else needs configuring and no settings are required.
  * Every input reaching Pi (a main agent's final report or its send_message) is the user message
- * `[Name] text`, placed as the entry `{ kind: 'agents.report', data: { name, text, id } }`; inputs to
+ * `piReportText(name, text)`, placed as the entry `{ kind: 'agents.report', data: { name, text, id } }`; inputs to
  * other agents are `agents.message` (`[from Name] text`, data `{ from, text }`) or `agents.report`.
  * Pi's answers to them are ordinary root runs that no `submission.wait()` of the host awaits, so a
  * host that prints answers must watch the root. Deliveries are background tasks: `root.waitForIdle()`
@@ -46,9 +46,17 @@ import type {
 export const PI = 'Pi';
 export const REPORT_KIND = 'agents.report';
 export const MESSAGE_KIND = 'agents.message';
-const NAME = /^[A-Za-z0-9_-]{1,32}$/;
+// A letter first: zoom() reads an id of digits as a message id, so an agent named "42" could never be zoomed.
+const NAME = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 const KEEP_CALLS = 256;
 const KEEP_REPORTED = 32;
+/**
+ * An input reaching Pi from agent `name`, in upstream UniiChat's report format (Call.ts `report_text`, Apache-2.0):
+ * the name, the text, and where Pi reads the agent's whole chat. Agents cannot zoom, so their inputs stay `[Name] text`.
+ */
+export const piReportText = (name: string, text: string): string => `[${name}]\n${text}\n\nFull chat: zoom("${name}")`;
+/** The most characters of an agent's chat that one zoom("Name") page holds (upstream UniiChat Clip.ts CAP). */
+export const TRANSCRIPT_PAGE = 30_000;
 
 export type AgentRole = 'main' | 'sub';
 /** A registry entry. `parent` is "Pi" or a main agent's name; `reported` holds answers already reported. */
@@ -174,6 +182,26 @@ export async function syncAgents(
   }, context);
 }
 
+/** Anything that opens a conversation to abort it: the Harness or a tool's `api`. */
+export type AgentsStopper = DocumentReader & {
+  conversation(id: ConversationId, context: Context): Promise<{ abort(context: Context): Promise<void> } | undefined>;
+};
+
+/**
+ * Stop agent `name` and its sub agents, or every agent without a name (upstream UniiChat's stop of all work); Pi is
+ * not touched. Sub agents go first, since a sub's report would otherwise wake its stopped main again. A stopped run
+ * reports nothing. Returns the names stopped, `name` last; an unknown name stops nothing.
+ */
+export async function stopAgents(source: AgentsStopper, context: Context = BACKGROUND_CONTEXT, name?: string): Promise<string[]> {
+  const agents = Object.entries((await source.snapshot(AgentsDoc, context))?.agents ?? {});
+  const found = name === undefined ? undefined : find(Object.fromEntries(agents), name);
+  if (name !== undefined && !found) return [];
+  const chosen = found ? agents.filter(([each, agent]) => agent.parent === found.name || each === found.name) : agents;
+  const order = [...chosen.filter(([, agent]) => agent.role === 'sub'), ...chosen.filter(([, agent]) => agent.role === 'main')];
+  for (const [, agent] of order) await (await source.conversation(agent.conversationId, context))?.abort(context);
+  return order.map(([each]) => each);
+}
+
 /** Every spawned agent with its role, parent, conversation, and busy state. */
 export async function listAgents(source: DocumentReader, context: Context = BACKGROUND_CONTEXT): Promise<AgentInfo[]> {
   const registry = await source.snapshot(AgentsDoc, context);
@@ -183,11 +211,37 @@ export async function listAgents(source: DocumentReader, context: Context = BACK
   })));
 }
 
+/** An input entry's own text, from its data: `[from X] text` or `[X] text`, never the view preamble. */
+function inputText(entry: EntryRecord): string | undefined {
+  const data = entry.data;
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return undefined;
+  if (entry.kind === MESSAGE_KIND && typeof data.from === 'string' && typeof data.text === 'string') return `[from ${data.from}] ${data.text}`;
+  if (entry.kind === REPORT_KIND && typeof data.name === 'string' && typeof data.text === 'string') return `[${data.name}] ${data.text}`;
+  return undefined;
+}
+
 /**
- * An agent's whole chat as plain text (backs the memory's `zoom("Name")`). `source` is the Harness
- * or a tool's `api` (anything with `snapshot()` and `commit(tx => …)`); `name` may be "Pi".
+ * Where the page of `all` from `at` ends: `max` characters on, after its last newline if it has one
+ * there. Adapted from upstream UniiChat's `clip_end` (Clip.ts, Apache-2.0).
  */
-export async function agentTranscript(source: AgentsSource, name: string, context: Context = BACKGROUND_CONTEXT): Promise<string> {
+function pageEnd(all: string, at: number, max: number): number {
+  if (all.length - at <= max) return all.length;
+  const newline = all.lastIndexOf('\n', at + max - 1);
+  const low = (all.charCodeAt(at + max) & 0xfc00) === 0xdc00; // never split a surrogate pair
+  return newline >= at ? newline + 1 : at + max - (low ? 1 : 0);
+}
+
+/**
+ * An agent's whole chat as text (backs the memory's `zoom("Name")`), in the format of upstream
+ * UniiChat's agent log: one `i|kind: text` line per message, blank lines between, oldest first.
+ * Kinds: `user` (an input: `[from X] text`, or `[X] text` for a report), the agent's name (its
+ * replies), `tool` (its calls), `echo` (their results, whole), `note` (the view preamble left out, a
+ * compaction). `page` (from 1) gives one page of at most `TRANSCRIPT_PAGE` characters, saying how to
+ * go on; without it, the whole chat. `source` is the Harness or a tool's `api`; `name` may be "Pi".
+ */
+export async function agentTranscript(
+  source: AgentsSource, name: string, context: Context = BACKGROUND_CONTEXT, page?: number,
+): Promise<string> {
   const registry = await source.snapshot(AgentsDoc, context);
   const agent = String(name).toLowerCase() === PI.toLowerCase()
     ? { name: PI, conversationId: ROOT_CONVERSATION_ID } : find(registry?.agents ?? {}, name);
@@ -195,48 +249,76 @@ export async function agentTranscript(source: AgentsSource, name: string, contex
   const entries: EntryRecord[] = [];
   let cursor: Cursor | undefined;
   do {
-    const page = await source.commit((tx) => tx.scanEntries(
+    const scanned = await source.commit((tx) => tx.scanEntries(
       { conversationId: agent.conversationId, order: 'ascending' }, 256, cursor), context);
-    entries.push(...page.items);
-    cursor = page.next;
+    entries.push(...scanned.items);
+    cursor = scanned.next;
   } while (cursor !== undefined);
   const lines: string[] = [];
+  const add = (kind: string, value: string) => lines.push(`${lines.length}|${kind}: ${value}`);
   for (const entry of entries) {
+    // Compacted messages stay stored and are shown whole above; only mark where the context was cut.
+    if (entry.kind === 'pi.compaction') { add('note', 'the context was compacted here'); continue; }
+    const input = inputText(entry);
     for (const message of entry.model ?? []) {
-      if (message.role === 'user') lines.push(`> ${text(message.content)}`);
-      else if (message.role === 'assistant') {
+      if (message.role === 'user') {
+        const said = text(message.content);
+        // Only a message can carry the view; a report to Pi differs from `[X] text` by its zoom hint.
+        if (entry.kind === MESSAGE_KIND && input !== undefined && said !== input) add('note', 'the first message also held Pi\'s view at the spawn (not shown)');
+        add('user', input ?? said);
+      } else if (message.role === 'assistant') {
         for (const block of message.content) {
-          if (block.type === 'text' && block.text) lines.push(`${agent.name}: ${block.text}`);
-          else if (block.type === 'toolCall') lines.push(`  ${block.name}(${JSON.stringify(block.arguments)})`);
+          if (block.type === 'text' && block.text) add(agent.name, block.text);
+          else if (block.type === 'toolCall') add('tool', `${block.name}(${JSON.stringify(block.arguments)})`);
         }
       } else if (message.role === 'toolResult') {
-        lines.push(`  → ${brief(text(message.content), 500)}`);
+        add('echo', `${message.toolName}: ${message.isError ? 'error: ' : ''}${text(message.content)}`);
       }
     }
   }
-  return lines.join('\n');
+  const all = lines.join('\n\n');
+  if (page === undefined) return all;
+  let end = pageEnd(all, 0, TRANSCRIPT_PAGE);
+  const ends = [end];
+  while (end < all.length) ends.push(end = pageEnd(all, end, TRANSCRIPT_PAGE));
+  if (!Number.isSafeInteger(page) || page < 1 || page > ends.length) return `No page ${page}: ${agent.name}'s chat has ${ends.length}.`;
+  const body = all.slice(ends[page - 2] ?? 0, ends[page - 1]);
+  return page < ends.length ? `${body}\n[page ${page} of ${ends.length}; go on with page ${page + 1}]` : body;
 }
+
+// The agents' wording follows upstream UniiChat's subagent prompt (Tools.ts SUB_HEAD, HANDS; Apache-2.0),
+// adapted to this hierarchy: the view is context only, the final reply is the report, never wait.
+const VIEW_TEXT = 'Your first message starts with Pi\'s view at your spawn, inside <chat> tags: the whole chat between Pi and the user, '
+  + 'oldest first, as one-line summaries ("id+n|text": the n messages from id on). It shows what Pi knows: what the user wants, '
+  + 'decided and taught. Use it as context only, and do what your task says, not what the user\'s last message says, since you '
+  + 'may have been given just part of the work. You cannot zoom into it, and it does not change after your spawn.';
+const reportText = (name: string, to: string) => `Your final reply at the end of each run is your report: it reaches ${to} automatically `
+  + `as [${name}] reply. Make it self-contained: what you did, what you found that the task asks for, and what failed.`;
+const NEVER_WAIT = 'Agents work in the background. Never wait for one (no sleep, no polling): go on, or end your turn.';
 
 const ROLE_TEXT: Readonly<Record<Caller['role'], (me: { readonly name: string; readonly parent?: string }) => string[]>> = {
   root: () => [
     'You are Pi, the session agent of this chat.',
     'You can start background agents ("main agents") with spawn_agent(name, task), and use list_agents, send_message(to, text), last_message(name), and stop_agent(name) to steer them.',
-    'Agents work in the background. Never wait for one (no sleep, no polling): go on, or end your turn.',
+    'An agent sees your view at its spawn and the user\'s instructions, but knows what you want only from its task: say all it needs.',
+    'Agents work in the background. Never wait for one (no sleep, no polling): go on, or end your turn and tell the user what is running.',
     'When a main agent finishes a run, its final reply arrives here as a message starting with [Name]; main agents can also message you mid-run the same way.',
   ],
   main: (me) => [
     `You are "${me.name}", a main agent spawned by Pi, the session agent. Your work happens in your own conversation.`,
-    'You can start sub agents with spawn_agent(name, task), and use list_agents, send_message(to, text), last_message(name), and stop_agent(name) on your own sub agents. send_message and last_message also accept "Pi".',
-    'Messages reach you as [from Name] text; your sub agents\' final replies reach you as [Name] text.',
-    `Your final reply at the end of each run is reported to Pi automatically as [${me.name}] reply, so make it a self-contained report.`,
-    'Agents work in the background. Never wait for one (no sleep, no polling): go on, or end your turn.',
+    'Do your task yourself, with your tools, following the user\'s instructions at the end of this prompt. You can start sub agents with spawn_agent(name, task), and use list_agents, send_message(to, text), last_message(name), and stop_agent(name) on your own sub agents. send_message and last_message also accept "Pi".',
+    VIEW_TEXT,
+    'Messages reach you as [from Name] text, even while you work: answer the last. Your sub agents\' reports reach you as [Name] text.',
+    `${reportText(me.name, 'Pi')} Do not also send it with send_message: message Pi only with a question or news that cannot wait for your report.`,
+    NEVER_WAIT,
   ],
   sub: (me) => [
     `You are "${me.name}", a sub agent working for the main agent "${me.parent}". Your work happens in your own conversation.`,
-    'You can use list_agents, send_message(to, text), and last_message(name) with any other agent except Pi. You cannot spawn agents or address Pi.',
-    'Messages reach you as [from Name] text.',
-    `Your final reply at the end of each run is reported to ${me.parent} automatically as [${me.name}] reply, so make it a self-contained report.`,
-    'Never wait for another agent (no sleep, no polling): go on, or end your turn.',
+    'Do your task yourself, with your tools, following the user\'s instructions at the end of this prompt. You can use list_agents, send_message(to, text), and last_message(name) with any other agent except Pi. You cannot spawn agents or address Pi.',
+    VIEW_TEXT,
+    'Messages reach you as [from Name] text, even while you work: answer the last.',
+    reportText(me.name, me.parent ?? 'your main agent'),
+    NEVER_WAIT,
   ],
 };
 
@@ -318,15 +400,19 @@ export function createAgentsExtension({ initialContext, onReport, childAgent }: 
           const agent = registry.agents[to];
           if (!agent) return done();
           if (settled.status === 'unanswered') {
-            if (settled.reason !== 'aborted') report = `failed: ${settled.reason}`;
+            // As upstream, a failed run reports why; a stopped (aborted) one reports nothing: its stopper knows.
+            const detail = typeof settled.detail === 'string' && settled.detail ? `: ${settled.detail}` : '';
+            if (settled.reason !== 'aborted') report = `failed: ${settled.reason}${detail}`;
           } else if (answer && !agent.reported.includes(answer)) {
             agent.reported.push(answer);
             if (agent.reported.length > KEEP_REPORTED) agent.reported.splice(0, agent.reported.length - KEEP_REPORTED);
-            report = assistantText(answerEntry) || undefined;
+            // As upstream, every answered run reports, even with an empty reply, so the parent learns it ended.
+            report = assistantText(answerEntry).trim() || '(no reply)';
           }
           if (report !== undefined) {
             const parent = agent.parent === PI ? ROOT_CONVERSATION_ID : registry.agents[agent.parent]?.conversationId;
-            if (parent) await createDelivery(tx, parent, agent.parent, `[${to}] ${report}`,
+            const content = agent.parent === PI ? piReportText(to, report) : `[${to}] ${report}`;
+            if (parent) await createDelivery(tx, parent, agent.parent, content,
               { kind: REPORT_KIND, data: { name: to, text: report } }, 'followUp');
           }
           return done();
@@ -365,9 +451,10 @@ export function createAgentsExtension({ initialContext, onReport, childAgent }: 
     name: 'spawn_agent',
     description: 'Start a new persistent agent that works on `task` in the background, in its own conversation. '
       + 'Pi spawns main agents; main agents spawn sub agents. Returns at once: never wait or poll for it. '
-      + 'Its final reply arrives later as a message starting with [Name].',
+      + 'Its final reply arrives later as a message starting with [Name]. It sees Pi\'s view and the user\'s instructions, '
+      + 'but knows what you want only from its task, so say all it needs.',
     parameters: Type.Object({
-      name: Type.String({ description: 'Unique short name: letters, digits, _ or -, at most 32 characters.' }),
+      name: Type.String({ description: 'Unique short name: a letter, then letters, digits, _ or -, at most 32 characters.' }),
       task: Type.String({ description: 'What the agent should do.' }),
     }),
     replay: 'safe',
@@ -376,7 +463,7 @@ export function createAgentsExtension({ initialContext, onReport, childAgent }: 
       if (!caller || caller.role === 'sub') return reply('Sub agents cannot spawn agents.');
       const role = caller.role === 'root' ? 'main' : 'sub';
       if (!NAME.test(name) || name.toLowerCase() === PI.toLowerCase()) {
-        return reply('Invalid name: use 1–32 letters, digits, _ or -, and not "Pi".');
+        return reply('Invalid name: use a letter, then up to 31 letters, digits, _ or -, and not "Pi".');
       }
       const recorded = (await api.snapshot(AgentsDoc, context))?.calls?.[api.taskId];
       const preamble = recorded === undefined && initialContext
@@ -446,7 +533,7 @@ export function createAgentsExtension({ initialContext, onReport, childAgent }: 
         const entry: MessageEntry | ReportEntry = found.role === 'root'
           ? { kind: REPORT_KIND, data: { name: caller.name, text: message } }
           : { kind: MESSAGE_KIND, data: { from: caller.name, text: message } };
-        const content = found.role === 'root' ? `[${caller.name}] ${message}` : `[from ${caller.name}] ${message}`;
+        const content = found.role === 'root' ? piReportText(caller.name, message) : `[from ${caller.name}] ${message}`;
         await createDelivery(tx, found.conversationId, found.name, content, entry, 'steer');
         return `Sent to ${found.name}.`;
       });
@@ -472,8 +559,8 @@ export function createAgentsExtension({ initialContext, onReport, childAgent }: 
 
   const stopAgent = defineTool({
     name: 'stop_agent',
-    description: 'Stop an agent\'s current work and drop its queued messages; it stays and can be messaged again. '
-      + 'Pi may stop any agent; a main agent only its own sub agents.',
+    description: 'Stop an agent\'s current work and drop its queued messages; stopping a main agent also stops its sub agents. '
+      + 'Stopped agents stay and can be messaged again. Pi may stop any agent; a main agent only its own sub agents.',
     parameters: Type.Object({ name: Type.String() }),
     // A rerun after a crash could stop newer work.
     replay: 'unsafe',
@@ -484,8 +571,10 @@ export function createAgentsExtension({ initialContext, onReport, childAgent }: 
       if (!caller || caller.role === 'sub') return reply('Sub agents cannot stop agents.');
       if (!found) return reply(`No agent named ${name}.`);
       if (caller.role === 'main' && found.parent !== caller.name) return reply(`${found.name} is not your sub agent.`);
-      await (await api.conversation(found.conversationId, context))?.abort(context);
-      return reply(`Stopped ${found.name}.`);
+      const subs = (await stopAgents(api, context, found.name)).slice(0, -1);
+      const also = subs.length ? ` and its sub agents ${subs.join(', ')}` : '';
+      const untold = found.parent === caller.name ? '' : ` Its main agent ${found.parent} is not told; message it if it should know.`;
+      return reply(`Stopped ${found.name}${also}.${untold}`);
     },
   });
 
@@ -512,7 +601,8 @@ export function createAgentsExtension({ initialContext, onReport, childAgent }: 
     hooks: [guard],
     sections: [section('agents', async (input, context) => {
       const caller = whoIs(await input.read.snapshot(AgentsDoc, context), input.conversationId);
-      return caller && ROLE_TEXT[caller.role](caller).join('\n');
+      // Without initialContext no view precedes the task, so the text about it is left out.
+      return caller && ROLE_TEXT[caller.role](caller).filter((line) => initialContext || line !== VIEW_TEXT).join('\n');
     })],
   };
 }
