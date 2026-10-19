@@ -69,17 +69,25 @@ host only through `src/ui/types.ts`.
 2. The Harness commits the input and runs a generation task for the root conversation.
 3. Before each model request, the `uniichat` extension's `beforeRequest` hook:
    - records the current system prompt and tools, so compactions share their prefix;
+   - logs what an earlier run left unlogged (a reply cut by `/stop` or a failure,
+     with `[cut off: why]`), so it is in the view, then the run's new message (or
+     agent report) to `chat.unii/main/`; the view still ends before that message;
    - waits up to 8 s for pending summaries, then uses placeholders;
    - replaces the request with: system prompt, the view in `<chat>` tags, a
-     `<turn>` block with the current date and time, the previous exchange (at most
-     16,000 bytes), the run's new message, and the run's own steps;
-   - logs the new user message (or agent report) to `chat.unii/main/`.
-   The view, turn block, and previous exchange are frozen for the run, so every
-   request in one run shares a prefix. Tool results over 30,000 characters are
-   clipped in the request.
-4. The model answers. `afterResponse` logs Pi's text as `pi` and each tool call as
-   `tool`. `afterTool` logs each tool result as `echo`. Every log line has a `src`
-   key, so a replay never logs it twice.
+     `<turn>` block with the current date and time (and the agents at work, when the
+     host passes `atWork`), the previous exchange (at most 16,000 bytes), the run's new
+     message after `Turn: the user's new message:` (only its last parts when it is
+     over 128,000 bytes, the first ones summarized into the view), and the run's own
+     steps.
+   A run is everything after the last final answer, or after the last reply of an
+   earlier run that failed or was stopped: such a run is never sent again raw. The
+   view, turn block, and previous exchange are frozen for the run, so every request
+   in one run shares a prefix. Tool results over 30,000 characters are clipped in the
+   request.
+4. The model answers. `afterResponse` logs Pi's text as `pi`. `afterTool` logs each
+   tool call as `tool` right before its result as `echo`; a call left without a result
+   is logged alone by the next request. Every log line has a `src` key, so a replay
+   never logs it twice.
 5. Tool calls run as tool tasks. Coding tools are present only with `--allow-tools`, or after `/tools on`.
 6. The final answer is committed as a `pi.assistant` entry. The host's reply watcher
    subscribes to the root's view and prints each new `pi.assistant` and
@@ -89,8 +97,8 @@ host only through `src/ui/types.ts`.
    the cheap compaction model. Finished nodes are appended to `chat.unii/tree/`, and
    the view is refit and saved to `view.json`.
 
-pi-durable's own compaction is disabled in the Harness settings, and the extension
-declines any root compaction that still starts.
+pi-durable's own compaction is on in the Harness settings, for agents. The extension
+declines every compaction of the root ([ADR 0015](decisions/0015-agent-compaction.md)).
 
 ## Agents and the root
 
@@ -106,7 +114,10 @@ declines any root compaction that still starts.
   is configured, and again after `/model` or `/tools` reconfigures Pi. So
   `--allow-tools`, `--model` and those switches apply to agents too.
 - A new agent's first message starts with Pi's current memory view, then
-  `[from Spawner] task`.
+  `[from Spawner] task`. The spawn first waits up to 8 s for the view's pending
+  summaries, since an agent cannot zoom a placeholder.
+- pi-durable compacts an agent's conversation near its model's window; Pi's
+  compactions are declined.
 - Every input to an agent travels in an `agents.deliver` background task. It submits
   with the request ID `agents:<task id>`, waits for the answer, and in one commit
   marks the answer reported and creates the delivery of `[Name] answer` to the parent.
@@ -184,6 +195,6 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `test/host/` | CLI parsing, paths, global chat, flock, shutdown |
 | `test/runtime/` | Reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript |
 | `test/memory/` | Log, tree, view, compactor, extension |
-| `test/agents/` | Roles, messaging, exactly-once delivery across close and SIGKILL |
+| `test/agents/` | Roles, messaging, stops, reports, `zoom("Name")` pages, exactly-once delivery across close and SIGKILL; an agent's view and compaction through the host wiring |
 | `test/providers/` | `claude-cli` against a fake CLI, through the Harness; the stub MCP server; the subscription check |
 | `test/fixtures/` | Faux models, the fake `claude` CLI, and child-process instances for the tests |

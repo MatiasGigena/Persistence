@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted, 2026-10-19
+Accepted, 2026-10-19. Amended by [0015](0015-agent-compaction.md): pi-durable's compaction is on again, for
+agents only; the extension still declines Pi's.
 
 ## Context
 

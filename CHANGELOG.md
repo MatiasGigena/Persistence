@@ -23,7 +23,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   selection's detail. The editor stays within about 30% of the rows, and the
   spinner slows to 250 ms over SSH or on a narrow screen. See "Phone access" in
   `docs/operations.md` and ADR 0014.
-- `/stop` interrupts Pi, as Esc does, for keyboards without Esc.
+- `/stop` interrupts Pi, as Esc does, for keyboards without Esc. `/stop all` also stops
+  every agent, and `/stop Name` stops one agent and its sub agents (as UniiChat's `/stop`).
 - Ctrl+D or Ctrl+C twice asks for confirmation while Pi or an agent is working;
   `/exit` still closes at once.
 - `/tools on` and `/tools off` in the terminal UI switch coding tools for this
@@ -49,6 +50,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Memory aligned with UniiChat's published source (Apache-2.0, superseding the
+  gist; see NOTICE and the rewritten deviations list in `docs/memory.md`). New
+  tree nodes only; nodes already built are never rebuilt:
+  - The system prompt gains upstream's closing paragraph on compactions ("a
+    small, mechanical job … spend few tokens") and no longer promises images
+    from `zoom(id, 1)`, since the log keeps text only.
+  - A "Too long" retry is a fresh call of the task plus upstream's note on the
+    last line, not a second turn carrying the long line.
+  - A compaction the model answers without a line (empty, or an Anthropic
+    refusal) makes its node the source's first 512 bytes instead of failing and
+    retrying forever.
+  - A merge's input and an instant merge's text are the halves' flat texts,
+    without `id+n|` heads; `flat` now folds the whitespace around a newline, so
+    rendered lines of indented text are shorter (one view change at upgrade).
+  - Between messages the views change only by a whole batch; at a message a
+    batch under way keeps what it merged. The compaction view runs its own
+    sawtooth instead of being reset from the chat view.
+  - Compactions run in the order the messages came, merges and leaves
+    interleaved, instead of leaves first.
+  - A `view.json` line whose tree node was lost opens into its halves instead of
+    refolding the whole view.
+  - Tool output is clipped to at most 30,000 characters including the marker;
+    `zoom(id, 1)` pages at 30,000 characters, so a logged message is one page;
+    a bad zoom names the tree's roots. A split text's parts are written in one
+    fsynced write, and text is made well-formed before it is logged.
+
+- Agents are compacted by pi-durable near their model's context window, so a
+  long-lived agent no longer grows past it; Pi still declines pi-durable's
+  compaction and keeps its view. See ADR 0015.
+- Pi's `<turn>` block lists the agents at work, as upstream UniiChat tells its
+  master, and `zoom("Name")` pages an agent's chat at 30,000 characters.
+- `zoom("Name")` shows an agent's chat as upstream's numbered `i|kind: text`
+  lines: inputs without the view preamble, tool results whole, a note where the
+  agent's context was compacted.
+- `stop_agent` on a main agent also stops its sub agents. When Pi stops a sub
+  agent, the result says its main agent was not told.
+- A failed agent run reports its error detail (`[Name] failed: <reason>: <detail>`),
+  and an empty final reply reports `[Name] (no reply)` instead of nothing.
+- A spawn waits up to 8 s for the view's pending summaries before handing it to
+  the new agent, which cannot zoom a placeholder.
+- The agents' prompts follow upstream's subagent prompt (Apache-2.0): the view is
+  context only and the task decides; the final reply is a self-contained report;
+  a main agent does not also send its report to Pi with `send_message`.
+  `spawn_agent` asks the spawner to say all the agent needs.
+- Agent names start with a letter, since `zoom` reads digits as a message id.
+- Every input from an agent to Pi takes upstream's report format,
+  `[Name]\ntext\n\nFull chat: zoom("Name")`; inputs to agents stay `[Name] text`.
+- `stopAgents()` stops one agent with its sub agents, or every agent, for a
+  host-wide stop; `stop_agent` uses it.
 - Pi's instructions about the coding tools follow `/tools` and name it, with
   `--allow-tools`, as the only ways to turn them on. ADR 0009 is amended: tools
   can be switched in session but still start off on every launch.
@@ -59,6 +109,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   eslint; run by Node type stripping with no build step. `npm run check` runs
   tsc, eslint and `bash -n`; `npm run typecheck` and `npm run lint` run each alone.
   See ADR 0011.
+- A turn's request (aligned with UniiChat's `Server.ts`, Apache-2.0): the run's
+  new message follows `Turn: the user's new message:`, as a compaction's task
+  starts with `Compaction:`. The extension takes an optional `atWork()` that lists
+  the agents working now in the `<turn>` block, and `zoom("Name", 1, page)` passes
+  its page to `resolveAgentChat`.
+- The log keeps each tool call right before its result, as UniiChat does, instead
+  of all of a reply's calls before their results; a call left without a result is
+  logged alone. A reply cut by `/stop` or by a model failure is logged by the next
+  run with `[cut off: why]` (aborted replies used to be dropped).
+- A run's first input over 128,000 bytes (a huge paste) is no longer sent whole:
+  as upstream's `whole`, its first parts are summarized into the view and the
+  message carries only its last parts (`Memory.say`). The input is now logged
+  before the view is rendered; the view still ends before it.
+- Compactions get the turns' system prompt and no tools, as upstream; the
+  compaction model usually differs from the turn model, so tools bought no cache.
+- `memory.report()` logs a report as Pi sees it, `[Name]\ntext\n\nFull chat:
+  zoom("Name")`, instead of `[Name] text`; its `src` key is unchanged.
+
+### Fixed
+
+- A run that failed or was stopped is no longer sent again raw with the next
+  message. Before, its messages were carried into every later run until one ended
+  with a final answer, so a run that overflowed the context window failed every
+  later run too, and after `/stop` the next run reused the stopped run's frozen
+  view and date. Now the next run starts at its own message, and the failed run's
+  messages are in the view.
 
 ## [0.1.0] - 2026-10-19
 

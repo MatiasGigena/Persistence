@@ -57,7 +57,7 @@ Chat commands: `/help`, `/model` (pick a model; type to filter, Enter switches),
 `/model provider/id` (switch directly), `/tools` (show), `/tools on` (asks first:
 `y` enables read, write, edit and bash for this launch), `/tools off`, `/agents` (list
 agents, open any agent's live chat), `/mem` (browse the memory view and zoom down to
-any message), `/status`, `/stop` (interrupt Pi, as Esc does), `/exit`. A new model
+any message), `/status`, `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
 applies from the next message and becomes the default for launches without `--model`.
 Keys: Enter sends, Shift+Enter or Alt+Enter adds a line, Esc interrupts Pi, Ctrl+L
 picks a model, Ctrl+O expands tool output, Ctrl+T expands thinking, Ctrl+C twice or
@@ -83,7 +83,7 @@ Personal use only. Routes, policy, isolation and limits: [docs/models.md](docs/m
 - In the background, a cheap model (`openai-codex/gpt-6-luna` by default, `claude-cli/haiku` with `claude-cli`) compresses the log into a binary tree of lines of at most 512 bytes (`chat.unii/tree/`).
 - Each turn is a fresh model call. It sees a 64–128 KB view of the tree (`chat.unii/view.json`): recent lines are fine, old ones coarse. Then comes the new message.
 - Pi opens a vague line with `zoom(id, n)`, down to the original message. `date(id)` gives a message's time.
-- pi-durable's own compaction is off. Only Pi has this memory; agents do not.
+- Only Pi has this memory, and it declines pi-durable's own compaction. Agents have no view; pi-durable compacts a long agent chat.
 - Details and the deviations from the recipe: [docs/memory.md](docs/memory.md).
 
 ## How agents work
@@ -131,7 +131,7 @@ src/providers/      claude-cli provider (official claude CLI) and the anthropic 
 tsconfig.json       strict TypeScript, run by Node's type stripping (no build)
 eslint.config.ts    lint rules: no any
 test/               offline tests, by area, with fixtures
-docs/               architecture, operations, models, memory, agents, decisions
+docs/               architecture, operations, models, memory, agents, decisions, licenses
 ```
 
 ## Docs
@@ -149,4 +149,5 @@ docs/               architecture, operations, models, memory, agents, decisions
 ## Status
 
 Experimental and personal. It depends on an experimental SDK pinned at 1.3.0.
-No license yet; all rights reserved.
+No license yet; all rights reserved. Parts of `src/memory/` are adapted from
+[UniiChat](https://github.com/VictorTaelin/uniichat) under the Apache License 2.0; see [NOTICE](NOTICE).
