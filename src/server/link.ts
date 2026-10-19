@@ -29,6 +29,15 @@ export interface PeerHub {
   closeDevice(name: string, code: CloseCode, reason: string): void;
 }
 
+/** Paired web devices: implemented by src/server/auth.ts; the hub serves the socket-only admin ops from it. */
+export interface DeviceRegistry {
+  /** A one-time pairing code, valid until `expiresAt` (ms). */
+  pair(): Promise<{ readonly code: string; readonly expiresAt: number }>;
+  list(): Promise<readonly Device[]>;
+  /** Forgets the device; false when no device has that name. The hub then closes its links. */
+  revoke(name: string): Promise<boolean>;
+}
+
 /** What the hub asks of push: implemented by src/server/push.ts, absent when push is off. */
 export interface PushNotifier {
   /** The VAPID public key (base64url, uncompressed P-256 point) sent in `welcome.pushKey`. */
