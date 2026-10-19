@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { isRecord, parseArgs, resolveOptions, writeSettings } from '../../src/host/config.ts';
+import { DEFAULT_PORT, isRecord, parseArgs, parseConfig, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, writeSettings } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 
 const exec = promisify(execFile);
@@ -117,4 +117,111 @@ test('flock rejects a second host and a symlink alias; status needs no credentia
   assert.equal(typeof status.modelSource, 'string');
   await assert.rejects(stat(join(folder, 'absent-auth.json')), { code: 'ENOENT' });
   await assert.rejects(stat(join(folder, 'settings.json')), { code: 'ENOENT' }, 'an inspection writes no settings');
+});
+
+test('subcommands: serve, serve pair, serve devices, backup, with options before or after them', () => {
+  assert.equal(parseArgs([]).command, 'chat');
+  assert.equal(parseArgs(['hello']).command, 'chat');
+  assert.deepEqual([parseArgs(['serve']).command, parseArgs(['serve']).allowTools], ['serve', false]);
+  const serve = parseArgs(['--data-dir', '/d', 'serve', '--cwd', '/p', '--port', '8080', '--model', 'claude-cli/sonnet']);
+  assert.deepEqual([serve.command, serve.dataDir, serve.cwd, serve.port, serve.model?.modelId], ['serve', '/d', '/p', 8080, 'sonnet']);
+  assert.equal(parseArgs(['serve', 'pair']).command, 'serve-pair');
+  assert.equal(parseArgs(['serve', 'devices']).command, 'serve-devices');
+  assert.equal(parseArgs(['serve', 'devices', '--revoke', 'phone']).revoke, 'phone');
+  assert.deepEqual([parseArgs(['backup']).command, parseArgs(['backup', '--out', '/b']).out], ['backup', '/b']);
+  assert.deepEqual([parseArgs(['--', 'serve']).command, parseArgs(['--', 'serve']).prompt], ['chat', 'serve'], '-- makes it a prompt');
+  assert.deepEqual([parseArgs(['-p', 'serve dinner']).command, parseArgs(['serve dinner']).prompt], ['chat', 'serve dinner']);
+  assert.equal(parseArgs(['serve', '--help']).help, true);
+});
+
+test('each subcommand refuses what does not apply to it; serve refuses --allow-tools', () => {
+  assert.throws(() => parseArgs(['serve', '--allow-tools']), /serve always starts with coding tools off/);
+  assert.throws(() => parseArgs(['serve', 'the', 'soup']), /Unknown serve argument: the \(to send a prompt starting with "serve", use -p\)/);
+  for (const args of [['serve', '-p', 'x'], ['serve', '--plain'], ['serve', '--local'], ['serve', '--attach'], ['serve', '--status'],
+    ['serve', '--revoke', 'x'], ['serve', '--out', '/b'], ['serve', '--request-id', 'r'], ['serve', 'pair', '--port', '1'],
+    ['serve', 'pair', '--cwd', '/'], ['serve', 'devices', '--out', '/b'], ['serve', 'devices', 'phone'], ['backup', '--port', '1'],
+    ['backup', '--allow-tools'], ['backup', 'now'], ['serve', '--port', '0'], ['serve', '--port', '65536'], ['serve', '--port', 'http'],
+    ['serve', 'devices', '--revoke', ' ']]) {
+    assert.throws(() => parseArgs(args), Error, JSON.stringify(args));
+  }
+  assert.throws(() => parseArgs(['--port', '7433']), /--port applies only to serve/);
+  assert.throws(() => parseArgs(['--revoke', 'x']), /--revoke applies only to serve devices/);
+  assert.throws(() => parseArgs(['--out', '/b']), /--out applies only to backup/);
+});
+
+test('--local and --attach: one or the other, and --attach takes no launch settings or one-shot mode', () => {
+  assert.equal(parseArgs(['--local']).local, true);
+  assert.equal(parseArgs(['--local', '--allow-tools', '-p', 'x']).allowTools, true);
+  assert.equal(parseArgs(['--attach']).attach, true);
+  assert.throws(() => parseArgs(['--local', '--attach']), /Choose either --local or --attach/);
+  for (const flag of [['--allow-tools'], ['--model', 'a/b'], ['--thinking', 'low'], ['--cwd', '/'], ['--auth-file', '/a'], ['--plain']]) {
+    assert.throws(() => parseArgs(['--attach', ...flag]), new RegExp(`${flag[0] ?? ''} does not apply to --attach`));
+  }
+  for (const mode of [['-p', 'x'], ['hello'], ['--status'], ['--history'], ['--resume']]) {
+    assert.throws(() => parseArgs(['--attach', ...mode]), /--attach is for interactive chat only/, mode.join(' '));
+  }
+});
+
+test('serve settings from --port and the environment, each variable checked', () => {
+  assert.deepEqual(serveSettings({}, {}), { port: DEFAULT_PORT, allowLogins: [], remoteTools: 'confirm', toolsIdleMinutes: 30, pushPreview: false });
+  const env = { PI_DURABLE_ORIGIN: 'https://vps.tail1234.ts.net/', PI_DURABLE_ALLOW_LOGIN: ' me@github , you@example.com,',
+    PI_DURABLE_PORT: '8443', PI_DURABLE_REMOTE_TOOLS: 'off', PI_DURABLE_TOOLS_IDLE_MIN: '5', PI_DURABLE_PUSH_PREVIEW: 'on' };
+  assert.deepEqual(serveSettings({}, env), { port: 8443, origin: 'https://vps.tail1234.ts.net', allowLogins: ['me@github', 'you@example.com'],
+    remoteTools: 'off', toolsIdleMinutes: 5, pushPreview: true });
+  assert.equal(serveSettings({ port: 9000 }, env).port, 9000, '--port beats PI_DURABLE_PORT');
+  assert.equal(serveSettings({}, { PI_DURABLE_ORIGIN: 'http://127.0.0.1:7433' }).origin, 'http://127.0.0.1:7433', 'http on loopback, for development');
+  for (const [name, value] of [['PI_DURABLE_ORIGIN', 'http://vps.example'], ['PI_DURABLE_ORIGIN', 'https://vps.example/app'],
+    ['PI_DURABLE_ORIGIN', 'vps.example'], ['PI_DURABLE_ORIGIN', 'https://user@vps.example'], ['PI_DURABLE_ALLOW_LOGIN', 'me@github, two words'],
+    ['PI_DURABLE_PORT', '0'], ['PI_DURABLE_PORT', 'x'], ['PI_DURABLE_REMOTE_TOOLS', 'on'], ['PI_DURABLE_TOOLS_IDLE_MIN', '0'],
+    ['PI_DURABLE_TOOLS_IDLE_MIN', '1441'], ['PI_DURABLE_TOOLS_IDLE_MIN', '2.5'], ['PI_DURABLE_PUSH_PREVIEW', 'yes']] as const) {
+    assert.throws(() => serveSettings({}, { [name]: value }), new RegExp(name), `${name}=${value}`);
+  }
+});
+
+test('state paths: the socket beside the chat, or in XDG_RUNTIME_DIR when that path is too long', () => {
+  const paths = statePaths('/s/chat.sqlite', {});
+  assert.deepEqual(paths, { lock: '/s/chat.sqlite.lock', memoryDir: '/s/chat.unii', settings: '/s/settings.json', socket: '/s/chat.sqlite.sock',
+    serveDir: '/s/serve', vapid: '/s/serve/vapid.json', push: '/s/serve/push.json', devices: '/s/serve/devices.json' });
+  const deep = `/${'d'.repeat(SOCKET_PATH_MAX)}/chat.sqlite`;
+  const fallback = statePaths(deep, { XDG_RUNTIME_DIR: '/run/user/1000' }).socket ?? '';
+  assert.match(fallback, /^\/run\/user\/1000\/pi-durable-[0-9a-f]{16}\.sock$/);
+  assert.equal(statePaths(deep, { XDG_RUNTIME_DIR: '/run/user/1000' }).socket, fallback, 'stable for one database');
+  assert.notEqual(statePaths(`${deep}2`, { XDG_RUNTIME_DIR: '/run/user/1000' }).socket, fallback);
+  assert.equal(statePaths(deep, {}).socket, undefined, 'never /tmp, where another user could squat it');
+  const edge = `/${'e'.repeat(SOCKET_PATH_MAX - '/.sock'.length)}`;
+  assert.equal(statePaths(edge, {}).socket, `${edge}.sock`, 'exactly 107 bytes still fits');
+});
+
+test('resolved serve and admin configs survive the trip to the host; admin commands create nothing', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-serve-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const config = await resolveOptions(parseArgs(['serve', '--data-dir', join(folder, 'state'), '--cwd', folder, '--port', '8000']),
+    { PI_DURABLE_ORIGIN: 'https://vps.ts.net', PI_DURABLE_ALLOW_LOGIN: 'me@github' });
+  assert.equal(config.command, 'serve');
+  assert.deepEqual(config.serve, { port: 8000, origin: 'https://vps.ts.net', allowLogins: ['me@github'], remoteTools: 'confirm', toolsIdleMinutes: 30, pushPreview: false });
+  assert.equal(config.socketPath, join(folder, 'state', 'chat.sqlite.sock'));
+  assert.equal(config.serveDir, join(folder, 'state', 'serve'));
+  assert.deepEqual(parseConfig(JSON.stringify(config)), JSON.parse(JSON.stringify(config)));
+  assert.throws(() => parseConfig(JSON.stringify({ ...config, command: 'daemon' })), /invalid host configuration/);
+  assert.throws(() => parseConfig(JSON.stringify({ ...config, serve: { ...config.serve, remoteTools: 'on' } })), /invalid host configuration/);
+  const chat = await resolveOptions(parseArgs(['--data-dir', join(folder, 'state'), '--cwd', folder]), { PI_DURABLE_PORT: 'junk' });
+  assert.equal(chat.serve, undefined, 'only serve reads the server environment');
+  for (const args of [['serve', 'pair'], ['serve', 'devices'], ['backup']]) {
+    const dataDir = join(folder, 'absent');
+    assert.equal((await resolveOptions(parseArgs([...args, '--data-dir', dataDir]), {})).exists, false);
+    await assert.rejects(stat(dataDir), { code: 'ENOENT' }, args.join(' '));
+  }
+});
+
+test('the launcher says which phase builds a command that is not there yet', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-pending-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const env = { ...process.env, PI_DURABLE_DATA_DIR: join(folder, 'state') };
+  for (const [args, message] of [[['serve'], 'serve is not implemented yet (phase 2)'], [['backup'], 'backup is not implemented yet (phase 2)'],
+    [['serve', 'pair'], 'serve pair is not implemented yet (phase 4)'], [['serve', 'devices'], 'serve devices is not implemented yet (phase 4)'],
+    [['--attach'], '--attach is not implemented yet (phase 3)']] as const) {
+    await assert.rejects(exec(launcher, args, { env }),
+      { code: 1, stderr: new RegExp(message.replace(/[()]/g, '\\$&')) }, args.join(' '));
+  }
+  await assert.rejects(exec(launcher, ['serve', '--allow-tools'], { env }), { code: 1, stderr: /serve always starts with coding tools off/ });
 });
