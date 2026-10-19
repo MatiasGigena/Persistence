@@ -9,7 +9,7 @@ export type {
   AppendInput, Budget, CompactionPrompt, Kind, MemoryOptions, MemoryRecord, MemoryStatus, ReportInput, TreeNode,
 } from './memory.ts';
 export { createUniiExtension, REPORT_KIND } from './extension.ts';
-export type { ContextEntries, RequestApi, UniiExtensionOptions } from './extension.ts';
+export type { ContextEntries, RequestApi, UniiExtension, UniiExtensionOptions } from './extension.ts';
 export { createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
 export type {
   CompactionMessage, CompactionNode, PiAiSummarizerOptions, Reasoning, SummarizeOptions, Summarizer, SummarizerModels,

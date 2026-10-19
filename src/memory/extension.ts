@@ -3,9 +3,9 @@ import { Type } from '@earendil-works/pi-ai';
 import type { AssistantMessage, ImageContent, Message, TextContent, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 import { getCurrentSystemMessage, getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
 import {
-  CompactionTask, defineExtension, defineTool, GenerationTask, hook, ROOT_CONVERSATION_ID, section, ToolTask,
+  CompactionTask, defineTool, GenerationTask, hook, ROOT_CONVERSATION_ID, section, ToolTask,
 } from '@earendil-works/pi-durable';
-import type { ConversationId, EntryRecord, Extension, HookApi } from '@earendil-works/pi-durable';
+import type { ConversationId, EntryRecord, Extension, HookApi, ToolRegistration } from '@earendil-works/pi-durable';
 import { reportSrc } from './memory.ts';
 import type { Memory, ReportInput } from './memory.ts';
 import { PROMPT } from './prompt.ts';
@@ -25,8 +25,11 @@ export type ContextEntries = {
 export type RequestApi = Pick<HookApi, 'conversationId'> & {
   readonly context?: (conversationId: ConversationId, context: Context) => Promise<ContextEntries>;
 };
+/** The extension, with its tools always present (Pi's agent enables them by name). */
+export type UniiExtension = Extension & { readonly tools: readonly ToolRegistration[] };
 export type UniiExtensionOptions = {
-  memory: Memory;
+  /** Absent only for inspection: the extension is installed so stored names resolve, and any turn or tool call throws. */
+  memory: Memory | undefined;
   isRoot?: (conversationId: ConversationId) => boolean;
   /** The whole chat of agent `name`, for zoom("Name"). */
   resolveAgentChat?: (name: string) => string | Promise<string>;
@@ -88,8 +91,11 @@ const userSrc = (entry: { readonly id: number }, n: number): string => `e:${entr
 export function createUniiExtension({
   memory, isRoot = id => id === ROOT_CONVERSATION_ID, resolveAgentChat = async () => 'unknown agent',
   settleMs = 8_000, prevBytes = 16_000, now = () => new Date(), name = 'uniichat',
-}: UniiExtensionOptions): Extension {
-  if (!memory) throw new Error('createUniiExtension needs { memory }');
+}: UniiExtensionOptions): UniiExtension {
+  const open = (): Memory => {
+    if (!memory) throw new Error('unii: memory is not open (inspection only)');
+    return memory;
+  };
   const runs = new Map<string, TextContent[]>(); // run key -> frozen [view, state, previous exchange] blocks, so a run's requests share a prefix
 
   const zoom = defineTool({
@@ -105,7 +111,7 @@ export function createUniiExtension({
     execute: async ({ id, n = 1, page = 1 }) => {
       const text = typeof id === 'string' && !/^\d+$/.test(id.trim())
         ? String(await resolveAgentChat(id.replace(/^\[|\]$/g, '').trim()))
-        : memory.zoom(Number(id), n, page);
+        : open().zoom(Number(id), n, page);
       return { output: [{ type: 'text', text }] };
     },
   });
@@ -114,7 +120,7 @@ export function createUniiExtension({
     description: 'The date and time of message id.',
     parameters: Type.Object({ id: Type.Integer({ minimum: 0 }) }),
     replay: 'safe',
-    execute: async ({ id }) => ({ output: [{ type: 'text', text: memory.date(id) }] }),
+    execute: async ({ id }) => ({ output: [{ type: 'text', text: open().date(id) }] }),
   });
 
   /**
@@ -151,10 +157,10 @@ export function createUniiExtension({
   function log(item: Item): void {
     const { m } = item;
     if (m.role === 'user') {
-      if (item.report) memory.report(item.report);
-      else memory.append({ kind: 'user', text: textOf(m.content), date: m.timestamp, src: item.src });
-    } else if (m.role === 'assistant') logAssistant(memory, m);
-    else logResult(memory, m);
+      if (item.report) open().report(item.report);
+      else open().append({ kind: 'user', text: textOf(m.content), date: m.timestamp, src: item.src });
+    } else if (m.role === 'assistant') logAssistant(open(), m);
+    else logResult(open(), m);
   }
 
   /**
@@ -163,15 +169,15 @@ export function createUniiExtension({
    */
   function viewEnd(run: readonly Item[]): number {
     const mine = new Set(run.flatMap(item => [item.src, ...(item.calls ?? [])]));
-    let k = memory.T;
-    while (k > 0 && mine.has((memory.log[k - 1]?.src ?? '').replace(/#\d+$/, ''))) k--;
+    let k = open().T;
+    while (k > 0 && mine.has((open().log[k - 1]?.src ?? '').replace(/#\d+$/, ''))) k--;
     return k;
   }
 
   async function beforeRequest({ messages }: { readonly messages: readonly Message[] }, api: RequestApi, context: Context):
     Promise<{ messages: Message[] } | undefined> {
     if (!isRoot(api.conversationId)) return undefined;
-    memory.setCompactionPrompt({ system: getCurrentSystemPrompt(messages), tools: getCurrentTools(messages) });
+    open().setCompactionPrompt({ system: getCurrentSystemPrompt(messages), tools: getCurrentTools(messages) });
     const body = messages.filter(m => m.role !== 'system');
     let s = body.length;
     while (s > 0 && !isFinal(body[s - 1])) s--;
@@ -185,9 +191,9 @@ export function createUniiExtension({
 
     let frozen = runKey ? runs.get(runKey) : undefined;
     if (!frozen) {
-      if (!memory.ready(viewEnd(mine))) await memory.settle(settleMs, context?.abortSignal, viewEnd(mine));
+      if (!open().ready(viewEnd(mine))) await open().settle(settleMs, context?.abortSignal, viewEnd(mine));
       const k = viewEnd(mine); // the view is rendered before the run's message is logged (recipe §6)
-      frozen = [memory.render(k), `<turn>\nnow: ${formatDate(now())}\n</turn>`, memory.previousExchange(k, prevBytes)]
+      frozen = [open().render(k), `<turn>\nnow: ${formatDate(now())}\n</turn>`, open().previousExchange(k, prevBytes)]
         .filter(Boolean).map((text): TextContent => ({ type: 'text', text }));
       if (runKey) {
         runs.set(runKey, frozen);
@@ -205,25 +211,25 @@ export function createUniiExtension({
     return { messages: [...(system ? [system] : []), ...steps] };
   }
 
-  return defineExtension({
+  return {
     name,
     tools: [zoom, date],
     sections: [section('uniichat', () => PROMPT, { tag: false })],
     hooks: [
       hook(GenerationTask, {
         beforeRequest,
-        afterResponse: (message, api) => { if (isRoot(api.conversationId)) logAssistant(memory, message); },
+        afterResponse: (message, api) => { if (isRoot(api.conversationId)) logAssistant(open(), message); },
       }),
       hook(ToolTask, {
         afterTool: (call, result, api) => {
           // Logged as it happens; a call whose output streams (no `output` here) is logged by the next request.
           if (isRoot(api.conversationId) && !call.parent && result.output) {
-            logResult(memory, { toolCallId: call.id, toolName: call.name, content: result.output, isError: result.isError });
+            logResult(open(), { toolCallId: call.id, toolName: call.name, content: result.output, isError: result.isError });
           }
           return undefined;
         },
       }),
       hook(CompactionTask, { beforeCompact: (_compaction, api) => (isRoot(api.conversationId) ? { decline: true } : undefined) }),
     ],
-  });
+  };
 }
