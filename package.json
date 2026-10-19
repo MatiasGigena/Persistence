@@ -13,8 +13,8 @@
   "scripts": {
     "start": "bash bin/pi-durable",
     "test": "node --test \"test/**/*.test.ts\"",
-    "check": "tsc && eslint --max-warnings 0 . && bash -n bin/pi-durable",
-    "typecheck": "tsc",
+    "check": "tsc && tsc -p src/web && tsc -p src/web/sw && eslint --max-warnings 0 . && bash -n bin/pi-durable",
+    "typecheck": "tsc && tsc -p src/web && tsc -p src/web/sw",
     "lint": "eslint --max-warnings 0 ."
   },
   "dependencies": {
@@ -22,10 +22,13 @@
     "@earendil-works/pi-ai": "1.3.0",
     "@earendil-works/pi-coding-agent": "1.3.0",
     "@earendil-works/pi-durable": "1.3.0",
-    "@earendil-works/pi-tui": "1.3.0"
+    "@earendil-works/pi-tui": "1.3.0",
+    "marked": "18.0.11",
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
+    "@types/ws": "8.18.2",
     "eslint": "9.39.5",
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.0"

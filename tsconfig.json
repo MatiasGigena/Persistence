@@ -1,10 +1,15 @@
 {
   "compilerOptions": {
     "target": "es2024",
-    "lib": ["es2024", "esnext.disposable"],
+    "lib": [
+      "es2024",
+      "esnext.disposable"
+    ],
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
@@ -18,5 +23,12 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test", "eslint.config.ts"]
+  "include": [
+    "src",
+    "test",
+    "eslint.config.ts"
+  ],
+  "exclude": [
+    "src/web"
+  ]
 }

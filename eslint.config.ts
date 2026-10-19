@@ -19,4 +19,6 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-imports': 'error',
     },
   },
+  // The service worker has its own WebWorker project; src/web/tsconfig.json (DOM) excludes it.
+  { files: ['src/web/sw.ts'], languageOptions: { parserOptions: { projectService: false, project: './src/web/sw/tsconfig.json', tsconfigRootDir: import.meta.dirname } } },
 );
