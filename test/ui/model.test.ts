@@ -49,8 +49,9 @@ class FakeSession implements UiSession {
   stopped: (string | undefined)[] = [];
   stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
-  memoryView(): readonly ViewLine[] { return []; }
-  zoom(): string { return ''; }
+  memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
+  zoom(): Promise<string> { return Promise.resolve(''); }
+  onNotice(): () => void { return () => undefined; }
   models(): Promise<readonly ModelChoice[]> { return this.list; }
   setModel(provider: string, id: string): Promise<void> {
     this.modelCalls.push(`${provider}/${id}`);

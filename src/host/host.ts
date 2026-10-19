@@ -114,13 +114,13 @@ async function send(prompt: string, requestId?: string, { print = true } = {}): 
 }
 
 // The terminal UI owns the screen while it runs: stray console output (runtime reports, memory
-// warnings) becomes chat notices instead of drawing over it.
+// warnings) becomes host notices, which the session hands to every client as chat notices.
 async function chatTui(): Promise<void> {
   const session = await createUiSession(opened(), config);
   const { error, warn } = console;
   try {
-    await runTui(session, { cwd: config.cwd, signal: shutdown.signal, onStart: show => {
-      console.error = console.warn = (...args: unknown[]) => show(format(...args), 'warn');
+    await runTui(session, { cwd: config.cwd, signal: shutdown.signal, onStart: () => {
+      console.error = console.warn = (...args: unknown[]) => session.notify(format(...args), 'warn');
     } });
   } finally {
     console.error = error;

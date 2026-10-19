@@ -1,15 +1,12 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
-import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
 import { stripTerminalSequences, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, OverlayHandle, OverlayOptions, Terminal } from '@earendil-works/pi-tui';
-import type { AgentInfo } from '../../src/agents/index.ts';
-import type { MemoryStatus } from '../../src/memory/index.ts';
 import { openAgentsPanel } from '../../src/ui/tui/panels/agents.ts';
 import { confirm } from '../../src/ui/tui/panels/frame.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
 import { openMemoryPanel, parseMessage, parseZoom } from '../../src/ui/tui/panels/memory.ts';
-import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import type { AgentStatus, ChatFeed, ChatItem, MemoryStats, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
 
 const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b' };
 const sgr = (on: number, off: number) => (text: string): string => `\x1b[${on}m${text}\x1b[${off}m`;
@@ -57,40 +54,44 @@ class FakeFeed implements ChatFeed {
   close(): Promise<void> { this.closed = true; return Promise.resolve(); }
 }
 
-const memory: MemoryStatus = { messages: 9, unsummarized: 0, active: 1, failed: 2, lastError: undefined, viewBytes: 3072, viewLines: 2 };
+const memory: MemoryStats = { messages: 9, unsummarized: 0, active: 1, failed: 2, lastError: undefined, viewBytes: 3072, viewLines: 2 };
 
 class FakeSession implements UiSession {
   readonly chat = new FakeFeed([]);
-  agents: AgentInfo[] = [];
+  agents: AgentStatus[] = [];
   view: ViewLine[] = [];
   zooms = new Map<string, string>();
   feeds = new Map<string, FakeFeed>();
   private readonly listeners = new Set<() => void>();
+  memory: MemoryStats = memory;
   status(): SessionStatus {
-    return { model: 'faux/model', thinkingLevel: 'off', toolsEnabled: false, busy: false, queued: 0, memory, agents: this.agents };
+    return { model: 'faux/model', thinkingLevel: 'off', toolsEnabled: false, busy: false, queued: 0, memory: this.memory, agents: this.agents };
   }
+  setMemory(stats: MemoryStats): void { this.memory = stats; for (const l of this.listeners) l(); }
   onStatus(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   get statusListeners(): number { return this.listeners.size; }
-  setAgents(agents: AgentInfo[]): void { this.agents = agents; for (const l of this.listeners) l(); }
+  setAgents(agents: AgentStatus[]): void { this.agents = agents; for (const l of this.listeners) l(); }
   send(): Promise<void> { return Promise.resolve(); }
   abort(): Promise<void> { return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
   stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
   agentChat(name: string): Promise<ChatFeed | undefined> { return Promise.resolve(this.feeds.get(name)); }
-  memoryView(): readonly ViewLine[] { return this.view; }
-  zoom(id: number, n: number): string {
+  memoryView(): Promise<readonly ViewLine[]> { this.viewCalls++; return this.viewResult ?? Promise.resolve(this.view); }
+  viewCalls = 0;
+  /** When set, what memoryView() returns instead of `view` (a pending or failing load). */
+  viewResult: Promise<readonly ViewLine[]> | undefined;
+  zoom(id: number, n: number): Promise<string> {
     const out = this.zooms.get(`${id}+${n}`);
-    if (out === undefined) throw new Error(`No line ${id}+${n}.`);
-    return out;
+    return out === undefined ? Promise.reject(new Error(`No line ${id}+${n}.`)) : Promise.resolve(out);
   }
+  onNotice(): () => void { return () => undefined; }
   models(): Promise<readonly ModelChoice[]> { return Promise.resolve([]); }
   setModel(): Promise<void> { return Promise.resolve(); }
   setTools(): Promise<void> { return Promise.resolve(); }
 }
 
-// The panels never read the conversation ID, so every fake agent shares the root's.
-const agent = (name: string, busy: boolean, role: AgentInfo['role'] = 'main', parent = 'Pi'): AgentInfo =>
-  ({ name, role, parent, busy, conversationId: ROOT_CONVERSATION_ID });
+const agent = (name: string, busy: boolean, role: AgentStatus['role'] = 'main', parent = 'Pi'): AgentStatus =>
+  ({ name, role, parent, busy });
 
 let stop: (() => void) | undefined;
 afterEach(() => { stop?.(); stop = undefined; });
@@ -192,6 +193,7 @@ describe('memory panel', () => {
     const session = new FakeSession(), h = harness();
     session.view = [{ id: 0, n: 8, text: 'the early days' }, { id: 8, n: 1, text: 'user: hello' }];
     const closed = openMemoryPanel(h.tui, session, theme);
+    await tick();
     const screen = h.screen();
     assert.match(screen, /9 messages · 3\.0 KB view · 1 summarizing · 2 failed/);
     assert.ok(h.raw().some(r => r.includes(theme.error('2 failed'))), 'failures are an error');
@@ -209,12 +211,18 @@ describe('memory panel', () => {
     session.zooms.set('2+2', '2+1|user: why?\n3+1|pi: because');
     session.zooms.set('3+1', '3+1|pi: because\n\nthe whole reply');
     const closed = openMemoryPanel(h.tui, session, theme);
+    await tick();
     h.press(KEY.up, KEY.enter);
     assert.match(h.screen(), /Memory › 0\+4/);
+    assert.match(h.screen(), /Loading…/, 'the level opens at once, loading');
+    await tick();
     assert.match(h.screen(), /→ 0\+2 {2}first half/);
     h.press(KEY.down, KEY.enter);
+    await tick();
     assert.match(h.screen(), /Memory › 0\+4 › 2\+2/);
     h.press(KEY.down, KEY.enter);
+    assert.match(h.screen(), /Loading…/);
+    await tick();
     assert.match(h.screen(), /Memory › 0\+4 › 2\+2 › 3\+1/);
     assert.match(h.screen(), /pi: because\s*│\n│\s+│\n│ the whole reply/);
     assert.match(h.screen(), /↑↓ scroll/);
@@ -232,7 +240,9 @@ describe('memory panel', () => {
     const session = new FakeSession(), h = harness();
     session.view = [{ id: 0, n: 2, text: 'two' }];
     const closed = openMemoryPanel(h.tui, session, theme);
+    await tick();
     h.press(KEY.enter);
+    await tick();
     assert.match(h.screen(), /No line 0\+2\./);
     h.press(KEY.esc, KEY.esc);
     await closed;
@@ -242,6 +252,7 @@ describe('memory panel', () => {
     const session = new FakeSession(), h = harness();
     session.view = [{ id: 0, n: 2, text: 'apples' }, { id: 2, n: 1, text: 'pears' }, { id: 3, n: 1, text: 'grapes' }];
     const closed = openMemoryPanel(h.tui, session, theme);
+    await tick();
     h.press('/', 'a', 'p', 'p');
     assert.match(h.screen(), /apples/);
     assert.doesNotMatch(h.screen(), /pears|grapes/);
@@ -255,10 +266,47 @@ describe('memory panel', () => {
     const session = new FakeSession(), h = harness(70, 12);
     session.view = [{ id: 0, n: 1, text: 'a very long line of memory that cannot possibly fit in the frame at all' }];
     const closed = openMemoryPanel(h.tui, session, theme);
+    await tick();
     const lines = h.raw();
     for (const line of lines) assert.equal(visibleWidth(line), 66, line);
     assert.ok(lines.map(stripTerminalSequences).some(l => /0\+1 {2}a very lon.*…/.test(l)), lines.join('\n'));
     assert.equal(lines.length, 10);
+    h.press(KEY.esc);
+    await closed;
+  });
+
+  test('the view shows Loading… until it arrives, and reloads when the memory status changes', async () => {
+    const session = new FakeSession(), h = harness();
+    const { promise, resolve } = Promise.withResolvers<readonly ViewLine[]>();
+    session.viewResult = promise;
+    const closed = openMemoryPanel(h.tui, session, theme);
+    assert.match(h.screen(), /Loading…/);
+    resolve([{ id: 0, n: 1, text: 'user: hello' }]);
+    await tick();
+    assert.match(h.screen(), /→ 0\+1 {2}user: hello/);
+    assert.equal(session.viewCalls, 1);
+    session.viewResult = undefined;
+    session.view = [{ id: 0, n: 1, text: 'user: hello' }, { id: 1, n: 1, text: 'pi: hi' }];
+    session.setAgents([]);
+    await tick();
+    assert.equal(session.viewCalls, 1, 'a status change that leaves the memory alone does not reload');
+    session.setMemory({ ...memory, messages: 10 });
+    await tick();
+    assert.equal(session.viewCalls, 2);
+    assert.match(h.screen(), /→ 1\+1 {2}pi: hi/);
+    h.press(KEY.esc);
+    await closed;
+    session.setMemory({ ...memory, messages: 11 });
+    await tick();
+    assert.equal(session.viewCalls, 2, 'a closed panel loads nothing');
+  });
+
+  test('a view that fails to load shows why', async () => {
+    const session = new FakeSession(), h = harness();
+    session.viewResult = Promise.reject(new Error('The server is unreachable.'));
+    const closed = openMemoryPanel(h.tui, session, theme);
+    await tick();
+    assert.match(h.screen(), /The server is unreachable\./);
     h.press(KEY.esc);
     await closed;
   });
@@ -303,6 +351,7 @@ describe('panels on a phone', () => {
       const session = new FakeSession(), h = harness(columns, rows);
       session.view = [{ id: 0, n: 2, text: 'older' }, { id: 2, n: 1, text }];
       const closed = openMemoryPanel(h.tui, session, theme);
+      await tick();
       fitsExactly(h.raw(), panelWidth(columns));
       const screen = h.screen().split('\n');
       const detail = screen.slice(-4, -1).map(line => line.slice(2, -2).trim()).filter(Boolean).join(' ');

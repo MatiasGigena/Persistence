@@ -9,7 +9,7 @@ import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import type { FauxResponseStep } from '@earendil-works/pi-ai/providers/faux';
 import type { Agent } from '@earendil-works/pi-durable';
-import { REPORT_KIND } from '../../src/agents/index.ts';
+import { listAgents, REPORT_KIND } from '../../src/agents/index.ts';
 import { parseArgs, resolveOptions } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
@@ -185,18 +185,18 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
 
   test('the memory view after a few turns, and zoom', async (t) => {
     const { session } = await open(t, [fauxAssistantMessage('A1'), fauxAssistantMessage('A2')]);
-    assert.deepEqual(session.memoryView(), []);
+    assert.deepEqual(await session.memoryView(), []);
     for (const text of ['first', 'second']) {
       await session.send(text);
       await idle(session);
     }
-    const lines = await until(() => session.memoryView().length === 4 && session.memoryView(), 'four view lines');
-    assert.deepEqual(lines, [
+    await until(() => session.status().memory?.viewLines === 4, 'four view lines');
+    assert.deepEqual(await session.memoryView(), [
       { id: 0, n: 1, text: 'user: first' }, { id: 1, n: 1, text: 'pi: A1' },
       { id: 2, n: 1, text: 'user: second' }, { id: 3, n: 1, text: 'pi: A2' },
     ]);
-    assert.equal(session.zoom(2, 1), '2+1|user: second');
-    assert.throws(() => session.zoom(9, 1), /No line 9\+1/);
+    assert.equal(await session.zoom(2, 1), '2+1|user: second');
+    await assert.rejects(session.zoom(9, 1), /No line 9\+1/);
     await until(() => session.status().memory?.messages === 4, 'the memory status');
   });
 
@@ -280,7 +280,9 @@ const answers = (session: UiSessionHandle) => session.chat.items().filter(item =
 async function spawnBob(instance: Instance, session: UiSessionHandle) {
   await session.send('spawn Bob');
   await until(() => find(session.chat, 'assistant', item => item.text === 'Bob counted 3 boats.'), 'Pi\'s answer to Bob', session.chat);
-  const [bob] = await until(() => session.status().agents.length === 1 && session.status().agents, 'Bob in the status');
+  await until(() => session.status().agents.length === 1, 'Bob in the status');
+  assert.deepEqual(Object.keys(session.status().agents[0] ?? {}).sort(), ['busy', 'name', 'parent', 'role'], 'no conversation IDs');
+  const [bob] = await listAgents(instance.harness, instance.context);
   assert.ok(bob);
   const conversation = await instance.harness.conversation(bob.conversationId, instance.context);
   assert.ok(conversation);

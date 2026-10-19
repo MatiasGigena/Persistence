@@ -1,7 +1,6 @@
-// The contract between the host's state (src/ui/session.ts) and the terminal UI (src/ui/tui/).
-// The session knows pi-durable, memory and agents; the TUI knows only these types.
-import type { AgentInfo } from '../agents/index.ts';
-import type { MemoryStatus } from '../memory/index.ts';
+// The contract between the host's state (src/ui/session.ts) and its clients: the terminal UI (src/ui/tui/), and
+// over the wire protocol (src/protocol/) the attached TUI and the web app. The session knows pi-durable, memory and
+// agents; clients know only these types. This file imports nothing, so the browser can type-check against it.
 
 /** One block of a conversation, in order. Streaming blocks are updated in place by `id`. */
 export type ChatItem =
@@ -18,7 +17,34 @@ export type ChatItem =
   /** An agent's report or message, "[Name] text", reaching this conversation. */
   | { readonly kind: 'report'; readonly id: string; readonly from: string; readonly text: string }
   /** Host notices: errors, retries, "work resumed", and so on. */
-  | { readonly kind: 'notice'; readonly id: string; readonly text: string; readonly level: 'info' | 'warn' | 'error' };
+  | { readonly kind: 'notice'; readonly id: string; readonly text: string; readonly level: NoticeLevel };
+
+/** One agent, as clients see it (src/agents' AgentInfo without its conversation ID). */
+export interface AgentStatus {
+  readonly name: string;
+  readonly role: 'main' | 'sub';
+  /** "Pi", or the main agent that spawned this sub agent. */
+  readonly parent: string;
+  readonly busy: boolean;
+}
+
+/** The memory's counters, as src/memory's `Memory.status()` reports them. */
+export interface MemoryStats {
+  /** Messages in the log. */
+  readonly messages: number;
+  /** Messages not yet summarized into a leaf. */
+  readonly unsummarized: number;
+  /** Compaction calls in flight. */
+  readonly active: number;
+  /** Compactions that failed and wait for a retry. */
+  readonly failed: number;
+  readonly lastError: string | undefined;
+  readonly viewBytes: number;
+  readonly viewLines: number;
+}
+
+/** Notice levels: host warnings and chat notices alike. */
+export type NoticeLevel = 'info' | 'warn' | 'error';
 
 /** Everything the footer and panels show besides the chat. */
 export interface SessionStatus {
@@ -30,8 +56,9 @@ export interface SessionStatus {
   readonly busy: boolean;
   /** Inputs queued behind the running one. */
   readonly queued: number;
-  readonly memory: MemoryStatus | undefined;
-  readonly agents: readonly AgentInfo[];
+  /** Undefined while the memory is not open (inspection only). */
+  readonly memory: MemoryStats | undefined;
+  readonly agents: readonly AgentStatus[];
 }
 
 /** A model Pi can switch to. */
@@ -62,7 +89,10 @@ export interface ChatFeed {
   close(): Promise<void>;
 }
 
-/** The UI's whole view of the host. Implemented by src/ui/session.ts. */
+/**
+ * The UI's whole view of the host. Implemented in process by src/ui/session.ts, and over the wire protocol by
+ * src/client/remote-session.ts. Every method may reject (a remote one when the link drops); none blocks.
+ */
 export interface UiSession {
   /** Pi's conversation. */
   readonly chat: ChatFeed;
@@ -80,10 +110,13 @@ export interface UiSession {
   stopAgents(name?: string): Promise<readonly string[]>;
   /** Opens one agent's conversation as a live feed, or undefined for an unknown name. */
   agentChat(name: string): Promise<ChatFeed | undefined>;
-  /** The memory view, oldest first, as Pi sees it. */
-  memoryView(): readonly ViewLine[];
-  /** Opens line id+n into the two lines under it; n = 1 gives the message whole. Same text as the zoom tool. */
-  zoom(id: number, n: number): string;
+  /** The memory view, oldest first, as Pi sees it; empty while the memory is not open. */
+  memoryView(): Promise<readonly ViewLine[]>;
+  /**
+   * Opens line id+n into the two lines under it; n = 1 gives the message whole. Same text as the zoom tool.
+   * Rejects with a readable message for an unknown line, or while the memory is not open.
+   */
+  zoom(id: number, n: number): Promise<string>;
   /** Models to pick from, the current one included. */
   models(): Promise<readonly ModelChoice[]>;
   /**
@@ -93,4 +126,10 @@ export interface UiSession {
   setModel(provider: string, id: string): Promise<void>;
   /** Turns coding tools (read, write, edit, bash) on or off for Pi and its agents, for this launch only. */
   setTools(enabled: boolean): Promise<void>;
+  /**
+   * Host notices that are not chat items: warnings the host logs while a client shows the chat, tool switches made
+   * by another client, and so on. Each listener gets each notice once; clients show them in the chat.
+   * Returns an unsubscribe function.
+   */
+  onNotice(listener: (text: string, level: NoticeLevel) => void): () => void;
 }

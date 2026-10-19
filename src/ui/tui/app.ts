@@ -18,6 +18,16 @@ import { NARROW, theme } from './theme.ts';
 /** Shows host text (a warning, a runtime report) as a notice in the chat. */
 export type ShowNotice = (text: string, level?: NoticeLevel) => void;
 
+/** The state of an attached TUI's link to the server: up, down and retrying, or closed for good. */
+export type LinkState = 'open' | 'reconnecting' | 'closed';
+
+/** An attached TUI's link to the server (src/client/), as the TUI sees it. */
+export interface AttachedLink {
+  state(): LinkState;
+  /** Called after any change to `state()`. Returns an unsubscribe function. */
+  onChange(listener: () => void): () => void;
+}
+
 export interface TuiInfo {
   /** Base directory of Tab path completion. */
   readonly cwd: string;
@@ -31,6 +41,17 @@ export interface TuiInfo {
   readonly onStart?: (show: ShowNotice) => void;
   /** Read for SSH_CONNECTION, which slows the spinner. Default: process.env. */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Set when the session is a server's, over its socket: /exit, Ctrl+D and Ctrl+C twice detach at once (the server
+   * keeps working, so nothing asks first), the footer shows "reconnecting…" while the link is down, and the TUI exits
+   * with a notice when the link closes.
+   */
+  readonly attached?: AttachedLink;
+}
+
+/** The slash commands; `attached` words /exit as a detach. */
+export function commands(attached = false): SlashCommand[] {
+  return COMMANDS.map(c => (c.name === 'exit' && attached ? { ...c, description: 'Detach; the server keeps working' } : c));
 }
 
 export const COMMANDS: readonly SlashCommand[] = [
@@ -72,10 +93,15 @@ function helpCells(pairs: readonly HelpPair[], columns: number): string[] {
   return lines;
 }
 
-/** /help for a terminal `columns` wide: commands, keys, and what happens to unfinished work. */
-export function helpText(columns: number): string {
-  return [...helpCells(HELP_COMMANDS, columns), '', ...helpCells(HELP_KEYS, columns), '',
-    'Unfinished work and agents resume on the next launch.'].join('\n');
+/** What /exit and Ctrl+C twice do when attached. */
+const DETACH: Readonly<Record<string, string>> = { '/exit': 'detach (ctrl+d when empty)', 'ctrl+c': 'clear; twice detaches' };
+const detached = (pairs: readonly HelpPair[]): HelpPair[] => pairs.map(([name, text]) => [name, DETACH[name] ?? text]);
+
+/** /help for a terminal `columns` wide: commands, keys, and what happens to unfinished work; `attached` words exit as detach. */
+export function helpText(columns: number, attached = false): string {
+  return [...helpCells(attached ? detached(HELP_COMMANDS) : HELP_COMMANDS, columns), '',
+    ...helpCells(attached ? detached(HELP_KEYS) : HELP_KEYS, columns), '',
+    attached ? 'Pi and agents keep working on the server after you detach.' : 'Unfinished work and agents resume on the next launch.'].join('\n');
 }
 
 /** Asked before `/tools on`: the tools act on this machine as the user, without a sandbox or approval prompts. */
@@ -84,6 +110,9 @@ export const TOOLS_QUESTION = 'Enable read/write/edit/bash with your user permis
 
 /** Asked before Ctrl+C twice or Ctrl+D exits while something runs. */
 export const EXIT_QUESTION = 'Pi or agents are working. Exit anyway? Work resumes on the next launch.';
+
+/** Shown, and left in scrollback, when an attached TUI's link closes for good. */
+export const LINK_CLOSED = 'The connection to the server closed; detached. Pi keeps working on the server.';
 
 /** Two Ctrl+C presses within this many ms exit. */
 const DOUBLE_CTRL_C = 1000;
@@ -170,8 +199,9 @@ class ChatEditor extends Editor {
 }
 
 /**
- * Run the chat in the terminal until the user exits (/exit, Ctrl+D, Ctrl+C twice) or `info.signal` aborts.
- * Ctrl+D and Ctrl+C twice ask first while Pi or an agent is working; /exit does not.
+ * Run the chat in the terminal until the user exits (/exit, Ctrl+D, Ctrl+C twice), `info.signal` aborts, or an
+ * attached link closes. Ctrl+D and Ctrl+C twice ask first while Pi or an agent is working, unless attached; /exit
+ * does not. Host notices (`session.onNotice`) show in the chat.
  * The terminal is restored on every path, including a process exit while it runs.
  */
 export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
@@ -179,7 +209,8 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   const terminal = info.terminal ?? new ProcessTerminal();
   const tui = new TuiAltScreen(terminal);
   const chat = new ChatView(session.chat, theme, info.backlog === undefined ? {} : { backlog: info.backlog });
-  const footer = new Footer(() => session.status(), theme);
+  const { attached } = info;
+  const footer = new Footer(() => (attached ? { ...session.status(), reconnecting: attached.state() === 'reconnecting' } : session.status()), theme);
   const editor = new ChatEditor(tui, theme.editor, { paddingX: 1 });
   const env = info.env ?? process.env;
   // `/model ` completes available models, as in Pi; Enter takes the highlighted one, a second Enter sends.
@@ -191,7 +222,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     return items.length ? items : null;
   };
   editor.setAutocompleteProvider(new CombinedAutocompleteProvider(
-    COMMANDS.map(c => (c.name === 'model' ? { ...c, getArgumentCompletions: completeModel } : c)), info.cwd));
+    commands(attached !== undefined).map(c => (c.name === 'model' ? { ...c, getArgumentCompletions: completeModel } : c)), info.cwd));
   // Hidden on a phone: the footer already shows the model and tools.
   const header = new Line(() => {
     const { model, toolsEnabled } = session.status();
@@ -219,9 +250,16 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   };
 
   const { promise: closed, resolve } = Promise.withResolvers<void>();
+  const onLink = (): void => {
+    if (attached?.state() !== 'closed') { render(); return; }
+    show(LINK_CLOSED, 'error');
+    void exit();
+  };
   const unsubscribes = [
     session.chat.subscribe(() => { chat.sync(); render(); }),
     session.onStatus(() => { spin(); render(); }),
+    session.onNotice((text, level) => show(text, level)),
+    ...attached ? [attached.onChange(onLink)] : [],
   ];
   /** Restores the terminal once. Synchronous, so it can run in a process 'exit' listener. */
   const restore = (): void => {
@@ -244,10 +282,10 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     restore();
   };
   function onAbort(): void { restore(); }
-  /** Ctrl+C twice or Ctrl+D: exits at once when idle, and asks first while Pi or an agent works. */
+  /** Ctrl+C twice or Ctrl+D: exits at once when idle or attached, and asks first while Pi or an agent works. */
   const leave = (): void => {
     const status = session.status();
-    if (!status.busy && !status.agents.some(agent => agent.busy)) { void exit(); return; }
+    if (attached || (!status.busy && !status.agents.some(agent => agent.busy))) { void exit(); return; }
     if (confirming) return;
     confirming = true;
     confirm(tui, theme, EXIT_QUESTION).then(
@@ -304,7 +342,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   const command = (line: string): void => {
     const name = line.slice(1).split(/\s/, 1)[0] ?? '';
     const arg = line.slice(1 + name.length).trim();
-    if (name === 'help') show(helpText(terminal.columns));
+    if (name === 'help') show(helpText(terminal.columns, attached !== undefined));
     else if (name === 'stop') stop(arg);
     else if (name === 'model') model(arg);
     else if (name === 'tools') tools(arg);
@@ -352,6 +390,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     tui.start();
     spin();
     info.onStart?.(show);
+    if (attached?.state() === 'closed') onLink();
   } catch (error) {
     restore();
     throw error;

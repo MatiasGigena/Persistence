@@ -1,42 +1,94 @@
 // /mem: a browser over Pi's memory view. Each line zooms into its two halves, and a single
-// message (n = 1) opens whole; Esc climbs back up the breadcrumbs.
+// message (n = 1) opens whole; Esc climbs back up the breadcrumbs. The view and each zoom load
+// asynchronously (the session may be a server's): a level shows "Loading…" until its lines arrive,
+// and the top level reloads whenever the memory's status changes while the panel is open.
 import type { TUI } from '@earendil-works/pi-tui';
 import { NARROW } from '../theme.ts';
-import type { MemoryStatus } from '../../../memory/index.ts';
-import type { UiSession, ViewLine } from '../../types.ts';
+import type { MemoryStats, UiSession, ViewLine } from '../../types.ts';
 import { clean, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
 
+/** Shown while a level's lines or a message are on their way. */
+export const LOADING = 'Loading…';
+
+/** What a level shows: lines, still loading, or why they failed. */
+type Loaded<T> = { readonly state: 'loading' } | { readonly state: 'done'; readonly value: T } | { readonly state: 'failed'; readonly error: string };
+
+const failure = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 /** Opens the memory panel over the chat; resolves when it closes and the editor has focus again. */
 export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme): Promise<void> {
-  const root = level('Memory', () => session.memoryView(), true, session.onStatus(() => tui.requestRender()));
+  let view: Loaded<readonly ViewLine[]> = { state: 'loading' };
+  let open = true, loading = false, again = false;
+  let shownMemory = JSON.stringify(session.status().memory ?? null);
+  /** Loads the view; a request while one loads reruns it once that ends. The last view stays shown meanwhile. */
+  const load = (): void => {
+    if (!open) return;
+    if (loading) { again = true; return; }
+    loading = true;
+    session.memoryView().then(
+      lines => { view = { state: 'done', value: lines }; },
+      (error: unknown) => { if (view.state !== 'done') view = { state: 'failed', error: failure(error) }; },
+    ).finally(() => {
+      loading = false;
+      tui.requestRender();
+      if (again) { again = false; load(); }
+    });
+  };
+  const unsubscribe = session.onStatus(() => {
+    const memory = JSON.stringify(session.status().memory ?? null);
+    if (memory !== shownMemory) { shownMemory = memory; load(); }
+    tui.requestRender();
+  });
+  const root = level('Memory', () => view, true, () => { open = false; unsubscribe(); });
   const frame = new PanelFrame(tui, theme, root, () => memoryHeader(session.status().memory, theme, tui.terminal.columns < NARROW));
+  load();
 
-  function level(title: string, lines: () => readonly ViewLine[], top: boolean, dispose?: () => void): ListView {
+  function level(title: string, lines: () => Loaded<readonly ViewLine[]>, top: boolean, dispose?: () => void): ListView {
     const byKey = new Map<string, ViewLine>();
     return new ListView({
       title, theme, root: top, followEnd: top, filterable: true, dispose,
-      rows: () => { const all = lines(); byKey.clear(); for (const l of all) byKey.set(label(l), l); return viewRows(all, theme); },
-      empty: () => (session.status().memory ? 'Memory is empty.' : 'Memory is off.'),
-      onOpen: row => { const line = byKey.get(row.key); if (line) open(line); },
+      rows: () => {
+        const loaded = lines(), all = loaded.state === 'done' ? loaded.value : [];
+        byKey.clear();
+        for (const l of all) byKey.set(label(l), l);
+        return viewRows(all, theme);
+      },
+      empty: () => {
+        const loaded = lines();
+        if (loaded.state === 'loading') return LOADING;
+        if (loaded.state === 'failed') return theme.error(loaded.error);
+        return session.status().memory ? 'Memory is empty.' : 'Memory is off.';
+      },
+      onOpen: row => { const line = byKey.get(row.key); if (line) zoomInto(line); },
       detail: row => { const line = byKey.get(row.key); return line && clean(line.text); },
     });
   }
 
-  function open(line: ViewLine): void {
-    let out: string;
-    try { out = session.zoom(line.id, line.n); } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      frame.push(new TextView({ title: label(line), lines: width => wrap(message, width).map(theme.error) }));
+  /** The state of `promise`, read on every frame; a render follows when it settles. */
+  function track<T>(promise: Promise<T>): () => Loaded<T> {
+    let loaded: Loaded<T> = { state: 'loading' };
+    promise.then(
+      value => { loaded = { state: 'done', value }; },
+      (error: unknown) => { loaded = { state: 'failed', error: failure(error) }; },
+    ).finally(() => tui.requestRender());
+    return () => loaded;
+  }
+
+  /** Opens a level for `line` at once, showing LOADING until its zoom resolves. */
+  function zoomInto(line: ViewLine): void {
+    if (line.n > 1) {
+      frame.push(level(label(line), track(session.zoom(line.id, line.n).then(parseZoom)), false));
       return;
     }
-    if (line.n === 1) {
-      const { note, body } = parseMessage(out);
-      frame.push(new TextView({ title: label(line), lines: width => [...(note ? [theme.dim(note)] : []), ...wrap(body, width)] }));
-      return;
-    }
-    const children = parseZoom(out);
-    frame.push(level(label(line), () => children, false));
+    const message = track(session.zoom(line.id, line.n));
+    frame.push(new TextView({ title: label(line), lines: width => {
+      const out = message();
+      if (out.state === 'loading') return [theme.dim(LOADING)];
+      if (out.state === 'failed') return wrap(out.error, width).map(theme.error);
+      const { note, body } = parseMessage(out.value);
+      return [...(note ? [theme.dim(note)] : []), ...wrap(body, width)];
+    } }));
   }
 
   return openPanel(tui, frame);
@@ -45,7 +97,7 @@ export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme)
 const label = (line: ViewLine): string => `${line.id}+${line.n}`;
 
 /** Messages, view size, summaries in flight, and failures; `narrow` abbreviates them. */
-export function memoryHeader(memory: MemoryStatus | undefined, theme: PanelTheme, narrow = false): string {
+export function memoryHeader(memory: MemoryStats | undefined, theme: PanelTheme, narrow = false): string {
   if (!memory) return theme.dim('memory off');
   const failed = `${memory.failed} failed`, kb = (memory.viewBytes / 1024).toFixed(1);
   const text = narrow ? `${memory.messages} msgs · ${kb} KB · ${memory.active} sum · `

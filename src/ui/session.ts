@@ -2,14 +2,13 @@
 import type { AgentEvent, AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { listAgents, stopAgents } from '../agents/index.ts';
-import type { AgentInfo } from '../agents/index.ts';
 import { errorMessage, writeSettings } from '../host/config.ts';
 import type { Config } from '../host/config.ts';
 import { start } from '../memory/view.ts';
 import { modelChooser } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
-import type { ChatFeed, SessionStatus, UiSession, ViewLine } from './types.ts';
+import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from './types.ts';
 
 /**
  * The launch choices the status line falls back on until Pi's stored agent says otherwise; `setModel()` saves to
@@ -19,6 +18,8 @@ export type UiSessionConfig = Pick<Config, 'model' | 'thinkingLevel' | 'allowToo
 
 /** A UiSession the host owns: `close()` stops its feeds and timer, leaving the Instance open. */
 export interface UiSessionHandle extends UiSession {
+  /** Sends a host notice to every `onNotice` listener (the host's console warnings while a client shows the chat). */
+  notify(text: string, level: NoticeLevel): void;
   close(): Promise<void>;
 }
 
@@ -43,7 +44,8 @@ export async function createUiSession(
   const chat = await ConversationFeed.open(harness, root.id, context);
   const feeds = new Set<ChatFeed>();
   const listeners = new Set<() => void>();
-  let agents: readonly AgentInfo[] = [];
+  const noticeListeners = new Set<(text: string, level: NoticeLevel) => void>();
+  let agents: readonly AgentStatus[] = [];
   const chooser = modelChooser(instance.models, { authFile: config.authFile });
   // This session's switches, shown before Pi's stored agent reports them.
   let chosenModel: ModelRef | undefined;
@@ -94,7 +96,9 @@ export async function createUiSession(
     if (closed) return;
     if (reading) { again = true; return; }
     reading = listAgents(harness, context)
-      .then(list => { agents = list; }, () => { /* the next poll retries */ })
+      // Clients see the contract's shape only: no conversation IDs.
+      .then(list => { agents = list.map(({ name, role, parent, busy }) => ({ name, role, parent, busy })); },
+        () => { /* the next poll retries */ })
       .finally(() => {
         reading = undefined;
         refresh();
@@ -136,8 +140,8 @@ export async function createUiSession(
       feeds.add(tracked);
       return tracked;
     },
-    memoryView: () => memoryLines(instance),
-    zoom(id, n) {
+    memoryView: () => Promise.resolve(memoryLines(instance)),
+    async zoom(id, n) {
       if (!memory) throw new Error('Memory is not open (inspection only).');
       return memory.zoom(id, n);
     },
@@ -162,11 +166,22 @@ export async function createUiSession(
         refresh();
       });
     },
+    onNotice(listener) {
+      noticeListeners.add(listener);
+      return () => { noticeListeners.delete(listener); };
+    },
+    notify(text, level) {
+      if (closed) return;
+      for (const listener of noticeListeners) {
+        try { listener(text, level); } catch { /* a listener's failure must not stop the others */ }
+      }
+    },
     async close() {
       if (closed) return;
       closed = true;
       clearInterval(timer);
       listeners.clear();
+      noticeListeners.clear();
       await Promise.all([chat.close(), ...[...feeds].map(feed => feed.close())]);
       await reading;
     },

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
-import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
-import { EXIT_QUESTION, editorLines, helpText, runTui } from '../../src/ui/tui/app.ts';
+import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import { EXIT_QUESTION, LINK_CLOSED, commands, editorLines, helpText, runTui } from '../../src/ui/tui/app.ts';
+import type { AttachedLink, LinkState, TuiInfo } from '../../src/ui/tui/app.ts';
 import { ChatView, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
 import { Footer, footerText, SPIN_FAST, SPIN_SLOW, spinnerInterval } from '../../src/ui/tui/footer.ts';
 import type { FooterStatus } from '../../src/ui/tui/footer.ts';
@@ -53,8 +53,15 @@ class FakeSession implements UiSession {
   stopped: (string | undefined)[] = [];
   stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
-  memoryView(): readonly ViewLine[] { return []; }
-  zoom(): string { return ''; }
+  memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
+  zoom(): Promise<string> { return Promise.resolve(''); }
+  private readonly noticeListeners = new Set<(text: string, level: NoticeLevel) => void>();
+  onNotice(listener: (text: string, level: NoticeLevel) => void): () => void {
+    this.noticeListeners.add(listener);
+    return () => this.noticeListeners.delete(listener);
+  }
+  /** Sends a host notice, as the session's `notify()` does. */
+  notify(text: string, level: NoticeLevel): void { for (const listener of this.noticeListeners) listener(text, level); }
   models(): Promise<readonly ModelChoice[]> { return Promise.resolve([]); }
   setModel(provider: string, id: string): Promise<void> { this.update({ model: `${provider}/${id}` }); return Promise.resolve(); }
   setTools(enabled: boolean): Promise<void> { this.update({ toolsEnabled: enabled }); return Promise.resolve(); }
@@ -106,8 +113,9 @@ class FakeTerminal implements Terminal {
 const plain = (lines: readonly string[]): string[] => lines.map(line => stripTerminalSequences(line).trimEnd());
 
 /** Starts the TUI on a fake terminal; returns it with the promise of its exit. */
-async function startTui(session: FakeSession, signal?: AbortSignal, terminal = new FakeTerminal()): Promise<{ terminal: FakeTerminal; done: Promise<void> }> {
-  const done = runTui(session, { cwd: process.cwd(), terminal, env: {}, ...signal ? { signal } : {} });
+async function startTui(session: FakeSession, signal?: AbortSignal, terminal = new FakeTerminal(),
+  extra: Partial<TuiInfo> = {}): Promise<{ terminal: FakeTerminal; done: Promise<void> }> {
+  const done = runTui(session, { cwd: process.cwd(), terminal, env: {}, ...signal ? { signal } : {}, ...extra });
   await delay(30);
   return { terminal, done };
 }
@@ -420,7 +428,7 @@ test('Ctrl+D and Ctrl+C twice ask first only while Pi or an agent works', async 
   terminal.type('n');
   await delay(30);
   assert.equal(terminal.stopped, false, 'any key but y keeps the chat open');
-  session.update({ busy: false, agents: [{ name: 'Scout', role: 'main', parent: 'Pi', busy: true, conversationId: ROOT_CONVERSATION_ID }] });
+  session.update({ busy: false, agents: [{ name: 'Scout', role: 'main', parent: 'Pi', busy: true }] });
   const mark = terminal.output.length;
   terminal.type('\x03', '\x03');
   await delay(30);
@@ -428,4 +436,69 @@ test('Ctrl+D and Ctrl+C twice ask first only while Pi or an agent works', async 
   terminal.type('y');
   await done;
   assert.equal(terminal.stopped, true);
+});
+
+/** An attached TUI's link to a server, which the test moves between states. */
+class FakeLink implements AttachedLink {
+  private current: LinkState = 'open';
+  private readonly listeners = new Set<() => void>();
+  state(): LinkState { return this.current; }
+  onChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  get subscribers(): number { return this.listeners.size; }
+  set(state: LinkState): void { this.current = state; for (const listener of this.listeners) listener(); }
+}
+
+test('host notices show in the chat, and the TUI unsubscribes on exit', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  session.notify('Memory: compaction failed', 'warn');
+  await delay(30);
+  assert.match(terminal.text(), /! Memory: compaction failed/);
+  terminal.type('/exit', '\r');
+  await done;
+  session.notify('after exit', 'info');
+  assert.doesNotMatch(terminal.text(), /after exit/);
+});
+
+test('attached: Ctrl+D detaches at once even while Pi works, and /help and /exit say detach', async () => {
+  const session = new FakeSession(), link = new FakeLink();
+  session.update({ busy: true });
+  const { terminal, done } = await startTui(session, undefined, new FakeTerminal(), { attached: link });
+  terminal.type('/help', '\r');
+  await delay(30);
+  assert.match(terminal.text(), /\/exit +detach \(ctrl\+d when empty\)/);
+  assert.match(terminal.text(), /keep working on the server after you detach/);
+  assert.equal(commands(true).find(c => c.name === 'exit')?.description, 'Detach; the server keeps working');
+  assert.equal(commands().find(c => c.name === 'exit')?.description, 'Close; unfinished work resumes next launch');
+  terminal.type('\x04');
+  await done;
+  assert.doesNotMatch(terminal.text(), /Exit anyway/);
+  assert.equal(link.subscribers, 0);
+});
+
+test('attached: the footer says reconnecting… while the link is down, and a closed link exits with a notice', async () => {
+  const session = new FakeSession(), link = new FakeLink();
+  const { terminal, done } = await startTui(session, undefined, new FakeTerminal(40, 15), { attached: link });
+  assert.doesNotMatch(terminal.text(), /reconnecting/);
+  link.set('reconnecting');
+  await delay(30);
+  const footer = terminal.screen().find(row => row.includes('tools off'));
+  assert.match(footer ?? '', /reconnecting…/, 'kept on a phone-width footer');
+  terminal.output = '';
+  link.set('open');
+  await delay(30);
+  assert.doesNotMatch(terminal.screen().find(row => row.includes('tools off')) ?? '', /reconnecting/);
+  link.set('closed');
+  await done;
+  assert.equal(terminal.stopped, true);
+  // Wrapped at 40 columns: compare the words.
+  const words = (text: string): string => text.replace(/[\s!│]+/g, ' ');
+  assert.ok(words(terminal.text()).includes(words(LINK_CLOSED)), 'the notice is left in scrollback');
+});
+
+test('attached to a link that is already closed, the TUI exits at once', async () => {
+  const link = new FakeLink();
+  link.set('closed');
+  const { done } = await startTui(new FakeSession(), undefined, new FakeTerminal(), { attached: link });
+  await done;
 });

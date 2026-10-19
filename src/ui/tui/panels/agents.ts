@@ -1,8 +1,7 @@
 // /agents: the agent list, live from the session's status, and each agent's chat as a read-only feed.
 import { Markdown, styleTextWithAnsi, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { MarkdownTheme, TUI } from '@earendil-works/pi-tui';
-import type { AgentInfo } from '../../../agents/index.ts';
-import type { ChatFeed, ChatItem, UiSession } from '../../types.ts';
+import type { AgentStatus, ChatFeed, ChatItem, UiSession } from '../../types.ts';
 import { toolSummary } from '../chat.ts';
 import { clean, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
@@ -37,8 +36,8 @@ export function openAgentsPanel(tui: TUI, session: UiSession, theme: PanelTheme)
 }
 
 /** One row per agent: a dot (filled while busy), the name, role, parent and state, in columns; compact rows drop the parent. */
-export function agentRows(agents: readonly AgentInfo[], theme: PanelTheme): Row[] {
-  const width = (f: (a: AgentInfo) => string): number => Math.max(0, ...agents.map(a => f(a).length));
+export function agentRows(agents: readonly AgentStatus[], theme: PanelTheme): Row[] {
+  const width = (f: (a: AgentStatus) => string): number => Math.max(0, ...agents.map(a => f(a).length));
   const nameW = width(a => a.name), parentW = width(a => a.parent);
   return agents.map(a => {
     const name = clean(a.name).padEnd(nameW), role = a.role.padEnd(4), parent = `parent ${clean(a.parent).padEnd(parentW)}`;

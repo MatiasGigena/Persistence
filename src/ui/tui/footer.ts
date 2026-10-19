@@ -20,13 +20,19 @@ export function spinnerInterval(env: Readonly<Record<string, string | undefined>
 const size = (bytes: number): string => bytes < 1024 ? `${bytes} B`
   : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-/** What the footer reads of a SessionStatus: of the agents, only whether each is busy. */
-export type FooterStatus = Omit<SessionStatus, 'agents'> & { readonly agents: readonly { readonly busy: boolean }[] };
+/**
+ * What the footer reads of a SessionStatus: of the agents, only whether each is busy. `reconnecting` is set by an
+ * attached TUI while its link to the server is down; the status shown is then the last one received.
+ */
+export type FooterStatus = Omit<SessionStatus, 'agents'> & {
+  readonly agents: readonly { readonly busy: boolean }[];
+  readonly reconnecting?: boolean;
+};
 
 /** One footer segment: `rank` orders what is kept when the line is too narrow (0 first). */
 interface Segment { readonly text: string; readonly rank: number }
 
-/** Tools state: shown at every width. */
+/** Tools state and a lost link: shown at every width. */
 const TOOLS = -1;
 
 /** The segments in display order; `compact` asks for the short forms used below NARROW columns. */
@@ -35,6 +41,7 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
   const slash = status.model.indexOf('/');
   const model = compact && slash > 0 ? status.model.slice(slash + 1) : status.model;
   const list: Segment[] = [
+    ...status.reconnecting ? [{ text: theme.warning('reconnecting…'), rank: TOOLS }] : [],
     { text: model, rank: 4 },
     { text: dim(compact ? `think ${status.thinkingLevel}` : `thinking ${status.thinkingLevel}`), rank: 7 },
     { text: status.toolsEnabled ? theme.warning('tools on') : dim('tools off'), rank: TOOLS },
@@ -61,7 +68,7 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
  * The footer's text within `width` columns (default: unlimited); `frame` picks the busy spinner's glyph.
  * Below NARROW columns it uses short forms. Segments are kept in priority order (working, tools, queued,
  * agents, model, memory failures, memory size, thinking, summaries) until one does not fit, and shown in their
- * usual order; the tools state is never dropped.
+ * usual order; the tools state and "reconnecting…" are never dropped.
  */
 export function footerText(status: FooterStatus, theme: Theme, frame = 0, width = Number.POSITIVE_INFINITY): string {
   const separator = theme.dim(' · ');
