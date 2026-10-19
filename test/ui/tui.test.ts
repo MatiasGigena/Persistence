@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
-import { runTui } from '../../src/ui/tui/app.ts';
-import { ChatView, TOOL_PREVIEW } from '../../src/ui/tui/chat.ts';
-import { Footer, footerText } from '../../src/ui/tui/footer.ts';
+import { EXIT_QUESTION, editorLines, helpText, runTui } from '../../src/ui/tui/app.ts';
+import { ChatView, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
+import { Footer, footerText, SPIN_FAST, SPIN_SLOW, spinnerInterval } from '../../src/ui/tui/footer.ts';
 import type { FooterStatus } from '../../src/ui/tui/footer.ts';
 import { theme } from '../../src/ui/tui/theme.ts';
 
@@ -61,13 +62,14 @@ class FakeSession implements UiSession {
 class FakeTerminal implements Terminal {
   output = '';
   stopped = false;
+  readonly columns: number;
+  readonly rows: number;
   private onInput: ((data: string) => void) | undefined;
+  constructor(columns = 80, rows = 24) { this.columns = columns; this.rows = rows; }
   start(onInput: (data: string) => void): void { this.onInput = onInput; }
   stop(): void { this.stopped = true; }
   drainInput(): Promise<void> { return Promise.resolve(); }
   write(data: string): void { this.output += data; }
-  get columns(): number { return 80; }
-  get rows(): number { return 24; }
   get kittyProtocolActive(): boolean { return false; }
   moveBy(): void {}
   hideCursor(): void {}
@@ -84,14 +86,26 @@ class FakeTerminal implements Terminal {
   }
   /** The text written so far, without escape sequences. */
   text(): string { return stripTerminalSequences(this.output); }
+  /**
+   * The screen as the alternate-screen renderer leaves it, one string per row. It writes each row whole, as
+   * "move to row;1, clear the line, the line", so the last write to a row is what it shows.
+   */
+  screen(): string[] {
+    const rows = Array.from({ length: this.rows }, () => '');
+    const parts = this.output.split(/\x1b\[(\d+);1H\x1b\[2K/);
+    for (let i = 1; i + 1 < parts.length; i += 2) {
+      const text = stripTerminalSequences((parts[i + 1] ?? '').split(/\x1b\[\d+;\d+H/)[0] ?? '');
+      rows[Number(parts[i]) - 1] = text;
+    }
+    return rows;
+  }
 }
 
 const plain = (lines: readonly string[]): string[] => lines.map(line => stripTerminalSequences(line).trimEnd());
 
 /** Starts the TUI on a fake terminal; returns it with the promise of its exit. */
-async function startTui(session: FakeSession, signal?: AbortSignal): Promise<{ terminal: FakeTerminal; done: Promise<void> }> {
-  const terminal = new FakeTerminal();
-  const done = runTui(session, { cwd: process.cwd(), terminal, ...signal ? { signal } : {} });
+async function startTui(session: FakeSession, signal?: AbortSignal, terminal = new FakeTerminal()): Promise<{ terminal: FakeTerminal; done: Promise<void> }> {
+  const done = runTui(session, { cwd: process.cwd(), terminal, env: {}, ...signal ? { signal } : {} });
   await delay(30);
   return { terminal, done };
 }
@@ -102,12 +116,13 @@ test('assistant markdown streams in place', () => {
     { kind: 'assistant', id: 'a1', text: 'Hel', streaming: true },
   ]);
   const view = new ChatView(feed, theme);
-  assert.deepEqual(plain(view.render(40)).filter(Boolean), ['❯ hi', '  Hel']);
+  assert.deepEqual(plain(view.render(60)).filter(Boolean), ['❯ hi', '  Hel']);
   feed.set([feed.items()[0] ?? assert.fail(), { kind: 'assistant', id: 'a1', text: 'Hello **world**', streaming: false }]);
   view.sync();
-  const lines = plain(view.render(40)).filter(Boolean);
+  const lines = plain(view.render(60)).filter(Boolean);
   assert.deepEqual(lines, ['❯ hi', '  Hello world']);
-  assert.ok(view.render(40).some(line => line.includes('\x1b[1m')), 'bold is styled, not literal');
+  assert.ok(view.render(60).some(line => line.includes('\x1b[1m')), 'bold is styled, not literal');
+  assert.deepEqual(plain(view.render(40)).filter(Boolean), ['❯ hi', 'Hello world'], 'no Markdown padding on a phone');
 });
 
 test('tool output collapses to a preview and expands', () => {
@@ -116,7 +131,7 @@ test('tool output collapses to a preview and expands', () => {
     { kind: 'tool', id: 't1', name: 'read', args: '{"path":"a.txt"}', output, status: 'done' },
   ]), theme);
   const collapsed = plain(view.render(60));
-  assert.equal(collapsed[0], '▸ read {"path":"a.txt"} ✓');
+  assert.equal(collapsed[0], '✓ read a.txt');
   assert.deepEqual(collapsed.slice(1, 1 + TOOL_PREVIEW), ['  line 1', '  line 2', '  line 3', '  line 4']);
   assert.match(collapsed.at(-1) ?? '', /… 6 more lines, ctrl\+o to expand/);
   assert.equal(collapsed.length, TOOL_PREVIEW + 2);
@@ -227,4 +242,168 @@ test('/exit and the host shutdown signal both end the TUI', async () => {
   await second.done;
   assert.equal(second.terminal.stopped, true);
   assert.equal(process.listenerCount('exit'), 0, 'no exit listener is left behind');
+});
+
+// Phone widths: 40 and 56 columns are a phone in portrait and landscape; 120 checks the wide look.
+const WIDTHS = [40, 56, 120] as const;
+const fits = (lines: readonly string[], width: number): void => {
+  for (const line of lines) assert.ok(visibleWidth(line) <= width, `${visibleWidth(line)} > ${width}: ${JSON.stringify(stripTerminalSequences(line))}`);
+};
+
+test('toolSummary shows one meaningful argument', () => {
+  assert.equal(toolSummary('bash', '{"command":"ls -la\\n  src","timeout":5}'), 'ls -la src');
+  assert.equal(toolSummary('read', '{"path":"src/a.ts","offset":3}'), 'src/a.ts');
+  assert.equal(toolSummary('write', '{"path":"b.md","content":"long text"}'), 'b.md');
+  assert.equal(toolSummary('edit', '{"path":"c.ts","edits":[]}'), 'c.ts');
+  assert.equal(toolSummary('zoom', '{"id":12,"n":4}'), '12+4');
+  assert.equal(toolSummary('zoom', '{"id":7}'), '7+1');
+  assert.equal(toolSummary('zoom', '{"id":"Scout"}'), 'Scout');
+  assert.equal(toolSummary('spawn_agent', '{"name":"Scout","task":"find it"}'), 'Scout');
+  assert.equal(toolSummary('send_message', '{"to":"Pi","text":"done"}'), 'Pi');
+  assert.equal(toolSummary('bash', '{"command":"echo \\"hi'), 'echo "hi', 'partial JSON while streaming');
+  assert.equal(toolSummary('list_agents', '{}'), '');
+  assert.equal(toolSummary('date', '{"id":3}'), '{"id":3}');
+  const long = toolSummary('mystery', JSON.stringify({ text: 'x'.repeat(200) }));
+  assert.ok(long.endsWith('…') && visibleWidth(long) <= 60, long);
+});
+
+test('on a phone the chat is compact, and no line is wider than the screen', () => {
+  const output = Array.from({ length: 10 }, (_, i) => `output line ${i + 1} ${'with words '.repeat(i)}`).join('\n');
+  const items: ChatItem[] = [
+    { kind: 'user', id: 'u1', text: `please look at ${'a long request '.repeat(8)}` },
+    { kind: 'thinking', id: 'th', text: 'first thought\nsecond thought', streaming: false },
+    { kind: 'tool', id: 't1', name: 'bash', args: `{"command":"grep -rn ${'pattern '.repeat(12)}src"}`, output, status: 'done' },
+    { kind: 'tool', id: 't2', name: 'read', args: '{"path":"src/ui/tui/app.ts"}', output: '', status: 'running' },
+    { kind: 'assistant', id: 'a1', text: `# Heading\n\n${'Some **markdown** text. '.repeat(10)}\n\n- one\n- two`, streaming: false },
+    { kind: 'report', id: 'r1', from: 'Scout', text: 'found the file '.repeat(6) },
+    { kind: 'notice', id: 'n1', text: 'model failed '.repeat(8), level: 'error' },
+  ];
+  for (const width of WIDTHS) {
+    const view = new ChatView(new FakeFeed(items), theme, { backlog: items.length });
+    const narrow = width < 60;
+    for (const [tools, thinking] of [[false, false], [true, true]] as const) {
+      view.toolsExpanded = tools;
+      view.thinkingExpanded = thinking;
+      fits(view.render(width), width);
+    }
+    view.toolsExpanded = false;
+    view.thinkingExpanded = false;
+    const lines = plain(view.render(width));
+    const head = lines.findIndex(line => line.startsWith('✓ bash grep -rn pattern'));
+    assert.ok(head >= 0, lines.join('\n'));
+    const preview = narrow ? TOOL_PREVIEW_NARROW : TOOL_PREVIEW;
+    assert.equal(lines[head + 1], `${narrow ? ' ' : '  '}output line 1`);
+    assert.equal(lines[head + preview + 1], narrow ? ` +${10 - preview} lines ^o` : `  … ${10 - preview} more lines, ctrl+o to expand`);
+    assert.ok(lines.includes('… read src/ui/tui/app.ts'), 'a running tool is marked first');
+    assert.ok(lines.includes(narrow ? '∴ first thought +1 ^t' : '∴ first thought (+1 lines, ctrl+t)'));
+    assert.equal(lines.find(line => line.includes('Heading'))?.startsWith(narrow ? 'Heading' : '  Heading'), true, 'Markdown padding');
+  }
+});
+
+const BUSY: FooterStatus = {
+  ...STATUS, model: 'claude-cli/claude-sonnet-4-5', busy: true, queued: 2, agents: [{ busy: true }, { busy: false }, { busy: true }],
+};
+
+test('the footer fills by priority and never drops the tools state', () => {
+  const at = (status: FooterStatus, width: number): string => stripTerminalSequences(new Footer(() => status, theme).render(width)[0] ?? '');
+  for (const width of [...WIDTHS, 20, 12]) {
+    for (const status of [STATUS, BUSY, { ...BUSY, toolsEnabled: true }, { ...STATUS, memory: undefined }]) {
+      const line = at(status, width);
+      assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
+      assert.match(line, status.toolsEnabled ? /tools on/ : /tools off/, `${width}: ${line}`);
+    }
+  }
+  assert.equal(at(BUSY, 40), 'tools off · ⠋ busy · 2 queued · 2/3 ag');
+  assert.equal(at(BUSY, 56), 'tools off · ⠋ busy · 2 queued · 2/3 ag', 'the long model id does not fit');
+  assert.equal(at({ ...BUSY, model: 'claude-cli/haiku' }, 56), 'haiku · tools off · ⠋ busy · 2 queued · 2/3 ag');
+  assert.equal(at(STATUS, 40), 'model-1 · tools off · 1 failed');
+  assert.equal(at(STATUS, 56), 'model-1 · think high · tools off · mem 37KB · 1 failed');
+  assert.equal(at(BUSY, 120), 'claude-cli/claude-sonnet-4-5 · tools off · ⠋ working · 2 queued'
+    + ' · mem 142 msgs · 37 KB view · 1 failed · 2/3 agents busy', 'thinking and summaries go first');
+  assert.equal(at(BUSY, 200), 'claude-cli/claude-sonnet-4-5 · thinking high · tools off · ⠋ working · 2 queued'
+    + ' · mem 142 msgs · 37 KB view · 3 summarizing · 1 failed · 2/3 agents busy');
+  assert.equal(at(BUSY, 12), 'tools off');
+  assert.equal(at({ ...BUSY, toolsEnabled: true }, 5), 'tool…', 'cut, never dropped');
+});
+
+test('the spinner slows down over SSH and on a narrow screen', () => {
+  assert.equal(spinnerInterval({}, 120), SPIN_FAST);
+  assert.equal(spinnerInterval({ SSH_CONNECTION: '10.0.0.2 5555 10.0.0.1 22' }, 120), SPIN_SLOW);
+  assert.equal(spinnerInterval({}, 59), SPIN_SLOW);
+  assert.equal(SPIN_SLOW, 250);
+});
+
+test('/help is one column below 72 columns, and two from there', () => {
+  for (const width of WIDTHS) {
+    const lines = helpText(width).split('\n');
+    fits(lines.slice(0, -1), Math.min(width, 72));
+    assert.ok(lines.some(line => (width < 72 ? /^\/stop {4}interrupt Pi \(esc\)$/ : /^\/status  model, work, memory +\/stop {4}interrupt Pi \(esc\)$/).test(line)), lines.join('\n'));
+    const view = new ChatView(new FakeFeed(), theme);
+    view.notice(helpText(width));
+    fits(view.render(width), width);
+  }
+  assert.ok(helpText(71).split('\n').length > helpText(72).split('\n').length + 5);
+});
+
+test('on a phone the header is hidden, the screen fits, and the editor stays small', async () => {
+  for (const [columns, rows] of [[40, 15], [56, 20], [120, 24]] as const) {
+    const session = new FakeSession([
+      { kind: 'tool', id: 't1', name: 'bash', args: '{"command":"ls"}', output: 'a\nb\nc\nd\ne', status: 'done' },
+      { kind: 'assistant', id: 'a0', text: 'Welcome back '.repeat(12), streaming: false },
+    ]);
+    const { terminal, done } = await startTui(session, undefined, new FakeTerminal(columns, rows));
+    const first = terminal.screen();
+    assert.equal(first[0]?.startsWith('Pi · faux/model-1'), columns >= 60, first.join('\n'));
+    terminal.type('/help', '\r');
+    for (let i = 1; i <= 9; i++) terminal.type(`line ${i}`, '\n');
+    await delay(30);
+    const screen = terminal.screen();
+    fits(screen, columns);
+    assert.ok(screen.some(row => row.includes('tools off')), screen.join('\n'));
+    const borders = screen.flatMap((row, i) => (/^─+( [↑↓] \d+ more ─+)?$/.test(row) ? [i] : []));
+    const [top = -1, bottom = -1] = borders.slice(-2);
+    assert.equal(bottom - top - 1, Math.min(editorLines(rows), 5), screen.join('\n'));
+    assert.match(screen[top] ?? '', /↑ \d+ more/, 'the hidden lines are counted');
+    assert.equal(screen[bottom - 1]?.trim(), '', 'the cursor line, empty after the last newline, is shown');
+    assert.match(screen[bottom - 2] ?? '', columns < 50 ? /^line 9/ : /^ line 9/, 'no side padding below 50 columns');
+    terminal.type('\x03', '/exit', '\r');
+    await done;
+  }
+});
+
+test('/stop interrupts Pi, as Esc does', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/stop', '\r');
+  await delay(10);
+  assert.equal(session.aborts, 1);
+  assert.deepEqual(session.sent, [], '/stop is not sent to Pi');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('Ctrl+D and Ctrl+C twice ask first only while Pi or an agent works', async () => {
+  const idle = await startTui(new FakeSession());
+  idle.terminal.type('\x04');
+  await idle.done;
+  assert.doesNotMatch(idle.terminal.text(), /Exit anyway/);
+
+  const session = new FakeSession();
+  session.update({ busy: true });
+  const { terminal, done } = await startTui(session);
+  terminal.type('\x04');
+  await delay(30);
+  assert.match(terminal.text(), /Pi or agents are working\. Exit anyway\?/);
+  assert.ok(EXIT_QUESTION.includes('Work resumes on the next launch.'));
+  terminal.type('n');
+  await delay(30);
+  assert.equal(terminal.stopped, false, 'any key but y keeps the chat open');
+  session.update({ busy: false, agents: [{ name: 'Scout', role: 'main', parent: 'Pi', busy: true, conversationId: ROOT_CONVERSATION_ID }] });
+  const mark = terminal.output.length;
+  terminal.type('\x03', '\x03');
+  await delay(30);
+  assert.match(stripTerminalSequences(terminal.output.slice(mark)), /Exit anyway\?/, 'a busy agent asks too');
+  terminal.type('y');
+  await done;
+  assert.equal(terminal.stopped, true);
 });

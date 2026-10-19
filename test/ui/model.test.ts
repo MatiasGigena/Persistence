@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { stripTerminalSequences, TuiMainScreen } from '@earendil-works/pi-tui';
+import { stripTerminalSequences, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, OverlayHandle, OverlayOptions, Terminal } from '@earendil-works/pi-tui';
 import { runTui, TOOLS_QUESTION } from '../../src/ui/tui/app.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
@@ -118,8 +118,9 @@ function harness(columns = 100, rows = 20) {
   const panel = (): Component => { const p = overlays.at(-1); assert.ok(p, 'the picker is open'); return p; };
   return {
     tui, editor, terminal,
-    raw: (): string[] => panel().render(columns - 4),
-    screen: (): string => panel().render(columns - 4).map(stripTerminalSequences).join('\n'),
+    // Below 60 columns a panel has no margins.
+    raw: (): string[] => panel().render(columns < 60 ? columns : columns - 4),
+    screen: (): string => panel().render(columns < 60 ? columns : columns - 4).map(stripTerminalSequences).join('\n'),
   };
 }
 
@@ -128,6 +129,30 @@ const tick = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
 const modelLines = (screen: string): string[] => screen.split('\n').filter(line => /^│ [→ ] [✓ ] \S+\/\S+/.test(line));
 
 describe('model picker', () => {
+  test('on a phone, rows show provider/id only, and the selected model\'s name and note sit above the hint', async () => {
+    for (const [columns, rows] of [[40, 15], [56, 20], [120, 24]] as const) {
+      const session = new FakeSession(), h = harness(columns, rows);
+      const closed = openModelPanel(h.tui, session, theme);
+      await tick();
+      const width = columns < 60 ? columns : columns - 4;
+      for (const line of h.raw()) assert.equal(visibleWidth(line), width, line);
+      const screen = h.screen().split('\n');
+      if (columns < 60) {
+        assert.ok(screen.some(line => /^│ → ✓ faux\/a +│$/.test(line)), screen.join('\n'));
+        assert.match(screen.at(-2) ?? '', /^│ Faux A · uses your plan +│$/);
+        assert.match(screen.at(-1) ?? '', /^╰─ type to filter · esc close ─+╯$/);
+        assert.match(screen[1] ?? '', /^│ Current: faux\/a +│$/);
+        h.terminal.type(KEY.down, KEY.down);
+        assert.match(h.screen().split('\n').at(-2) ?? '', /Cloud Big · needs CLOUD_API_KEY/);
+      } else {
+        assert.ok(screen.some(line => /→ ✓ faux\/a\s+Faux A · uses your plan/.test(line)), screen.join('\n'));
+      }
+      h.terminal.type(KEY.esc);
+      await closed;
+      stop?.();
+    }
+  });
+
   test('says it is loading, then lists the current model first and marked, unavailable ones dim with their note', async () => {
     const session = new FakeSession(), h = harness();
     const { promise, resolve } = Promise.withResolvers<readonly ModelChoice[]>();
@@ -304,7 +329,8 @@ describe('/model and /tools in the chat', () => {
     terminal.type('/help', KEY.enter);
     await delay(30);
     assert.match(terminal.text(), /\/model {3}pick a model \(ctrl\+l\)/);
-    assert.match(terminal.text(), /\/tools {2}coding tools: on, off/);
+    assert.match(terminal.text(), /\/tools {3}coding tools: on, off/);
+    assert.match(terminal.text(), /\/stop {4}interrupt Pi \(esc\)/);
     assert.ok(TOOLS_QUESTION.includes('user permissions'));
     terminal.type('/exit', KEY.enter);
     await done;

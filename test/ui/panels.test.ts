@@ -6,6 +6,7 @@ import type { Component, OverlayHandle, OverlayOptions, Terminal } from '@earend
 import type { AgentInfo } from '../../src/agents/index.ts';
 import type { MemoryStatus } from '../../src/memory/index.ts';
 import { openAgentsPanel } from '../../src/ui/tui/panels/agents.ts';
+import { confirm } from '../../src/ui/tui/panels/frame.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
 import { openMemoryPanel, parseMessage, parseZoom } from '../../src/ui/tui/panels/memory.ts';
 import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
@@ -100,21 +101,30 @@ function harness(columns = 80, rows = 20) {
   tui.addChild(editor);
   tui.setFocus(editor);
   const overlays: Component[] = [];
+  const options: (OverlayOptions | undefined)[] = [];
   const show = tui.showOverlay.bind(tui);
-  tui.showOverlay = (component: Component, options?: OverlayOptions): OverlayHandle => { overlays.push(component); return show(component, options); };
+  tui.showOverlay = (component: Component, overlay?: OverlayOptions): OverlayHandle => {
+    overlays.push(component);
+    options.push(overlay);
+    return show(component, overlay);
+  };
   tui.start();
   stop = () => tui.stop();
   const panel = (): Component => { const p = overlays.at(-1); assert.ok(p, 'a panel is open'); return p; };
   return {
-    tui, editor,
+    tui, editor, options,
+    /** The top overlay rendered at `width`. */
+    render: (width: number): string[] => panel().render(width),
     press: (...keys: string[]): void => { for (const k of keys) terminal.input(k); },
-    /** The panel at the width pi-tui gives it (the terminal less the 2-column margins), styles kept. */
-    raw: (): string[] => panel().render(columns - 4),
-    screen: (): string => panel().render(columns - 4).map(stripTerminalSequences).join('\n'),
+    /** The panel at the width pi-tui gives it (the terminal less the 2-column margins, none on a phone), styles kept. */
+    raw: (): string[] => panel().render(panelWidth(columns)),
+    screen: (): string => panel().render(panelWidth(columns)).map(stripTerminalSequences).join('\n'),
   };
 }
 
 const tick = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
+/** A panel's width: below 60 columns it has no margins. */
+const panelWidth = (columns: number): number => (columns < 60 ? columns : columns - 4);
 
 describe('agents panel', () => {
   test('an empty list says how to get agents, and Esc closes it and refocuses the editor', async () => {
@@ -161,7 +171,7 @@ describe('agents panel', () => {
     assert.match(chat, /Agents › Bob/);
     assert.match(chat, /› Find the bug/);
     assert.match(chat, /Looking at main\.ts/);
-    assert.match(chat, /✓ read \{"path":"main\.ts"\}/);
+    assert.match(chat, /✓ read main\.ts/);
     assert.equal(feed.subscribers, 1);
     feed.push({ kind: 'report', id: 'r1', from: 'Cy', text: 'done' });
     assert.match(h.screen(), /\[Cy\] done/);
@@ -240,11 +250,11 @@ describe('memory panel', () => {
   });
 
   test('every line fits the width, and long text is cut with an ellipsis', async () => {
-    const session = new FakeSession(), h = harness(30, 12);
-    session.view = [{ id: 0, n: 1, text: 'a very long line of memory that cannot possibly fit' }];
+    const session = new FakeSession(), h = harness(70, 12);
+    session.view = [{ id: 0, n: 1, text: 'a very long line of memory that cannot possibly fit in the frame at all' }];
     const closed = openMemoryPanel(h.tui, session, theme);
     const lines = h.raw();
-    for (const line of lines) assert.equal(visibleWidth(line), 26, line);
+    for (const line of lines) assert.equal(visibleWidth(line), 66, line);
     assert.ok(lines.map(stripTerminalSequences).some(l => /0\+1 {2}a very lon.*…/.test(l)), lines.join('\n'));
     assert.equal(lines.length, 10);
     h.press(KEY.esc);
@@ -257,5 +267,64 @@ describe('memory panel', () => {
     assert.deepEqual(parseMessage('5+1|user: a|b'), { note: undefined, body: 'user: a|b' });
     assert.deepEqual(parseMessage('5+1 (page 1 of 2; zoom(5, 1, page) for the others)|pi: x'),
       { note: '(page 1 of 2; zoom(5, 1, page) for the others)', body: 'pi: x' });
+  });
+});
+
+describe('panels on a phone', () => {
+  const sizes = [[40, 15], [56, 20], [120, 24]] as const;
+  const fitsExactly = (lines: readonly string[], width: number): void => {
+    for (const line of lines) assert.equal(visibleWidth(line), width, stripTerminalSequences(line));
+  };
+
+  test('below 60 columns a panel fills the screen, agent rows drop the parent, and hints are short', async () => {
+    for (const [columns, rows] of sizes) {
+      const session = new FakeSession(), h = harness(columns, rows);
+      session.agents = [agent('Ada', true), agent('Bob', false, 'sub', 'Ada')];
+      const closed = openAgentsPanel(h.tui, session, theme);
+      const narrow = columns < 60, lines = h.raw();
+      fitsExactly(lines, panelWidth(columns));
+      assert.equal(lines.length, narrow ? rows : rows - 2);
+      assert.deepEqual(h.options.at(-1)?.margin, narrow ? { top: 0, bottom: 0, left: 0, right: 0 } : { top: 1, bottom: 1, left: 2, right: 2 });
+      const screen = h.screen();
+      assert.equal(/parent Ada/.test(screen), !narrow, screen);
+      assert.match(screen, narrow ? /○ Bob {2}sub {3}idle/ : /○ Bob\s+sub\s+parent Ada\s+idle/);
+      assert.match(screen, narrow ? /╰─ enter open · esc close ─/ : /╰─ ↑↓ move · enter open · esc close ─/);
+      h.press(KEY.esc);
+      await closed;
+      stop?.();
+    }
+  });
+
+  test('memory rows are cut, and a narrow screen shows the selected row whole above the hint', async () => {
+    const text = 'a long memory line about the deploy that went wrong on friday night';
+    for (const [columns, rows] of sizes) {
+      const session = new FakeSession(), h = harness(columns, rows);
+      session.view = [{ id: 0, n: 2, text: 'older' }, { id: 2, n: 1, text }];
+      const closed = openMemoryPanel(h.tui, session, theme);
+      fitsExactly(h.raw(), panelWidth(columns));
+      const screen = h.screen().split('\n');
+      const detail = screen.slice(-4, -1).map(line => line.slice(2, -2).trim()).filter(Boolean).join(' ');
+      assert.equal(detail === text, columns < 60, screen.join('\n'));
+      assert.match(screen[1] ?? '', columns < 60 ? /│ 9 msgs · 3\.0 KB · 1 sum · 2 failed +│/ : /9 messages · 3\.0 KB view · 1 summarizing · 2 failed/);
+      assert.match(screen.at(-1) ?? '', columns < 60 ? /enter open · \/ filter · esc close/ : /↑↓ move · enter open · \/ filter · esc close/);
+      h.press(KEY.esc);
+      await closed;
+      stop?.();
+    }
+  });
+
+  test('the confirmation box is as wide as the screen, up to 60 columns', async () => {
+    for (const [columns, rows] of sizes) {
+      const h = harness(columns, rows);
+      const answer = confirm(h.tui, theme, 'Pi or agents are working. Exit anyway? Work resumes on the next launch.');
+      const width = Math.min(60, columns);
+      assert.equal(h.options.at(-1)?.width, width);
+      const box = h.render(width);
+      fitsExactly(box, width);
+      assert.match(box.map(stripTerminalSequences).join('\n'), /y yes · any other key no/);
+      h.press('n');
+      assert.equal(await answer, false);
+      stop?.();
+    }
   });
 });
