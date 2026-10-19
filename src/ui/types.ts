@@ -73,6 +73,11 @@ export interface UiSession {
   send(text: string): Promise<void>;
   /** Interrupts Pi's running work (Esc). Durable work stays resumable. */
   abort(): Promise<void>;
+  /**
+   * Stops one agent and its sub agents, or every agent when `name` is omitted; Pi is not touched.
+   * Resolves with the names stopped, sub agents first; empty for an unknown name.
+   */
+  stopAgents(name?: string): Promise<readonly string[]>;
   /** Opens one agent's conversation as a live feed, or undefined for an unknown name. */
   agentChat(name: string): Promise<ChatFeed | undefined>;
   /** The memory view, oldest first, as Pi sees it. */

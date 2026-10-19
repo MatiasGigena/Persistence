@@ -1,7 +1,7 @@
 // The host's state as the UI sees it (src/ui/types.ts): Pi's chat, status, memory view, and agents.
 import type { AgentEvent, AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { listAgents } from '../agents/index.ts';
+import { listAgents, stopAgents } from '../agents/index.ts';
 import type { AgentInfo } from '../agents/index.ts';
 import { errorMessage, writeSettings } from '../host/config.ts';
 import type { Config } from '../host/config.ts';
@@ -126,6 +126,7 @@ export async function createUiSession(
       // Pi's current run only: queued inputs are withdrawn; agents' background deliveries keep going.
       await root.abort(context);
     },
+    stopAgents: name => stopAgents(harness, context, name),
     async agentChat(name) {
       const found = (await listAgents(harness, context)).find(agent => agent.name.toLowerCase() === name.toLowerCase());
       if (!found || closed) return undefined;

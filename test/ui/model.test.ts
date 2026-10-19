@@ -46,6 +46,8 @@ class FakeSession implements UiSession {
   }
   send(): Promise<void> { return Promise.resolve(); }
   abort(): Promise<void> { this.aborts++; return Promise.resolve(); }
+  stopped: (string | undefined)[] = [];
+  stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): readonly ViewLine[] { return []; }
   zoom(): string { return ''; }
@@ -330,7 +332,7 @@ describe('/model and /tools in the chat', () => {
     await delay(30);
     assert.match(terminal.text(), /\/model {3}pick a model \(ctrl\+l\)/);
     assert.match(terminal.text(), /\/tools {3}coding tools: on, off/);
-    assert.match(terminal.text(), /\/stop {4}interrupt Pi \(esc\)/);
+    assert.match(terminal.text(), /\/stop {4}stop Pi \(esc\) · all · Name/);
     assert.ok(TOOLS_QUESTION.includes('user permissions'));
     terminal.type('/exit', KEY.enter);
     await done;

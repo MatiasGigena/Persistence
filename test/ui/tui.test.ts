@@ -50,6 +50,8 @@ class FakeSession implements UiSession {
   }
   send(text: string): Promise<void> { this.sent.push(text); return Promise.resolve(); }
   abort(): Promise<void> { this.aborts++; return Promise.resolve(); }
+  stopped: (string | undefined)[] = [];
+  stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): readonly ViewLine[] { return []; }
   zoom(): string { return ''; }
@@ -337,7 +339,7 @@ test('/help is one column below 72 columns, and two from there', () => {
   for (const width of WIDTHS) {
     const lines = helpText(width).split('\n');
     fits(lines.slice(0, -1), Math.min(width, 72));
-    assert.ok(lines.some(line => (width < 72 ? /^\/stop {4}interrupt Pi \(esc\)$/ : /^\/status  model, work, memory +\/stop {4}interrupt Pi \(esc\)$/).test(line)), lines.join('\n'));
+    assert.ok(lines.some(line => (width < 72 ? /^\/stop {4}stop Pi \(esc\) · all · Name$/ : /^\/status  model, work, memory +\/stop {4}stop Pi \(esc\) · all · Name$/).test(line)), lines.join('\n'));
     const view = new ChatView(new FakeFeed(), theme);
     view.notice(helpText(width));
     fits(view.render(width), width);
@@ -378,6 +380,26 @@ test('/stop interrupts Pi, as Esc does', async () => {
   await delay(10);
   assert.equal(session.aborts, 1);
   assert.deepEqual(session.sent, [], '/stop is not sent to Pi');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('/stop all stops Pi and every agent; /stop Name stops one agent', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/stop all', '\r');
+  await delay(10);
+  assert.equal(session.aborts, 1);
+  terminal.type('/stop Bob', '\r');
+  await delay(10);
+  assert.equal(session.aborts, 1, 'a named stop leaves Pi running');
+  terminal.type('/stop ghost', '\r');
+  await delay(10);
+  assert.deepEqual(session.stopped, [undefined, 'Bob', 'ghost']);
+  assert.match(terminal.text(), /Stopped Ada\./);
+  assert.match(terminal.text(), /Stopped Bob\./);
+  assert.match(terminal.text(), /No agent named ghost\./);
+  assert.deepEqual(session.sent, []);
   terminal.type('/exit', '\r');
   await done;
 });

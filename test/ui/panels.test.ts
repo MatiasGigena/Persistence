@@ -74,6 +74,8 @@ class FakeSession implements UiSession {
   setAgents(agents: AgentInfo[]): void { this.agents = agents; for (const l of this.listeners) l(); }
   send(): Promise<void> { return Promise.resolve(); }
   abort(): Promise<void> { return Promise.resolve(); }
+  stopped: (string | undefined)[] = [];
+  stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
   agentChat(name: string): Promise<ChatFeed | undefined> { return Promise.resolve(this.feeds.get(name)); }
   memoryView(): readonly ViewLine[] { return this.view; }
   zoom(id: number, n: number): string {

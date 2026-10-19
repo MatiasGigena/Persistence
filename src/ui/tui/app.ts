@@ -40,7 +40,7 @@ export const COMMANDS: readonly SlashCommand[] = [
   { name: 'agents', description: 'Agents and their conversations' },
   { name: 'mem', description: "Pi's memory view" },
   { name: 'status', description: 'Model, work, memory and agents' },
-  { name: 'stop', description: 'Interrupt Pi, as Esc does' },
+  { name: 'stop', description: 'Interrupt Pi, as Esc does; /stop all or /stop Name stops agents' },
   { name: 'exit', description: 'Close; unfinished work resumes next launch' },
 ];
 
@@ -49,7 +49,7 @@ type HelpPair = readonly [name: string, description: string];
 const HELP_COMMANDS: readonly HelpPair[] = [
   ['/model', 'pick a model (ctrl+l)'], ['/tools', 'coding tools: on, off'],
   ['/agents', 'agents and their chats'], ['/mem', 'the memory view'],
-  ['/status', 'model, work, memory'], ['/stop', 'interrupt Pi (esc)'],
+  ['/status', 'model, work, memory'], ['/stop', 'stop Pi (esc) · all · Name'],
   ['/exit', 'close (ctrl+d when empty)'],
 ];
 const HELP_KEYS: readonly HelpPair[] = [
@@ -254,8 +254,13 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       yes => { confirming = false; if (yes) void exit(); },
       (error: unknown) => { confirming = false; show(`Confirmation failed: ${message(error)}`, 'error'); });
   };
-  const stop = (): void => {
-    session.abort().catch((error: unknown) => show(`Interrupt failed: ${message(error)}`, 'error'));
+  const stop = (arg = ''): void => {
+    // `/stop` is Esc for Pi alone; `/stop all` also stops every agent, `/stop Name` one agent and its subs.
+    if (!arg || arg === 'all') session.abort().catch((error: unknown) => show(`Interrupt failed: ${message(error)}`, 'error'));
+    if (!arg) return;
+    session.stopAgents(arg === 'all' ? undefined : arg).then(
+      names => show(names.length ? `Stopped ${names.join(', ')}.` : arg === 'all' ? 'No agents to stop.' : `No agent named ${arg}.`),
+      (error: unknown) => show(`Stop failed: ${message(error)}`, 'error'));
   };
 
   const panel = (open: (tui: TUI, session: UiSession, panelTheme: typeof theme) => Promise<void>): void => {
@@ -300,7 +305,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     const name = line.slice(1).split(/\s/, 1)[0] ?? '';
     const arg = line.slice(1 + name.length).trim();
     if (name === 'help') show(helpText(terminal.columns));
-    else if (name === 'stop') stop();
+    else if (name === 'stop') stop(arg);
     else if (name === 'model') model(arg);
     else if (name === 'tools') tools(arg);
     else if (name === 'status') show(statusText(session.status()));
