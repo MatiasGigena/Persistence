@@ -34,6 +34,18 @@ export interface SessionStatus {
   readonly agents: readonly AgentInfo[];
 }
 
+/** A model Pi can switch to. */
+export interface ModelChoice {
+  readonly provider: string;
+  readonly id: string;
+  /** Display name from the catalog, e.g. "Claude Sonnet (CLI)". */
+  readonly name: string;
+  /** Credentials for its provider are present. Unavailable models are listed but cannot be picked. */
+  readonly available: boolean;
+  /** A short hint, e.g. "uses your Claude plan" or "needs ANTHROPIC_API_KEY". */
+  readonly note?: string;
+}
+
 /** One line of the memory view: `id+n|text`. */
 export interface ViewLine {
   readonly id: number;
@@ -67,4 +79,13 @@ export interface UiSession {
   memoryView(): readonly ViewLine[];
   /** Opens line id+n into the two lines under it; n = 1 gives the message whole. Same text as the zoom tool. */
   zoom(id: number, n: number): string;
+  /** Models to pick from, the current one included. */
+  models(): Promise<readonly ModelChoice[]>;
+  /**
+   * Switches Pi and its agents to this model from their next request, and saves it as the default for later
+   * launches that pass no --model. Rejects with a readable message when the model is unknown or has no credentials.
+   */
+  setModel(provider: string, id: string): Promise<void>;
+  /** Turns coding tools (read, write, edit, bash) on or off for Pi and its agents, for this launch only. */
+  setTools(enabled: boolean): Promise<void>;
 }
