@@ -8,7 +8,7 @@ import type { MemoryStatus } from '../../src/memory/index.ts';
 import { openAgentsPanel } from '../../src/ui/tui/panels/agents.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
 import { openMemoryPanel, parseMessage, parseZoom } from '../../src/ui/tui/panels/memory.ts';
-import type { ChatFeed, ChatItem, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
 
 const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b' };
 const sgr = (on: number, off: number) => (text: string): string => `\x1b[${on}m${text}\x1b[${off}m`;
@@ -80,6 +80,9 @@ class FakeSession implements UiSession {
     if (out === undefined) throw new Error(`No line ${id}+${n}.`);
     return out;
   }
+  models(): Promise<readonly ModelChoice[]> { return Promise.resolve([]); }
+  setModel(): Promise<void> { return Promise.resolve(); }
+  setTools(): Promise<void> { return Promise.resolve(); }
 }
 
 // The panels never read the conversation ID, so every fake agent shares the root's.

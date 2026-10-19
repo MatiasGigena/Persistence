@@ -1,16 +1,21 @@
 // The host's state as the UI sees it (src/ui/types.ts): Pi's chat, status, memory view, and agents.
-import type { AgentEvent, AgentState } from '@earendil-works/pi-durable';
+import type { AgentEvent, AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { listAgents } from '../agents/index.ts';
 import type { AgentInfo } from '../agents/index.ts';
+import { errorMessage, writeSettings } from '../host/config.ts';
 import type { Config } from '../host/config.ts';
 import { start } from '../memory/view.ts';
+import { modelChooser } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
 import type { ChatFeed, SessionStatus, UiSession, ViewLine } from './types.ts';
 
-/** The launch choices the status line falls back on until Pi's stored agent says otherwise. */
-export type UiSessionConfig = Pick<Config, 'model' | 'thinkingLevel' | 'allowTools'>;
+/**
+ * The launch choices the status line falls back on until Pi's stored agent says otherwise; `setModel()` saves to
+ * `settingsPath` when given, and names `authFile` when credentials are missing.
+ */
+export type UiSessionConfig = Pick<Config, 'model' | 'thinkingLevel' | 'allowTools'> & Partial<Pick<Config, 'settingsPath' | 'authFile'>>;
 
 /** A UiSession the host owns: `close()` stops its feeds and timer, leaving the Instance open. */
 export interface UiSessionHandle extends UiSession {
@@ -29,7 +34,7 @@ const REFRESHING: ReadonlySet<AgentEvent['type']> = new Set(['message_end', 'too
 
 /**
  * Open the UI's view of `instance`: a live feed of Pi's conversation, its status, and the memory view. Agents' feeds
- * open on demand. Nothing here writes except `send()` and `abort()`.
+ * open on demand. Nothing here writes except `send()`, `abort()`, `setModel()` and `setTools()`.
  */
 export async function createUiSession(
   instance: Instance, config: UiSessionConfig, { refreshMs = 1500 }: UiSessionOptions = {},
@@ -39,17 +44,29 @@ export async function createUiSession(
   const feeds = new Set<ChatFeed>();
   const listeners = new Set<() => void>();
   let agents: readonly AgentInfo[] = [];
+  const chooser = modelChooser(instance.models, { authFile: config.authFile });
+  // This session's switches, shown before Pi's stored agent reports them.
+  let chosenModel: ModelRef | undefined;
+  let chosenTools: boolean | undefined;
+  // One switch at a time: each configures Pi, then re-derives the agents.
+  let switching: Promise<unknown> = Promise.resolve();
+  const serially = (change: () => Promise<void>): Promise<void> => {
+    const next = switching.then(change);
+    switching = next.catch(() => {});
+    return next;
+  };
+  const currentModel = (): ModelRef => chosenModel ?? chat.state().agent.model ?? config.model;
   let current = compute();
   let shown = JSON.stringify(current);
   let closed = false;
 
   function compute(): SessionStatus {
     const { busy, queued, agent } = chat.state();
-    const model = agent.model ?? config.model;
+    const model = currentModel();
     return {
       model: `${model.provider}/${model.modelId}`,
       thinkingLevel: agent.thinkingLevel ?? config.thinkingLevel,
-      toolsEnabled: toolsEnabled(agent, config.allowTools),
+      toolsEnabled: chosenTools ?? toolsEnabled(agent, config.allowTools),
       busy,
       queued,
       memory: memory?.status(),
@@ -122,6 +139,27 @@ export async function createUiSession(
     zoom(id, n) {
       if (!memory) throw new Error('Memory is not open (inspection only).');
       return memory.zoom(id, n);
+    },
+    models: () => chooser.list(currentModel()),
+    setModel(provider, id) {
+      return serially(async () => {
+        const model = { provider, modelId: id };
+        await chooser.check(model);
+        await instance.setModel(model);
+        chosenModel = model;
+        refresh();
+        if (!config.settingsPath) return;
+        try { writeSettings(config.settingsPath, { model }); } catch (error) {
+          throw new Error(`Switched to ${provider}/${id}, but saving it as the default failed: ${errorMessage(error)}`);
+        }
+      });
+    },
+    setTools(enabled) {
+      return serially(async () => {
+        await instance.setTools(enabled);
+        chosenTools = enabled;
+        refresh();
+      });
     },
     async close() {
       if (closed) return;

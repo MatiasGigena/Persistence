@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { TestContext } from 'node:test';
-import type { Message, TranscriptContext } from '@earendil-works/pi-ai';
+import type { Message, Model, TranscriptContext } from '@earendil-works/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import type { FauxResponseStep } from '@earendil-works/pi-ai/providers/faux';
+import type { Agent } from '@earendil-works/pi-durable';
 import { REPORT_KIND } from '../../src/agents/index.ts';
+import { parseArgs, resolveOptions } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
+import type { Instance } from '../../src/runtime/runtime.ts';
 import { createUiSession } from '../../src/ui/session.ts';
 import type { UiSessionHandle } from '../../src/ui/session.ts';
 import type { ChatFeed, ChatItem } from '../../src/ui/types.ts';
@@ -227,3 +230,153 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
   });
 });
 
+
+const CODING = ['bash', 'edit', 'read', 'write'];
+const coding = (agent: Agent | undefined): string[] => (agent?.tools ?? []).map(tool => tool.name).filter(name => CODING.includes(name)).sort();
+
+/**
+ * Pi on faux/one, beside a faux/two, a claude-cli stand-in (sonnet, haiku) and an anthropic one without credentials.
+ * `seen` is every request's provider/model, in order. Pi spawns Bob when asked to, and a claude-cli/haiku request is a
+ * compaction.
+ */
+async function openRoutes(t: TestContext, { inspect = false } = {}) {
+  const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-switch-'));
+  const seen: string[] = [];
+  const respond = (context: TranscriptContext, _options: unknown, _state: unknown, model: Model<string>) => {
+    seen.push(`${model.provider}/${model.id}`);
+    if (model.id === 'haiku') return fauxAssistantMessage('a short summary');
+    const said = lastUserText(context);
+    if (context.messages.at(-1)?.role === 'toolResult') return fauxAssistantMessage('Bob is on it.');
+    if (said.includes('[from Pi] count the boats')) return fauxAssistantMessage('There are 3 boats.');
+    if (said.includes('[Bob] There are 3 boats.')) return fauxAssistantMessage('Bob counted 3 boats.');
+    if (said.includes('spawn Bob')) {
+      return fauxAssistantMessage(fauxToolCall('spawn_agent', { name: 'Bob', task: 'count the boats' }, { id: 'spawn-1' }), { stopReason: 'toolUse' });
+    }
+    return fauxAssistantMessage('ok');
+  };
+  const pi = fauxProvider({ models: [{ id: 'one' }, { id: 'two' }] });
+  const cli = fauxProvider({ api: 'faux-cli', provider: 'claude-cli', models: [{ id: 'sonnet', name: 'Claude Sonnet (CLI)' }, { id: 'haiku' }] });
+  const api = fauxProvider({ api: 'faux-anthropic', provider: 'anthropic', models: [{ id: 'claude-sonnet-5-5' }] });
+  for (const handle of [pi, cli]) handle.setResponses(Array.from({ length: 40 }, () => respond));
+  const models = createModels();
+  models.setProvider(pi.provider);
+  models.setProvider(cli.provider);
+  models.setProvider({ ...api.provider, auth: { apiKey: { name: 'Anthropic API key', resolve: async () => undefined } } });
+  const model = { provider: 'faux', modelId: 'one' };
+  const databasePath = join(cwd, 'chat.sqlite'), settingsPath = join(cwd, 'settings.json');
+  const instance = await openInstance({ databasePath, cwd, models, model, configureAgent: !inspect });
+  const session = await createUiSession(instance, { model, thinkingLevel: 'high', allowTools: false, settingsPath }, { refreshMs: 50 });
+  t.after(async () => {
+    await session.close();
+    await instance.close();
+    await rm(cwd, { recursive: true, force: true });
+  });
+  return { instance, session, seen, cwd, databasePath, settingsPath };
+}
+
+const answers = (session: UiSessionHandle) => session.chat.items().filter(item => item.kind === 'assistant' && !item.streaming).length;
+
+/** Ask Pi to spawn Bob; resolves with Bob's conversation once Pi has answered his report. */
+async function spawnBob(instance: Instance, session: UiSessionHandle) {
+  await session.send('spawn Bob');
+  await until(() => find(session.chat, 'assistant', item => item.text === 'Bob counted 3 boats.'), 'Pi\'s answer to Bob', session.chat);
+  const [bob] = await until(() => session.status().agents.length === 1 && session.status().agents, 'Bob in the status');
+  assert.ok(bob);
+  const conversation = await instance.harness.conversation(bob.conversationId, instance.context);
+  assert.ok(conversation);
+  return conversation;
+}
+
+describe('switching the model and the tools', { concurrency: false, timeout: 30_000 }, () => {
+  test('models() lists Pi\'s model first and marks a provider without credentials', async (t) => {
+    const { session } = await open(t, []);
+    const { session: routes } = await openRoutes(t);
+    assert.deepEqual((await session.models())[0], { provider: 'faux', id: 'faux-1', name: 'Faux Model', available: true });
+    const list = await routes.models();
+    assert.deepEqual(list.map(option => [`${option.provider}/${option.id}`, option.available, option.note]), [
+      ['faux/one', true, undefined], ['faux/two', true, undefined],
+      ['claude-cli/sonnet', true, 'uses your Claude plan via the claude CLI'], ['claude-cli/haiku', true, 'uses your Claude plan via the claude CLI'],
+      ['anthropic/claude-sonnet-5-5', false, 'needs ANTHROPIC_API_KEY'],
+    ]);
+  });
+
+  test('setModel: the next request uses it, the status shows it at once, and later launches default to it', async (t) => {
+    const { session, seen, cwd, databasePath, settingsPath } = await openRoutes(t);
+    await session.send('first');
+    await until(() => answers(session) === 1, 'the first answer', session.chat);
+    assert.deepEqual(seen, ['faux/one']);
+
+    let fired = 0;
+    session.onStatus(() => { fired++; });
+    await session.setModel('faux', 'two');
+    assert.equal(session.status().model, 'faux/two');
+    assert.ok(fired > 0, 'onStatus fired');
+    await session.send('second');
+    await until(() => answers(session) === 2, 'the second answer', session.chat);
+    assert.deepEqual(seen, ['faux/one', 'faux/two']);
+
+    const saved: unknown = JSON.parse(await readFile(settingsPath, 'utf8'));
+    assert.deepEqual(saved, { model: 'faux/two' });
+    assert.equal((await stat(settingsPath)).mode & 0o777, 0o600);
+    const launch = (args: string[], env: NodeJS.ProcessEnv = {}) => resolveOptions(parseArgs(['--database', databasePath, '--cwd', cwd, ...args]), env);
+    const next = await launch([]);
+    assert.deepEqual([next.model, next.modelSource, next.settingsPath], [{ provider: 'faux', modelId: 'two' }, 'settings', settingsPath]);
+    const env = await launch([], { PI_DURABLE_MODEL: 'claude-cli/haiku' });
+    assert.deepEqual([env.model, env.modelSource], [{ provider: 'claude-cli', modelId: 'haiku' }, 'env']);
+    const flag = await launch(['--model', 'faux/one'], { PI_DURABLE_MODEL: 'claude-cli/haiku' });
+    assert.deepEqual([flag.model, flag.modelSource], [{ provider: 'faux', modelId: 'one' }, 'flag']);
+  });
+
+  test('setModel rejects unknown and unavailable models and changes nothing', async (t) => {
+    const { session, settingsPath } = await openRoutes(t);
+    await assert.rejects(session.setModel('faux', 'nope'), /Unknown model faux\/nope/);
+    await assert.rejects(session.setModel('anthropic', 'claude-sonnet-5-5'), /No credentials for anthropic\./);
+    assert.equal(session.status().model, 'faux/one');
+    await assert.rejects(stat(settingsPath), { code: 'ENOENT' });
+  });
+
+  test('an agent and the compactor follow a switch to claude-cli', async (t) => {
+    const { instance, session, seen } = await openRoutes(t);
+    const bob = await spawnBob(instance, session);
+    assert.deepEqual((await bob.agent(instance.context)).model, { provider: 'faux', modelId: 'one' });
+    assert.equal(instance.memory?.jobs, 8);
+
+    await session.setModel('claude-cli', 'sonnet');
+    assert.deepEqual((await bob.agent(instance.context)).model, { provider: 'claude-cli', modelId: 'sonnet' });
+    assert.equal(instance.memory?.jobs, 2);
+    const before = seen.length;
+    // Over 512 bytes, so its leaf takes a compaction call.
+    await session.send(`a long note: ${'the tide comes in and the tide goes out; '.repeat(20)}`);
+    await until(() => seen.includes('claude-cli/haiku') && answers(session) === 3, 'the compaction and the answer', session.chat);
+    const after = seen.slice(before);
+    assert.ok(after.includes('claude-cli/sonnet'), JSON.stringify(after));
+    assert.ok(after.every(each => each.startsWith('claude-cli/')), JSON.stringify(after));
+  });
+
+  test('setTools on then off: Pi\'s tools, an agent\'s tools, the instructions, and the status', async (t) => {
+    const { instance, session } = await openRoutes(t);
+    const bob = await spawnBob(instance, session);
+    const pi = () => instance.root.agent(instance.context);
+    assert.deepEqual([coding(await pi()), coding(await bob.agent(instance.context))], [[], []]);
+
+    await session.setTools(true);
+    assert.equal(session.status().toolsEnabled, true);
+    assert.deepEqual([coding(await pi()), coding(await bob.agent(instance.context))], [CODING, CODING]);
+    assert.match((await pi()).instructions ?? '', /turned on the read, write, edit, and bash tools/);
+    assert.match((await bob.agent(instance.context)).instructions ?? '', /turned on the read, write, edit, and bash tools/);
+
+    await session.setTools(false);
+    assert.equal(session.status().toolsEnabled, false);
+    assert.deepEqual([coding(await pi()), coding(await bob.agent(instance.context))], [[], []]);
+    assert.match((await pi()).instructions ?? '', /Coding tools \(read, write, edit, bash\) are off/);
+    assert.deepEqual((await pi()).tools.map(tool => tool.name).sort(),
+      ['date', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
+  });
+
+  test('an inspection switches nothing and writes no settings', async (t) => {
+    const { session, settingsPath } = await openRoutes(t, { inspect: true });
+    await assert.rejects(session.setModel('faux', 'two'), /inspection cannot change/);
+    await assert.rejects(session.setTools(true), /inspection cannot change/);
+    await assert.rejects(stat(settingsPath), { code: 'ENOENT' });
+  });
+});
