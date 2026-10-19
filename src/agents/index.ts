@@ -1,8 +1,13 @@
+import { type Context, copyJson, type Draft } from '@earendil-works/chord';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { Type } from '@earendil-works/pi-ai';
+import { type ImageContent, type Message, type TextContent, type ThinkingContent, type ToolCall, Type } from '@earendil-works/pi-ai';
 import {
-  AgentDoc, AssistantEntry, configure, defineDoc, defineExtension, defineTask, defineTool,
+  AgentDoc, AssistantEntry, configure, defineDoc, defineTask, defineTool,
   hook, LiveDoc, ROOT_CONVERSATION_ID, section, ToolTask,
+} from '@earendil-works/pi-durable';
+import type {
+  AgentChange, ConversationId, Cursor, DocumentReader, EntryId, EntryRecord, Extension, NextTaskState,
+  Session, TaskId, TaskOptions, ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
 
 /**
@@ -45,30 +50,63 @@ const NAME = /^[A-Za-z0-9_-]{1,32}$/;
 const KEEP_CALLS = 256;
 const KEEP_REPORTED = 32;
 
+export type AgentRole = 'main' | 'sub';
+/** A registry entry. `parent` is "Pi" or a main agent's name; `reported` holds answers already reported. */
+export type AgentRecord = { conversationId: ConversationId; role: AgentRole; parent: string; reported: EntryId[] };
+/** `calls` maps a tool task ID to the result its first run returned. */
+export type AgentsState = { agents: Record<string, AgentRecord>; calls: Record<string, string> };
+/** An agent's input entry: a message from another agent, or a report to its parent (`id` once placed). */
+export type MessageEntry = { kind: typeof MESSAGE_KIND; data: { from: string; text: string } };
+export type ReportEntry = { kind: typeof REPORT_KIND; data: { name: string; text: string } };
+/** An input that reached Pi; `id` is its delivery task's ID. */
+export type AgentReport = { name: string; text: string; id: TaskId };
+/** One row of `listAgents()`. */
+export interface AgentInfo {
+  readonly name: string;
+  readonly role: AgentRole;
+  readonly parent: string;
+  readonly conversationId: ConversationId;
+  readonly busy: boolean;
+}
+/** The Harness or a tool's api: anything with `snapshot()` and `commit(tx => …)`. */
+export type AgentsSource = DocumentReader & Pick<Session, 'commit'>;
+
+type Named = AgentRecord & { name: string };
+type Caller = Named | { name: typeof PI; role: 'root'; conversationId: ConversationId };
+type Block = TextContent | ImageContent | ThinkingContent | ToolCall;
+type DeliverState = { phase: 'deliver' };
+type DeliveryInput = {
+  to: string;
+  conversationId: ConversationId;
+  content: string;
+  entry: MessageEntry | ReportEntry;
+  whenBusy: 'steer' | 'followUp';
+};
+
 /** Session-wide registry: name → { conversationId, role: 'main'|'sub', parent: 'Pi'|main name, reported }. */
-export const AgentsDoc = defineDoc({
+export const AgentsDoc = defineDoc<AgentsState>({
   kind: 'agents.registry',
   version: 1,
   scope: 'session',
   initial: () => ({ agents: {}, calls: {} }),
 });
 
-const text = (content) => typeof content === 'string' ? content
+const text = (content: string | readonly Block[] | undefined) => typeof content === 'string' ? content
   : (content ?? []).filter((block) => block.type === 'text').map((block) => block.text).join('');
-const assistantText = (entry) => (entry?.model ?? [])
+const assistantText = (entry: { readonly model?: readonly Message[] } | undefined) => (entry?.model ?? [])
   .filter((message) => message.role === 'assistant').map((message) => text(message.content)).join('');
-const reply = (value) => ({ output: [{ type: 'text', text: value }] });
-const brief = (value, max = 120) => {
+const reply = (value: string): ToolExecutionResult => ({ output: [{ type: 'text', text: value }] });
+const brief = (value: string, max = 120) => {
   const line = value.replace(/\s+/g, ' ').trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 };
-const find = (agents, name) => {
-  const key = Object.keys(agents).find((each) => each.toLowerCase() === String(name).toLowerCase());
-  return key === undefined ? undefined : { name: key, ...agents[key] };
+const find = (agents: Readonly<Record<string, AgentRecord>>, name: string): Named | undefined => {
+  const found = Object.entries(agents).find(([each]) => each.toLowerCase() === String(name).toLowerCase());
+  return found && { name: found[0], ...found[1] };
 };
 
 /** Who the conversation is: Pi, a registered agent, or undefined for any other conversation. */
-function whoIs(registry, conversationId) {
+function whoIs(registry: Readonly<AgentsState> | undefined, conversationId: ConversationId): Caller | undefined {
   if (conversationId === ROOT_CONVERSATION_ID) return { name: PI, role: 'root', conversationId };
   for (const [name, agent] of Object.entries(registry?.agents ?? {})) {
     if (agent.conversationId === conversationId) return { name, ...agent };
@@ -77,7 +115,7 @@ function whoIs(registry, conversationId) {
 }
 
 /** Resolve a target; `Pi` only for those who may address it. */
-function target(registry, me, name) {
+function target(registry: Readonly<AgentsState> | undefined, me: Caller, name: string): Caller | { error: string } {
   if (String(name).toLowerCase() === PI.toLowerCase()) {
     if (me.role === 'sub') return { error: 'Sub agents cannot address Pi; message your main agent instead.' };
     return { name: PI, role: 'root', conversationId: ROOT_CONVERSATION_ID };
@@ -86,8 +124,8 @@ function target(registry, me, name) {
 }
 
 /** Latest committed assistant text of a conversation, read through a transaction. */
-async function lastAnswer(tx, conversationId) {
-  let cursor;
+async function lastAnswer(tx: Tx, conversationId: ConversationId): Promise<string | undefined> {
+  let cursor: Cursor | undefined;
   for (let pages = 0; pages < 8; pages++) {
     const page = await tx.scanEntries({ conversationId }, 64, cursor);
     for (const entry of page.items) {
@@ -98,7 +136,7 @@ async function lastAnswer(tx, conversationId) {
   return undefined;
 }
 
-const busyOf = async (source, conversationId, context) =>
+const busyOf = async (source: DocumentReader, conversationId: ConversationId, context: Context) =>
   (await source.snapshot(LiveDoc, conversationId, context))?.run !== undefined;
 
 /**
@@ -106,12 +144,14 @@ const busyOf = async (source, conversationId, context) =>
  * instructions; then the role's tool offer (subs are not offered spawn_agent or stop_agent), then the
  * host's `childAgent` change.
  */
-async function deriveAgent(tx, conversationId, role, childAgent) {
-  const root = JSON.parse(JSON.stringify(await tx.doc(AgentDoc, ROOT_CONVERSATION_ID)));
+async function deriveAgent(tx: Tx, conversationId: ConversationId, role: AgentRole, childAgent: AgentChange | undefined) {
+  const root = await tx.doc(AgentDoc, ROOT_CONVERSATION_ID);
   const state = await tx.doc(AgentDoc, conversationId);
-  for (const key of Object.keys(state)) if (!(key in root)) delete state[key];
-  // Assigned whole; a write of an equal value records no change.
-  for (const [key, value] of Object.entries(root)) state[key] = value;
+  // The same draft, field by field.
+  const fields: Record<string, unknown> = state;
+  for (const key of Object.keys(fields)) if (!(key in root)) delete fields[key];
+  // Assigned whole, as detached copies; a write of an equal value records no change.
+  for (const [key, value] of Object.entries<unknown>(root)) fields[key] = copyJson(value);
   if (role === 'sub') {
     const hidden = ['spawn_agent', 'stop_agent'];
     const offered = state.modelTools;
@@ -125,7 +165,9 @@ async function deriveAgent(tx, conversationId, role, childAgent) {
  * Re-derive every spawned agent's choices from Pi's, e.g. after the host reconfigured the root for
  * this launch (tools on/off, model). Call on every work launch after `root.configure()`.
  */
-export async function syncAgents(harness, context = BACKGROUND_CONTEXT, { childAgent } = {}) {
+export async function syncAgents(
+  harness: Pick<Session, 'commit'>, context: Context = BACKGROUND_CONTEXT, { childAgent }: { childAgent?: AgentChange } = {},
+): Promise<void> {
   await harness.commit(async (tx) => {
     const { agents } = await tx.doc(AgentsDoc);
     for (const agent of Object.values(agents)) await deriveAgent(tx, agent.conversationId, agent.role, childAgent);
@@ -133,7 +175,7 @@ export async function syncAgents(harness, context = BACKGROUND_CONTEXT, { childA
 }
 
 /** Every spawned agent with its role, parent, conversation, and busy state. */
-export async function listAgents(source, context = BACKGROUND_CONTEXT) {
+export async function listAgents(source: DocumentReader, context: Context = BACKGROUND_CONTEXT): Promise<AgentInfo[]> {
   const registry = await source.snapshot(AgentsDoc, context);
   return Promise.all(Object.entries(registry?.agents ?? {}).map(async ([name, agent]) => ({
     name, role: agent.role, parent: agent.parent, conversationId: agent.conversationId,
@@ -145,20 +187,20 @@ export async function listAgents(source, context = BACKGROUND_CONTEXT) {
  * An agent's whole chat as plain text (backs the memory's `zoom("Name")`). `source` is the Harness
  * or a tool's `api` (anything with `snapshot()` and `commit(tx => …)`); `name` may be "Pi".
  */
-export async function agentTranscript(source, name, context = BACKGROUND_CONTEXT) {
+export async function agentTranscript(source: AgentsSource, name: string, context: Context = BACKGROUND_CONTEXT): Promise<string> {
   const registry = await source.snapshot(AgentsDoc, context);
   const agent = String(name).toLowerCase() === PI.toLowerCase()
     ? { name: PI, conversationId: ROOT_CONVERSATION_ID } : find(registry?.agents ?? {}, name);
   if (!agent) throw new Error(`No agent named ${name}`);
-  const entries = [];
-  let cursor;
+  const entries: EntryRecord[] = [];
+  let cursor: Cursor | undefined;
   do {
     const page = await source.commit((tx) => tx.scanEntries(
       { conversationId: agent.conversationId, order: 'ascending' }, 256, cursor), context);
     entries.push(...page.items);
     cursor = page.next;
   } while (cursor !== undefined);
-  const lines = [];
+  const lines: string[] = [];
   for (const entry of entries) {
     for (const message of entry.model ?? []) {
       if (message.role === 'user') lines.push(`> ${text(message.content)}`);
@@ -175,7 +217,7 @@ export async function agentTranscript(source, name, context = BACKGROUND_CONTEXT
   return lines.join('\n');
 }
 
-const ROLE_TEXT = {
+const ROLE_TEXT: Readonly<Record<Caller['role'], (me: { readonly name: string; readonly parent?: string }) => string[]>> = {
   root: () => [
     'You are Pi, the session agent of this chat.',
     'You can start background agents ("main agents") with spawn_agent(name, task), and use list_agents, send_message(to, text), last_message(name), and stop_agent(name) to steer them.',
@@ -198,6 +240,27 @@ const ROLE_TEXT = {
   ],
 };
 
+/** Options of `createAgentsExtension()`. */
+export interface AgentsOptions {
+  /**
+   * An optional preamble placed before a new agent's first task. `api` is the spawning tool call's
+   * api; read through it, never through the Harness inside a commit.
+   */
+  readonly initialContext?: (
+    agent: { readonly name: string; readonly role: AgentRole; readonly parent: string; readonly task: string },
+    api: ToolExecutionApi, context: Context,
+  ) => string | undefined | Promise<string | undefined>;
+  /** Called after an input from an agent was durably admitted to Pi, at most once per input. */
+  readonly onReport?: (report: AgentReport) => unknown;
+  /** Applied to every spawned agent after it copies Pi's choices. */
+  readonly childAgent?: AgentChange;
+}
+
+/** The agents extension; its `tools` are what a host enables. */
+export interface AgentsExtension extends Extension {
+  readonly tools: readonly ToolRegistration[];
+}
+
 /**
  * Build the agents extension.
  * - `initialContext({ name, role, parent, task }, api, context)` returns an optional preamble placed
@@ -208,9 +271,9 @@ const ROLE_TEXT = {
  *   `agents.report` entry itself.
  * - `childAgent` is an AgentChange applied to every spawned agent after it copies Pi's choices.
  */
-export function createAgentsExtension({ initialContext, onReport, childAgent } = {}) {
+export function createAgentsExtension({ initialContext, onReport, childAgent }: AgentsOptions = {}): AgentsExtension {
   // Owner of an agent's conversation: finishes at once; background, so Pi's Esc never reaches it.
-  const Anchor = defineTask({
+  const Anchor = defineTask<null, { phase: 'done' }, null>({
     name: 'agents.anchor',
     version: 1,
     initial: () => ({ phase: 'done' }),
@@ -223,15 +286,14 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
   });
 
   // Carries one input to one agent, then that agent's answer to its parent.
-  // input: { to, conversationId, content, entry, whenBusy }
-  const Deliver = defineTask({
+  const Deliver = defineTask<DeliveryInput, DeliverState, null>({
     name: 'agents.deliver',
     version: 1,
     initial: () => ({ phase: 'deliver' }),
     phases: {
       deliver: async (task, runtime, context) => {
         const { to, conversationId, content, entry, whenBusy } = task.input;
-        const done = () => ({ status: 'terminal', outcome: { status: 'completed', result: null } });
+        const done = (): NextTaskState<DeliverState, null> => ({ status: 'terminal', outcome: { status: 'completed', result: null } });
         const conversation = await runtime.conversation(conversationId, context);
         if (!conversation) return runtime.commit(done, context);
         // A report carries its delivery's id, so memory logs each report once, even identical ones.
@@ -241,14 +303,15 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
         }, context);
         if (conversationId === ROOT_CONVERSATION_ID) {
           await runtime.commit(done, context);
-          try { await onReport?.({ name: entry.data.name, text: entry.data.text, id: task.id }); }
+          // Pi is only ever delivered reports.
+          try { if (entry.kind === REPORT_KIND) await onReport?.({ name: entry.data.name, text: entry.data.text, id: task.id }); }
           catch (error) { runtime.report(error); }
           return;
         }
         const settled = await submission.wait(context);
         // One commit records the answer as reported and creates its delivery to the parent.
         await runtime.commit(async (tx) => {
-          let report;
+          let report: string | undefined;
           const answer = settled.status === 'done' && settled.type === 'input' ? settled.answer : undefined;
           const answerEntry = answer && await tx.entry(AssistantEntry, answer);
           const registry = await tx.doc(AgentsDoc);
@@ -274,17 +337,20 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
       runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context),
   });
 
-  const createDelivery = (tx, conversationId, to, content, entry, whenBusy) =>
+  const createDelivery = (tx: Tx, conversationId: ConversationId, to: string, content: string,
+    entry: MessageEntry | ReportEntry, whenBusy: DeliveryInput['whenBusy']): Promise<TaskId<null>> =>
     tx.createTask(Deliver, { to, conversationId, content, entry, whenBusy },
       { ownership: { kind: 'conversation' }, background: true });
 
   /** Run `change` once per tool call: a replayed call returns the first result. */
-  const once = async (api, context, change) => {
+  const once = async (api: ToolExecutionApi, context: Context,
+    change: (tx: Tx, registry: Draft<AgentsState>) => Promise<string>) => {
     const recorded = (await api.snapshot(AgentsDoc, context))?.calls?.[api.taskId];
     if (recorded !== undefined) return reply(recorded);
     return reply(await api.commit(async (tx) => {
       const registry = await tx.doc(AgentsDoc);
-      if (registry.calls[api.taskId] !== undefined) return registry.calls[api.taskId];
+      const first = registry.calls[api.taskId];
+      if (first !== undefined) return first;
       const result = await change(tx, registry);
       registry.calls[api.taskId] = result;
       const keys = Object.keys(registry.calls);
@@ -293,7 +359,7 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
     }, context));
   };
 
-  const me = async (api, context) => whoIs(await api.snapshot(AgentsDoc, context), api.conversationId);
+  const me = async (api: ToolExecutionApi, context: Context) => whoIs(await api.snapshot(AgentsDoc, context), api.conversationId);
 
   const spawnAgent = defineTool({
     name: 'spawn_agent',
@@ -317,8 +383,9 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
         ? await initialContext({ name, role, parent: caller.name, task }, api, context) : undefined;
       const content = `${preamble ? `${preamble}\n\n` : ''}[from ${caller.name}] ${task}`;
       return once(api, context, async (tx, registry) => {
-        if (find(registry.agents, name)) return `An agent named ${find(registry.agents, name).name} already exists; use send_message.`;
-        const background = { ownership: { kind: 'conversation' }, background: true };
+        const existing = find(registry.agents, name);
+        if (existing) return `An agent named ${existing.name} already exists; use send_message.`;
+        const background: TaskOptions = { ownership: { kind: 'conversation' }, background: true };
         const anchor = await tx.createTask(Anchor, null, background);
         const child = await tx.createConversation({ ownership: { kind: 'task', taskId: anchor } });
         await deriveAgent(tx, child.id, role, childAgent);
@@ -339,20 +406,21 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
       const registry = await api.snapshot(AgentsDoc, context);
       const caller = whoIs(registry, api.conversationId);
       if (!caller) return reply('This conversation is not an agent.');
-      const others = [
+      const others: { name: string; role: string; conversationId: ConversationId }[] = [
         ...(caller.role === 'main' ? [{ name: PI, role: 'session agent', conversationId: ROOT_CONVERSATION_ID }] : []),
         ...Object.entries(registry?.agents ?? {}).filter(([name]) => name !== caller.name)
           .map(([name, agent]) => ({ name, ...agent, role: `${agent.role}, parent ${agent.parent}` })),
       ];
       if (!others.length) return reply('No other agents.');
       const last = await api.commit(async (tx) => {
-        const answers = {};
+        const answers: Record<string, string | undefined> = {};
         for (const agent of others) answers[agent.name] = await lastAnswer(tx, agent.conversationId);
         return answers;
       }, context);
       const lines = await Promise.all(others.map(async (agent) => {
         const state = await busyOf(api, agent.conversationId, context) ? 'busy' : 'idle';
-        const said = last[agent.name] === undefined ? 'no message yet' : `last: ${brief(last[agent.name])}`;
+        const answer = last[agent.name];
+        const said = answer === undefined ? 'no message yet' : `last: ${brief(answer)}`;
         return `- ${agent.name} (${agent.role}) ${state} — ${said}`;
       }));
       return reply(lines.join('\n'));
@@ -373,9 +441,9 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
       if (!caller) return reply('This conversation is not an agent.');
       return once(api, context, async (tx, registry) => {
         const found = target(registry, caller, to);
-        if (found.error) return found.error;
+        if ('error' in found) return found.error;
         if (found.name === caller.name) return 'You cannot message yourself.';
-        const entry = found.role === 'root'
+        const entry: MessageEntry | ReportEntry = found.role === 'root'
           ? { kind: REPORT_KIND, data: { name: caller.name, text: message } }
           : { kind: MESSAGE_KIND, data: { from: caller.name, text: message } };
         const content = found.role === 'root' ? `[${caller.name}] ${message}` : `[from ${caller.name}] ${message}`;
@@ -395,7 +463,7 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
       const caller = whoIs(registry, api.conversationId);
       if (!caller) return reply('This conversation is not an agent.');
       const found = target(registry, caller, name);
-      if (found.error) return reply(found.error);
+      if ('error' in found) return reply(found.error);
       const said = await api.commit((tx) => lastAnswer(tx, found.conversationId), context);
       const state = await busyOf(api, found.conversationId, context) ? 'busy' : 'idle';
       return reply(`${found.name} is ${state}. ${said === undefined ? 'No message yet.' : `Last message:\n${said}`}`);
@@ -436,7 +504,8 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
     },
   });
 
-  return defineExtension({
+  // Typed as AgentsExtension rather than through defineExtension (an identity), so `tools` stays required.
+  return {
     name: 'agents',
     tasks: [Anchor, Deliver],
     tools: [spawnAgent, listAgentsTool, sendMessage, lastMessage, stopAgent],
@@ -445,5 +514,5 @@ export function createAgentsExtension({ initialContext, onReport, childAgent } =
       const caller = whoIs(await input.read.snapshot(AgentsDoc, context), input.conversationId);
       return caller && ROLE_TEXT[caller.role](caller).join('\n');
     })],
-  });
+  };
 }
