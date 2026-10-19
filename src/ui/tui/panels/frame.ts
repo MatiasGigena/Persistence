@@ -1,9 +1,11 @@
 // The overlay panels' shared parts: a bordered, near-full-screen frame holding a stack of views
 // (a breadcrumb title, an optional header, the top view, a one-line key hint), a selectable list,
 // a scrollable text view, and a one-key confirmation box. Only pi-tui; colors come from the shell
-// through PanelTheme.
+// through PanelTheme, and NARROW from the theme. Below NARROW columns (a phone) the frame fills the
+// screen, hints are short, and lists show compact rows with the selection's detail above the hint.
 import { decodeKittyPrintable, getKeybindings, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, Keybinding, TUI } from '@earendil-works/pi-tui';
+import { NARROW } from '../theme.ts';
 
 /** The colors a panel uses; the shell passes its palette in. Each takes plain text and returns it styled. */
 export interface PanelTheme {
@@ -19,16 +21,20 @@ export interface PanelTheme {
 export interface PanelView {
   /** Its breadcrumb segment. */
   readonly title: string;
-  /** Its one-line key hint. */
-  readonly hint: string;
-  /** At most `height` lines, each at most `width` columns. */
-  render(width: number, height: number): string[];
+  /** Its one-line key hint; `narrow` asks for a short one. */
+  hint(narrow: boolean): string;
+  /** More about the selection, shown above the hint on a narrow screen, where rows are compact. */
+  detail?(): string | undefined;
+  /** At most `height` lines, each at most `width` columns; `narrow` asks for compact rows. */
+  render(width: number, height: number, narrow: boolean): string[];
   /** Handles a key; returns false to let the frame treat it (Esc goes back). */
   handleInput(data: string): boolean;
   dispose?(): void;
 }
 
 const ELLIPSIS = '…';
+/** Lines of a selection's detail shown on a narrow screen. */
+const DETAIL_LINES = 3;
 /** Whether `data` is `binding`, as the user configured it (Pi's selectors use the same bindings). */
 const is = (data: string, binding: Keybinding): boolean => getKeybindings().matches(data, binding);
 
@@ -95,29 +101,36 @@ export class PanelFrame implements Component {
     const view = this.top();
     if (!view || width < 8) return [];
     const { dim, bold } = this.theme;
-    const inner = width - 4, height = Math.max(6, this.tui.terminal.rows - 2);
+    const narrow = this.tui.terminal.columns < NARROW;
+    const inner = width - 4, height = Math.max(6, this.tui.terminal.rows - 2 * panelMargin(this.tui.terminal.columns));
     const crumbs = this.stack.map((v, i) => (i === this.stack.length - 1 ? bold(v.title) : dim(v.title))).join(dim(' › '));
     const rule = (left: string, label: string, right: string): string => {
       const text = truncateToWidth(label, width - 6, ELLIPSIS);
       return dim(`${left}─ `) + text + dim(` ${'─'.repeat(Math.max(0, width - 5 - visibleWidth(text)))}${right}`);
     };
     const header = this.header ? [this.header(), ''] : [];
-    const bodyHeight = height - 2 - header.length;
-    const body = [...header, ...view.render(inner, bodyHeight).slice(0, bodyHeight)];
-    while (body.length < height - 2) body.push('');
+    const detail = narrow ? view.detail?.() : undefined;
+    const footer = detail ? wrap(detail, inner).slice(0, DETAIL_LINES).map(dim) : [];
+    const bodyHeight = Math.max(1, height - 2 - header.length - footer.length);
+    const body = [...header, ...view.render(inner, bodyHeight, narrow).slice(0, bodyHeight)];
+    while (body.length < height - 2 - footer.length) body.push('');
     return [
       rule('╭', crumbs, '╮'),
-      ...body.map(line => `${dim('│')} ${fit(line, inner)} ${dim('│')}`),
-      rule('╰', dim(view.hint), '╯'),
+      ...[...body, ...footer].map(line => `${dim('│')} ${fit(line, inner)} ${dim('│')}`),
+      rule('╰', dim(view.hint(narrow)), '╯'),
     ];
   }
 }
+
+/** The panels' distance from the screen's edges: none on a narrow screen. */
+const panelMargin = (columns: number): number => (columns < NARROW ? 0 : 1);
 
 /** Shows `frame` as a near-full-screen overlay; resolves when it closes. Hiding the overlay hands focus back. */
 export function openPanel(tui: TUI, frame: PanelFrame): Promise<void> {
   return new Promise(resolve => {
     // pi-tui remembers the focused component (the editor) when the overlay opens, and hide() refocuses it.
-    const handle = tui.showOverlay(frame, { anchor: 'center', width: '100%', maxHeight: '100%', margin: { top: 1, bottom: 1, left: 2, right: 2 } });
+    const m = panelMargin(tui.terminal.columns);
+    const handle = tui.showOverlay(frame, { anchor: 'center', width: '100%', maxHeight: '100%', margin: { top: m, bottom: m, left: 2 * m, right: 2 * m } });
     frame.onClose = () => { handle.hide(); tui.requestRender(); resolve(); };
   });
 }
@@ -127,6 +140,8 @@ export interface Row {
   readonly key: string;
   readonly plain: string;
   readonly styled: string;
+  /** Shorter forms for a narrow screen (default: the same). */
+  readonly compact?: { readonly plain: string; readonly styled: string };
 }
 
 export interface ListOptions {
@@ -146,6 +161,8 @@ export interface ListOptions {
   readonly typeToFilter?: boolean;
   /** Whether this is the panel's first level, for the hint. */
   readonly root?: boolean;
+  /** What a narrow screen shows of the selected row besides its compact form. */
+  readonly detail?: (row: Row) => string | undefined;
   readonly dispose?: () => void;
 }
 
@@ -167,11 +184,17 @@ export class ListView implements PanelView {
     this.atEnd = options.followEnd ?? false;
   }
 
-  get hint(): string {
-    if (this.typing) return 'type to filter · enter keep · esc clear';
+  hint(narrow: boolean): string {
+    if (this.typing) return narrow ? 'enter keep · esc clear' : 'type to filter · enter keep · esc clear';
     const enter = `enter ${this.options.verb ?? 'open'}`, esc = `esc ${this.options.root ? 'close' : 'back'}`;
-    if (this.options.typeToFilter) return `type to filter · ↑↓ move · ${enter} · ${esc}`;
-    return `↑↓ move · ${enter}${this.options.filterable ? ' · / filter' : ''} · ${esc}`;
+    if (this.options.typeToFilter) return narrow ? `type to filter · ${esc}` : `type to filter · ↑↓ move · ${enter} · ${esc}`;
+    return `${narrow ? '' : '↑↓ move · '}${enter}${this.options.filterable ? ' · / filter' : ''} · ${esc}`;
+  }
+
+  detail(): string | undefined {
+    const { rows, index } = this.current();
+    const row = rows[index];
+    return row && this.options.detail?.(row);
   }
 
   dispose(): void { this.options.dispose?.(); }
@@ -228,7 +251,7 @@ export class ListView implements PanelView {
     return true;
   }
 
-  render(width: number, height: number): string[] {
+  render(width: number, height: number, narrow = false): string[] {
     const { theme } = this.options;
     const showFilter = this.typing || this.filter !== '';
     this.height = Math.max(1, height - (showFilter ? 1 : 0));
@@ -238,9 +261,10 @@ export class ListView implements PanelView {
     this.scroll = Math.max(0, Math.min(this.scroll, index, rows.length - this.height));
     if (index >= this.scroll + this.height) this.scroll = index - this.height + 1;
     for (const [i, row] of rows.slice(this.scroll, this.scroll + this.height).entries()) {
+      const shown = narrow ? row.compact ?? row : row;
       lines.push(this.scroll + i === index
-        ? theme.accent('→ ') + theme.selected(truncateToWidth(row.plain, width - 2, ELLIPSIS))
-        : `  ${truncateToWidth(row.styled, width - 2, ELLIPSIS)}`);
+        ? theme.accent('→ ') + theme.selected(truncateToWidth(shown.plain, width - 2, ELLIPSIS))
+        : `  ${truncateToWidth(shown.styled, width - 2, ELLIPSIS)}`);
     }
     if (showFilter) {
       while (lines.length < this.height) lines.push('');
@@ -263,7 +287,7 @@ export interface TextOptions {
 /** A read-only, scrollable block of lines. */
 export class TextView implements PanelView {
   readonly title: string;
-  readonly hint = '↑↓ scroll · pgup/pgdn page · esc back';
+  hint(narrow: boolean): string { return narrow ? '↑↓ pgup/pgdn · esc back' : '↑↓ scroll · pgup/pgdn page · esc back'; }
   private readonly options: TextOptions;
   private offset = 0;
   private max = 0;
@@ -339,11 +363,14 @@ class ConfirmBox implements Component {
   }
 }
 
+/** Widest confirmation box; narrower screens get one as wide as they are. */
+const CONFIRM_WIDTH = 60;
+
 /** Asks `question` in a centered box over the chat; resolves on the first key, true only for `y`. */
 export function confirm(tui: TUI, theme: PanelTheme, question: string): Promise<boolean> {
   return new Promise(resolve => {
     const box = new ConfirmBox(theme, question);
-    const handle = tui.showOverlay(box, { anchor: 'center', width: '60%', minWidth: 40 });
+    const handle = tui.showOverlay(box, { anchor: 'center', width: Math.min(CONFIRM_WIDTH, tui.terminal.columns) });
     box.onAnswer = yes => { box.onAnswer = () => undefined; handle.hide(); tui.requestRender(); resolve(yes); };
   });
 }

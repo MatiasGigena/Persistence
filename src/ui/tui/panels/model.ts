@@ -1,6 +1,7 @@
 // /model: the model picker, after Pi's own selector. The current model comes first, marked ✓; typing
 // filters. Models without credentials stay listed, dim, and answer Enter with their note instead.
 import type { TUI } from '@earendil-works/pi-tui';
+import { NARROW } from '../theme.ts';
 import type { ModelChoice, UiSession } from '../../types.ts';
 import { clean, ListView, openPanel, PanelFrame } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
@@ -18,6 +19,10 @@ export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelT
   const list = new ListView({
     title: 'Model', theme, root: true, typeToFilter: true, verb: 'select',
     rows: () => (models ? modelRows(models, session.status().model, theme) : []),
+    detail: row => {
+      const model = models?.find(m => modelRef(m) === row.key);
+      return model && `${clean(model.name)}${model.note ? ` · ${clean(model.note)}` : ''}`;
+    },
     empty: () => (models || failure ? 'No models.' : 'Loading models…'),
     onOpen: row => {
       const model = models?.find(m => modelRef(m) === row.key);
@@ -31,7 +36,8 @@ export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelT
   const frame = new PanelFrame(tui, theme, list, () => {
     if (failure) return theme.error(failure);
     if (hint) return theme.accent(hint);
-    return theme.dim(`Current: ${clean(session.status().model)} · a new model applies from the next message`);
+    const current = `Current: ${clean(session.status().model)}`;
+    return theme.dim(tui.terminal.columns < NARROW ? current : `${current} · a new model applies from the next message`);
   });
   session.models().then(
     all => { models = all; tui.requestRender(); },
@@ -41,7 +47,10 @@ export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelT
   return picked;
 }
 
-/** One row per model: the current one first, then available, then unavailable (dim); `provider/id`, name and note. */
+/**
+ * One row per model: the current one first, then available, then unavailable (dim); `provider/id`, name and note.
+ * Compact rows keep only the mark and `provider/id`.
+ */
 export function modelRows(models: readonly ModelChoice[], current: string, theme: PanelTheme): Row[] {
   const rank = (m: ModelChoice): number => (modelRef(m) === current ? 0 : m.available ? 1 : 2);
   const sorted = [...models].sort((a, b) => rank(a) - rank(b));
@@ -49,10 +58,12 @@ export function modelRows(models: readonly ModelChoice[], current: string, theme
   return sorted.map(m => {
     const mark = modelRef(m) === current ? '✓' : ' ', ref = clean(modelRef(m)).padEnd(width);
     const tail = `${clean(m.name)}${m.note ? ` · ${clean(m.note)}` : ''}`;
+    const short = `${mark} ${clean(modelRef(m))}`;
     return {
       key: modelRef(m),
       plain: `${mark} ${ref}  ${tail}`,
       styled: m.available ? `${theme.accent(mark)} ${ref}  ${theme.dim(tail)}` : theme.dim(`${mark} ${ref}  ${tail}`),
+      compact: { plain: short, styled: m.available ? `${theme.accent(mark)} ${clean(modelRef(m))}` : theme.dim(short) },
     };
   });
 }

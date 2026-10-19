@@ -3,6 +3,7 @@ import { Markdown, styleTextWithAnsi, truncateToWidth, wrapTextWithAnsi } from '
 import type { MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import type { AgentInfo } from '../../../agents/index.ts';
 import type { ChatFeed, ChatItem, UiSession } from '../../types.ts';
+import { toolSummary } from '../chat.ts';
 import { clean, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
 
@@ -35,7 +36,7 @@ export function openAgentsPanel(tui: TUI, session: UiSession, theme: PanelTheme)
   return openPanel(tui, frame);
 }
 
-/** One row per agent: a dot (filled while busy), the name, role, parent and state, in columns. */
+/** One row per agent: a dot (filled while busy), the name, role, parent and state, in columns; compact rows drop the parent. */
 export function agentRows(agents: readonly AgentInfo[], theme: PanelTheme): Row[] {
   const width = (f: (a: AgentInfo) => string): number => Math.max(0, ...agents.map(a => f(a).length));
   const nameW = width(a => a.name), parentW = width(a => a.parent);
@@ -47,6 +48,7 @@ export function agentRows(agents: readonly AgentInfo[], theme: PanelTheme): Row[
       key: a.name,
       plain: `${dot} ${name}  ${role}  ${parent}  ${state}`,
       styled: `${tint(dot)} ${name}  ${theme.dim(role)}  ${theme.dim(parent)}  ${tint(state)}`,
+      compact: { plain: `${dot} ${name}  ${role}  ${state}`, styled: `${tint(dot)} ${name}  ${theme.dim(role)}  ${tint(state)}` },
     };
   });
 }
@@ -83,7 +85,7 @@ export class ChatRenderer {
       case 'thinking': return wrap(item.text, width).map(l => dim(italic(l)));
       case 'tool': {
         const mark = item.status === 'running' ? dim('…') : item.status === 'error' ? error('✗') : dim('✓');
-        return [`${mark} ${truncateToWidth(`${accent(clean(item.name))} ${dim(clean(item.args))}`, width - 2, '…')}`];
+        return [`${mark} ${truncateToWidth(`${accent(clean(item.name))} ${dim(toolSummary(item.name, item.args))}`, width - 2, '…')}`];
       }
       case 'report': return wrapTextWithAnsi(`${accent(`[${clean(item.from)}]`)} ${clean(item.text)}`, width);
       case 'notice': {
