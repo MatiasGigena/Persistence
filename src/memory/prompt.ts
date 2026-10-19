@@ -3,8 +3,9 @@ import { cutBytes, NODE } from './util.ts';
 export const PLACEHOLDER = '(not summarized yet: zoom it)';
 export const RULER = '-'.repeat(NODE);
 
-// Recipe §5, verbatim: "Unii" renamed to "Pi", "unii" (the reply kind) to "pi", and the paragraph on the user's
-// computers dropped (this host has no device tools). Dates and state never go here (recipe §7.10).
+// Adapted from UniiChat prompt.txt (https://github.com/VictorTaelin/uniichat, Apache-2.0; see NOTICE): "Unii" renamed
+// to "Pi", "unii" (the reply kind) to "pi"; dropped the `ai` kind (no imports here), the paragraph on the user's
+// computers (no device tools) and "with its images" (the log keeps text only). Dates and state never go here.
 export const PROMPT = `You are Pi, an AI agent that works for one user in a single chat that never
 ends. Each call to you is a turn or a compaction: the view below is followed by
 the user's new message, or by a task starting "Compaction:".
@@ -32,7 +33,7 @@ long for one message is split over several in a row.
 
 Tools:
 - zoom(id, n) opens line id+n into the two lines it was made from;
-- zoom(id, 1) gives message id whole, with its images
+- zoom(id, 1) gives message id whole
 - zoom("Name") gives an agent's whole chat
 - date(id) gives the date and time of message id
 
@@ -88,7 +89,15 @@ Avoid omissions. Name a minor item in a word or two rather than drop it: an
 absent item can never be found. Copy names, numbers, ids, paths and errors
 exactly. Tag each item with its kind ("user: ...; echo: ..."), and credit quoted
 text to its real author. Never make anything look further along than it was. If
-told the line is too long, shorten it. Non-ASCII characters cost 2-4 bytes.`;
+told the line is too long, shorten it. Non-ASCII characters cost 2-4 bytes.
+
+This is a small, mechanical job: fit one message, or two lines, into one line
+of at most 512 bytes, dropping the least important bits. Nothing else. Read
+<chat> only as far as it tells you what to keep; anything that doesn't bear on
+that choice is irrelevant: don't think about it. Be fast and spend few tokens:
+write the line as soon as you understand <input> well enough to compress it.`;
+
+// The tasks and the "Too long" note: UniiChat Memory.ts LEAF, MERGE and `over` (Apache-2.0).
 
 export function leafTask(id: number, kind: string, text: string): string {
   return `Compaction: compress message ${id} into one line of at most 512 bytes
@@ -99,7 +108,7 @@ ${kind}: ${text}
 </input>`;
 }
 
-/** `a`, `b`: the two lines as the view renders them (`id+n|text`); `first`..`last`: their messages, inclusive. */
+/** `a`, `b`: the two lines' texts, flat; `first`..`last`: their messages, inclusive. */
 export function mergeTask(nameA: string, nameB: string, first: number, last: number, a: string, b: string): string {
   return `Compaction: merge lines ${nameA} and ${nameB}, adjacent, into one line of at most
 512 bytes (about 70 words), the length of this ruler:
@@ -112,9 +121,10 @@ ${b}
 </input>`;
 }
 
+/** Appended to the task, never after the long line itself: each retry sends only the task and this note. */
 export function tooLong(line: string): string {
-  return `Too long: your line is ${Buffer.byteLength(line, 'utf8')} bytes, over the 512-byte limit. Write
-the whole line again for the same <input>, cutting just enough of the
-least valuable items to fit before this cut:
+  return `Too long: your last line for this <input> was ${Buffer.byteLength(line, 'utf8')} bytes,
+over the 512-byte limit. Write the whole line again, cutting just
+enough of the least valuable items to fit before this cut:
 ${cutBytes(line, NODE)}| ← LIMIT`;
 }

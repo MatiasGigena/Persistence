@@ -8,7 +8,18 @@ export type CompactionMessage = { role: 'user' | 'assistant'; content: string };
 /** The node being built: level, index, and its `id+n` name. */
 export type CompactionNode = { l: number; i: number; name: string };
 export type SummarizeOptions = { signal?: AbortSignal; tools?: readonly Tool[]; node: CompactionNode };
-/** The compaction model: one line for the messages, as text (the caller cleans and cuts it). */
+/**
+ * The model answered, but with no line, and asking again would fail alike (a refusal, a safety stop): the node is its
+ * source clipped (UniiChat Memory.ts `build`). Any other error is an outage, and the node is tried again.
+ */
+export class CompactionRefused extends Error {
+  override name = 'CompactionRefused';
+}
+
+/**
+ * The compaction model: one line for the messages, as text (the caller cleans and cuts it). '' or a CompactionRefused
+ * means the model answered without a line; any other throw, that it could not answer.
+ */
 export type Summarizer = (systemPrompt: string, messages: readonly CompactionMessage[], options: SummarizeOptions) => Promise<string>;
 /** What the default summarizer needs of a pi-ai Models (a pi-coding-agent ModelRuntime is one). */
 export type SummarizerModels = Pick<Models, 'getModel' | 'completeSimple'>;
@@ -26,6 +37,9 @@ export type PiAiSummarizerOptions = {
 // (cache read $0.01), against $2/$10 for the host's default gpt-6.1-sol, with the same 272k window and reasoning.
 // Claude Haiku 5.5 is the same price on the API; through claude-cli it spends the least of the plan's limits.
 export const CHEAP_MODELS: Readonly<Record<string, string>> = { 'openai-codex': 'gpt-6-luna', openai: 'gpt-6-luna', 'claude-cli': 'haiku', anthropic: 'claude-haiku-5-5' };
+
+// Anthropic stop reasons pi-ai reports as errors although the model answered (its input's doing).
+const REFUSALS: ReadonlySet<string> = new Set(['refusal', 'sensitive']);
 
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -66,7 +80,8 @@ export function createPiAiSummarizer({
       sessionId,
     });
     if (reply.stopReason === 'error' || reply.stopReason === 'aborted') {
-      throw new Error(reply.errorMessage ?? `compaction ended with ${reply.stopReason}`);
+      const message = reply.errorMessage ?? `compaction ended with ${reply.stopReason}`;
+      throw reply.stopReason === 'error' && REFUSALS.has(reply.rawStopReason ?? '') ? new CompactionRefused(message) : new Error(message);
     }
     return reply.content.filter(block => block.type === 'text').map(block => block.text).join('');
   };

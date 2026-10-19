@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
@@ -7,11 +7,11 @@ import type { TestContext } from 'node:test';
 import { Type } from '@earendil-works/pi-ai';
 import type { SimpleStreamOptions, Tool, TranscriptContext } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
-import { createPiAiSummarizer, defaultCompactionModel, openMemory, PROMPT } from '../../src/memory/index.ts';
+import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel, openMemory, PROMPT } from '../../src/memory/index.ts';
 import type { AppendInput, CompactionMessage, Memory, SummarizeOptions, Summarizer } from '../../src/memory/index.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 import { RULER } from '../../src/memory/prompt.ts';
-import { bytes, cutLine, isObject, NODE } from '../../src/memory/util.ts';
+import { bytes, CAP, cutLine, flat, hash, isObject, NODE } from '../../src/memory/util.ts';
 
 const fake: Summarizer = async (_system, messages, { node }) => `summary of ${node.name} (${messages[0]?.content.length} chars in)`;
 
@@ -52,22 +52,55 @@ describe('unii memory', { concurrency: false }, () => {
     assert.throws(() => m.append({ kind: 'user', text: 'late' }), /closed/);
   });
 
-  test('tool output is clipped head+tail to 30,000 chars; other long text is split over consecutive messages', async (t) => {
-    const m = openMemory(temp(t), { summarize: fake, ...quiet });
+  test('tool output is clipped head+tail to 30,000 chars in all; other long text is split over consecutive messages, in one write', async (t) => {
+    const dir = temp(t);
+    const m = openMemory(dir, { summarize: fake, ...quiet });
     const echo = `${'h'.repeat(20_000)}MIDDLE${'t'.repeat(20_000)}`;
     const [clipped] = m.append({ kind: 'echo', text: echo });
     assert.ok(clipped);
-    assert.ok(clipped.text.startsWith('h'.repeat(15_000)) && clipped.text.endsWith('t'.repeat(15_000)));
+    assert.ok(clipped.text.startsWith('h'.repeat(14_936)) && clipped.text.endsWith('t'.repeat(14_936)));
     assert.ok(!clipped.text.includes('MIDDLE'));
-    assert.match(clipped.text, /\[… 10006 characters clipped …\]/);
+    assert.match(clipped.text, /\[… 10134 characters clipped …\]/);
+    assert.ok(clipped.text.length <= CAP, 'the marker fits in the limit');
     const long = Array.from({ length: 1000 }, (_, n) => `line ${n} ${'x'.repeat(60)}`).join('\n');
     const parts = m.append({ kind: 'user', text: long, src: 'long' });
     assert.ok(parts.length === 3 && parts.every(p => p.text.length <= 30_000));
     assert.equal(parts.map(p => p.text).join(''), long);
     assert.deepEqual(parts.map(p => p.i), [1, 2, 3]);
     assert.deepEqual(parts.map(p => p.src), ['long', 'long#1', 'long#2']);
-    assert.match(m.zoom(1, 1), /^1\+1 \(page 1 of 2; zoom\(1, 1, page\) for the others\)\|user: line 0/);
-    assert.match(m.zoom(1, 1, 2), /^1\+1 \(page 2 of 2/);
+    assert.equal(readFileSync(join(dir, 'main', readdirSync(join(dir, 'main'))[0] ?? ''), 'utf8').trim().split('\n').length, 4);
+    assert.match(m.zoom(1, 1), /^1\+1\|user: line 0 x+\n/, 'a logged text is one page');
+    assert.throws(() => m.zoom(1, 1, 2), /has 1 page/);
+    const [odd] = m.append({ kind: 'user', text: 'bad \ud800 surrogate' });
+    assert.equal(odd?.text, 'bad \ufffd surrogate', 'text is made well-formed');
+    await m.close();
+  });
+
+  test('an older record over 30,000 characters (an echo with its clip marker) comes in pages', async (t) => {
+    const dir = temp(t);
+    const text = `${'h'.repeat(15_000)}\n[… 5 characters clipped …]\n${'t'.repeat(15_000)}`;
+    mkdirSync(join(dir, 'main'), { recursive: true });
+    writeFileSync(join(dir, 'main', '2026-01-01.jsonl'), `${JSON.stringify({ i: 0, kind: 'echo', text, size: bytes(`echo: ${text}`), date: '2026-01-01T00:00:00.000Z' })}\n`);
+    const m = openMemory(dir, { summarize: fake, ...quiet });
+    assert.match(m.zoom(0, 1), /^0\+1 \(page 1 of 2; zoom\(0, 1, page\) for the others\)\|echo: h+\n\[… 5 characters clipped …\]\n$/);
+    assert.match(m.zoom(0, 1, 2), /^0\+1 \(page 2 of 2; zoom\(0, 1, page\) for the others\)\|echo: t+$/);
+    await m.close();
+  });
+
+  test('whole: a huge paste goes whole only in its last 128 KB, its first parts go to the view', async (t) => {
+    const m = openMemory(temp(t), { summarize: fake, view: { hi: 70_000, lo: 35_000 }, ...quiet });
+    m.append({ kind: 'user', text: 'before' });
+    const paste = Array.from({ length: 2000 }, (_, n) => `row ${n} ${'p'.repeat(60)}`).join('\n');
+    const parts = m.append({ kind: 'user', text: paste, src: 'e:9' });
+    assert.equal(parts.length, 5);
+    const k = m.whole(1);
+    assert.equal(k, 4, 'the last two parts fit in 70,000 bytes, three do not');
+    assert.ok(m.log.slice(k).reduce((n, r) => n + r.size, 0) <= 70_000);
+    assert.equal(m.say(1), paste, 'parts rejoined');
+    assert.equal(m.say(0, 2).startsWith('before\n\nrow 0'), true, 'messages a blank line apart');
+    m.append({ kind: 'user', text: 'x'.repeat(80_000) });
+    assert.equal(m.whole(m.T - 1), m.T - 1, 'the last message always goes whole');
+    assert.equal(m.whole(1, Infinity), 1);
     await m.close();
   });
 
@@ -83,9 +116,10 @@ describe('unii memory', { concurrency: false }, () => {
     const [w] = m.report({ name: 'Bob', text: 'tests pass', id: 'r1' });
     assert.ok(w);
     assert.equal(w.kind, 'work');
-    assert.equal(w.text, '[Bob] tests pass');
+    assert.equal(w.text, '[Bob]\ntests pass\n\nFull chat: zoom("Bob")', 'as Pi sees the report');
+    assert.equal(w.src, 'report:r1', 'the src key is unchanged, so replays still dedupe');
     assert.deepEqual(m.report({ name: 'Bob', text: 'tests pass', id: 'r1' }), []);
-    assert.equal(m.report({ name: 'Bob', text: '[Bob] again' })[0]?.text, '[Bob] again');
+    assert.equal(m.report({ name: 'Bob', text: 'again' })[0]?.src, `report:${hash('Bob\nagain')}`);
     await m.close();
   });
 
@@ -163,7 +197,7 @@ describe('unii memory', { concurrency: false }, () => {
     assert.match(m.zoom(5, 1), /^5\+1\|user: msg 5 y/);
     assert.throws(() => m.zoom(3, 2), /multiple/);
     assert.throws(() => m.zoom(0, 3), /power of 2/);
-    assert.throws(() => m.zoom(0, 16), /at most 8/);
+    assert.throws(() => m.zoom(0, 16), /at most 8\. The tree's roots: 0\+8\.$/);
     assert.match(m.date(2), /^2026-01-03 12:00:00 [+-]\d\d:\d\d \(Saturday\)$/);
     assert.throws(() => m.date(9), /No message 9/);
     await m.close();
@@ -195,7 +229,7 @@ describe('unii memory', { concurrency: false }, () => {
     await m.close();
   });
 
-  test('size: a too-long reply gets one "Too long" retry in the same conversation, then the cut', async (t) => {
+  test('size: a too-long reply gets one "Too long" retry, a fresh call of the task and a note, then the cut', async (t) => {
     const seen: CompactionMessage[][] = [];
     const items = (n: number): string => Array.from({ length: n }, (_, k) => `user: item ${k} decided`).join('; ');
     const summarize: Summarizer = async (_system, messages) => { seen.push(messages.map(x => ({ ...x }))); return seen.length === 1 ? items(40) : items(30); };
@@ -203,9 +237,9 @@ describe('unii memory', { concurrency: false }, () => {
     m.append({ kind: 'echo', text: 'q'.repeat(900) });
     await until(() => m.tree.has('0/0'));
     assert.equal(seen.length, 2);
-    assert.deepEqual(seen[1]?.map(x => x.role), ['user', 'assistant', 'user']);
-    const retry = seen[1]?.[2]?.content ?? '';
-    assert.match(retry, /^Too long: your line is \d+ bytes, over the 512-byte limit\./);
+    assert.deepEqual(seen[1]?.map(x => x.role), ['user'], 'never the long line itself');
+    const first = seen[0]?.[0]?.content ?? '', retry = seen[1]?.[0]?.content ?? '';
+    assert.ok(retry.startsWith(`${first}\n\nToo long: your last line for this <input> was ${bytes(items(40))} bytes,\nover the 512-byte limit.`));
     assert.match(retry, /\| ← LIMIT$/);
     const line = m.tree.get('0/0')?.text ?? '';
     assert.ok(bytes(line) <= NODE);
@@ -219,6 +253,64 @@ describe('unii memory', { concurrency: false }, () => {
     assert.equal(one, 1);
     assert.ok(bytes(m2.tree.get('0/0')?.text ?? '') <= NODE);
     await m2.close();
+  });
+
+  test('a refusal or an empty answer makes the node its source, clipped; an outage is retried', async (t) => {
+    const warnings: string[] = [];
+    let calls = 0;
+    const answers: (() => string)[] = [
+      () => { throw new CompactionRefused('The model refused to complete the request'); },
+      () => '',
+      () => { throw new Error('overloaded'); },
+    ];
+    const summarize: Summarizer = async (...args) => { const next = answers[calls++]; return next ? next() : fake(...args); };
+    const m = openMemory(temp(t), { summarize, jobs: 1, retryMs: 10, warn: w => warnings.push(w) });
+    const text = `first line\n    indented ${'r'.repeat(700)}`;
+    m.append({ kind: 'echo', text });
+    m.append({ kind: 'echo', text: 'e'.repeat(700) });
+    m.append({ kind: 'echo', text: 'o'.repeat(700) });
+    await until(() => m.tree.has('0/0') && m.tree.has('0/1') && m.tree.has('0/2'));
+    assert.equal(m.tree.get('0/0')?.text, flat(`echo: ${text}`).slice(0, NODE));
+    assert.equal(m.tree.get('0/0')?.text, `echo: first line indented ${'r'.repeat(NODE - 26)}`);
+    assert.equal(m.tree.get('0/1')?.text, `echo: ${'e'.repeat(NODE - 6)}`);
+    assert.match(m.tree.get('0/2')?.text ?? '', /^summary of 2\+1/, 'an outage is not clipped');
+    assert.ok(warnings.some(w => /0\+1: The model refused.*clipped/.test(w)));
+    assert.ok(warnings.some(w => /1\+1: an empty line.*clipped/.test(w)));
+    await m.close();
+  });
+
+  test('view.json naming a node the tree lost opens it into its halves, without refolding', async (t) => {
+    const dir = temp(t);
+    const m = openMemory(dir, { summarize: fake, view: { hi: 600, lo: 300 }, ...quiet });
+    for (let i = 0; i < 40; i++) m.append({ kind: 'user', text: `message number ${i}` });
+    await until(() => owed(m) === 0);
+    m.refit();
+    const lost = m.view.parts.find(p => p.l >= 2);
+    assert.ok(lost);
+    const lostKey = `${lost.l}/${lost.i}`;
+    await m.close();
+    const treeDir = join(dir, 'tree');
+    for (const file of readdirSync(treeDir)) {
+      const kept = readFileSync(join(treeDir, file), 'utf8').split('\n').filter(line => {
+        if (!line) return false;
+        const n: unknown = JSON.parse(line);
+        return !(isObject(n) && `${String(n.l)}/${String(n.i)}` === lostKey);
+      });
+      writeFileSync(join(treeDir, file), kept.map(line => `${line}\n`).join(''));
+    }
+    const warnings: string[] = [];
+    const again = openMemory(dir, { summarize: async () => new Promise<string>(() => {}), view: { hi: 600, lo: 300 }, warn: w => warnings.push(w) });
+    const keys = again.view.parts.map(p => `${p.l}/${p.i}`);
+    assert.ok(!keys.includes(lostKey));
+    assert.ok(keys.includes(`${lost.l - 1}/${2 * lost.i}`) && keys.includes(`${lost.l - 1}/${2 * lost.i + 1}`));
+    assert.ok(again.view.tiles(40));
+    assert.deepEqual(warnings, []);
+    await again.close(0);
+  });
+
+  test('flat turns each newline and the whitespace around it into one space', () => {
+    assert.equal(flat('a\n    b \r\n\n c'), 'a b c');
+    assert.equal(flat('no newline  here'), 'no newline  here');
   });
 
   test('cutLine strips echoed heads and fences and cuts safely', () => {
@@ -254,12 +346,12 @@ describe('unii memory', { concurrency: false }, () => {
     assert.ok(merge);
     assert.ok(merge.text.includes('Compaction: merge lines 0+1 and 1+1, adjacent, into one line of at most\n512 bytes'));
     assert.ok(merge.text.includes('<chat> may hold their messages, 0 to 1, in more detail'));
-    assert.ok(merge.text.includes(`<input>\n0+1|user: first short\n1+1|S1+1 ${'s'.repeat(490)}\n</input>`));
+    assert.ok(merge.text.includes(`<input>\nuser: first short\nS1+1 ${'s'.repeat(490)}\n</input>`), 'the halves\' texts, without heads');
     assert.ok(merge.text.startsWith(`<chat>\n0+1|user: first short\n1+1|S1+1 ${'s'.repeat(490)}\n</chat>`), 'a merge sees the lines up to its last message');
     await m.close();
   });
 
-  test('order: at most 8 calls; a leaf starts once fewer than 8 leaves before it are unbuilt; a merge once both halves are built', async (t) => {
+  test('order: at most 8 calls, in message order; a leaf starts once fewer than 8 leaves before it are unbuilt; a merge once both halves are built', async (t) => {
     const pending = new Map<string, () => void>(), started: string[] = [], early: string[] = [];
     let m: Memory | undefined, inFlight = 0, most = 0;
     const summarize: Summarizer = (_s, _m, { node }) => new Promise(r => {
@@ -280,7 +372,10 @@ describe('unii memory', { concurrency: false }, () => {
     assert.equal(started.length, 9, 'leaf 9 has 8 unbuilt leaves before it: it waits');
     pending.get('0+1')?.();
     await until(() => started.length === 10);
-    assert.equal(started[9], '9+1');
+    assert.equal(started[9], '0+2', 'in message order: the merge ending at 2 before leaf 9');
+    pending.get('2+1')?.();
+    await until(() => started.length === 11);
+    assert.equal(started[10], '9+1');
     while (owed(m) > 0) {
       for (const release of [...pending.values()]) release();
       await new Promise(r => setTimeout(r, 2));
@@ -296,6 +391,7 @@ describe('unii memory', { concurrency: false }, () => {
     const { models, model } = offlineModels([
       (ctx, options) => { seen = { ctx, options }; return fauxAssistantMessage('a line'); },
       fauxAssistantMessage('', { stopReason: 'error', errorMessage: 'rate limited' }),
+      () => ({ ...fauxAssistantMessage('', { stopReason: 'error', errorMessage: 'refused' }), rawStopReason: 'refusal' }),
     ]);
     const summarize = createPiAiSummarizer({ models, model, maxTokens: 300 });
     const tools: Tool[] = [{ name: 'zoom', description: 'z', parameters: Type.Object({}) }];
@@ -305,7 +401,8 @@ describe('unii memory', { concurrency: false }, () => {
     assert.equal(seen.options?.maxTokens, 300);
     assert.deepEqual(seen.ctx.messages.map(m => m.role), ['system', 'user', 'assistant', 'user']);
     assert.equal(seen.ctx.messages[0]?.content, 'SYSTEM');
-    await assert.rejects(summarize('SYSTEM', [{ role: 'user', content: 'task' }]), /rate limited/);
+    await assert.rejects(summarize('SYSTEM', [{ role: 'user', content: 'task' }]), (error: unknown) => error instanceof Error && !(error instanceof CompactionRefused) && /rate limited/.test(error.message));
+    await assert.rejects(summarize('SYSTEM', [{ role: 'user', content: 'task' }]), CompactionRefused);
     const catalog = { getModel: (_provider: string, id: string) => (id === 'gpt-6-luna' ? { id } : undefined) };
     assert.deepEqual(defaultCompactionModel({ provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, catalog), { provider: 'openai-codex', modelId: 'gpt-6-luna' });
     assert.deepEqual(defaultCompactionModel({ provider: 'anthropic', modelId: 'x' }, catalog), { provider: 'anthropic', modelId: 'x' });

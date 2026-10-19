@@ -1,0 +1,15 @@
+Persistence
+
+This project includes portions adapted from UniiChat
+(https://github.com/VictorTaelin/uniichat), Copyright 2026 Higher Order
+Company, licensed under the Apache License, Version 2.0. A copy of that
+license is in docs/licenses/uniichat-LICENSE.txt.
+
+Adapted portions, each modified for this project:
+
+- src/memory/prompt.ts: the system prompt (from prompt.txt), the leaf and
+  merge compaction tasks and the "Too long" note (from Memory.ts).
+- src/memory/view.ts, src/memory/memory.ts, src/memory/util.ts: short
+  passages following Memory.ts and Clip.ts (whole-batch view fitting, the
+  order of compaction work, clipped nodes for refused compactions, `flat`,
+  the clip marker budget). Each is marked with a comment.

@@ -33,32 +33,38 @@ export class View {
 
   /**
    * Sawtooth batch: past `hi`, merge the most due pairs until at most `lo`. due = (T - last) / 2^l, oldest on ties.
-   * The batch waits for the most due pair's parent rather than merge a less due pair in its place (pi-endless
-   * deviation #9); past twice `hi` it falls back to the most due pair whose parent is built. Returns whether it merged.
+   * The batch waits for the most due pair's parent rather than merge a less due pair in its place; past twice `hi` it
+   * falls back to the most due pair whose parent is built. At a message (`atMessage`) the view keeps what merged;
+   * between messages (a node built) only a whole batch, down to `lo` or by at least `hi`, so the view changes once per
+   * batch and otherwise only at messages (adapted from UniiChat Memory.ts `fit`, Apache-2.0). Returns whether it merged.
    */
-  fit(T: number): boolean {
-    let size = this.bytes;
-    if (!this.shrinking && size > this.hi) this.shrinking = true;
-    let merged = false;
-    while (this.shrinking && size > this.lo) {
-      let j = this.mostDue(T, false);
-      const first = this.parts[j];
-      if (first && !this.built(parentOf(first))) j = size > 2 * this.hi ? this.mostDue(T, true) : -1;
-      const a = this.parts[j], b = this.parts[j + 1];
+  fit(T: number, atMessage = true): boolean {
+    const before = this.bytes;
+    if (!this.shrinking && before > this.hi) this.shrinking = true;
+    if (!this.shrinking) return false;
+    const parts = [...this.parts];
+    let size = before;
+    while (size > this.lo) {
+      let j = this.mostDue(parts, T, false);
+      const first = parts[j];
+      if (first && !this.built(parentOf(first))) j = size > 2 * this.hi ? this.mostDue(parts, T, true) : -1;
+      const a = parts[j], b = parts[j + 1];
       if (!a || !b) break;
       const parent = parentOf(a);
       size += this.sizeOf(parent) - this.sizeOf(a) - this.sizeOf(b);
-      this.parts.splice(j, 2, parent);
-      merged = true;
+      parts.splice(j, 2, parent);
     }
-    if (size <= this.lo) this.shrinking = false;
+    const whole = size <= this.lo, merged = parts.length < this.parts.length;
+    if (merged && !atMessage && !whole && size > before - this.hi) return false;
+    if (merged) this.parts = parts;
+    if (whole) this.shrinking = false;
     return merged;
   }
 
-  mostDue(T: number, onlyBuilt: boolean): number {
+  mostDue(parts: readonly Pos[], T: number, onlyBuilt: boolean): number {
     let best = -1, bestDue = -Infinity;
-    for (let j = 0; j + 1 < this.parts.length; j++) {
-      const a = this.parts[j], b = this.parts[j + 1];
+    for (let j = 0; j + 1 < parts.length; j++) {
+      const a = parts[j], b = parts[j + 1];
       if (!a || !b || a.l !== b.l || a.i % 2 !== 0 || b.i !== a.i + 1) continue;
       if (onlyBuilt && !this.built(parentOf(a))) continue;
       const due = (T - (end(b) - 1)) / 2 ** a.l; // exact: division by a power of two

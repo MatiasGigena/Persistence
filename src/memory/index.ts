@@ -10,7 +10,7 @@ export type {
 } from './memory.ts';
 export { createUniiExtension, REPORT_KIND } from './extension.ts';
 export type { ContextEntries, RequestApi, UniiExtension, UniiExtensionOptions } from './extension.ts';
-export { createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
+export { CompactionRefused, createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
 export type {
   CompactionMessage, CompactionNode, PiAiSummarizerOptions, Reasoning, SummarizeOptions, Summarizer, SummarizerModels,
 } from './summarizer.ts';

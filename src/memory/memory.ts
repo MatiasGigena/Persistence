@@ -3,11 +3,11 @@ import { join, resolve } from 'node:path';
 import type { Tool } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
 import { leafTask, mergeTask, PLACEHOLDER, PROMPT, tooLong } from './prompt.ts';
-import { createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
+import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
 import type { CompactionMessage, Reasoning, Summarizer, SummarizerModels } from './summarizer.ts';
 import {
-  appendJson, atomicWrite, bytes, CAP, cleanLine, clip, cutLine, errorMessage, flat, formatDate, hash, isObject, localDay,
-  NODE, split,
+  appendJson, atomicWrite, bytes, CAP, cleanLine, clip, cutBytes, cutLine, errorMessage, flat, formatDate, hash, isObject,
+  localDay, NODE, split,
 } from './util.ts';
 import { cut, end, key, name, parentOf, start, View } from './view.ts';
 import type { Pos } from './view.ts';
@@ -53,17 +53,20 @@ export const VIEW: Budget = { hi: 128_000, lo: 64_000 };
 export const COMPACTION_VIEW: Budget = { hi: 32_000, lo: 16_000 };
 export const JOBS = 8;      // compactions in flight at once
 export const LEAD = 8;      // a leaf starts once fewer than this many leaves before it are unbuilt
-export const PAGE = 16_000; // characters per zoom(id, 1) page
+export const PAGE = CAP;    // characters per zoom(id, 1) page: a logged text is one page
 
 const opened = new Set<string>();
 const PLACEHOLDER_LINE = (p: Pos): string => `${name(p)}|${PLACEHOLDER}`;
-const mergeOrder = (a: Pos, b: Pos): boolean => start(a) < start(b) || (start(a) === start(b) && a.l < b.l);
+// Work goes in the order the messages came: a node by the end of its context (a leaf's message, a merge's end), a merge
+// before a leaf at a tie (UniiChat Memory.ts `starts`).
+const mergeOrder = (a: Pos, b: Pos): boolean => end(a) < end(b) || (end(a) === end(b) && a.l > b.l);
 
 class Heap<T> {
   before: (a: T, b: T) => boolean;
   items: T[] = [];
   constructor(before: (a: T, b: T) => boolean) { this.before = before; }
   get size(): number { return this.items.length; }
+  peek(): T | undefined { return this.items[0]; }
   push(x: T): void {
     const a = this.items;
     let i = a.push(x) - 1;
@@ -215,10 +218,10 @@ export class Memory {
       if (!isObject(saved)) throw new Error('not an object');
       const lists = [saved.view, saved.cview], shrinking = saved.shrinking;
       [this.view, this.cview].forEach((v, n) => {
-        v.parts = pairs(lists[n]);
+        v.parts = pairs(lists[n]).flatMap(p => this.down(p));
         v.shrinking = Array.isArray(shrinking) && Boolean(shrinking[n]);
         const last = v.parts.at(-1), at = last ? end(last) : 0;
-        if (!v.tiles(at) || at > T || v.parts.some(p => p.l > 0 && !this.tree.has(key(p)))) throw new Error('does not tile the log');
+        if (!v.tiles(at) || at > T) throw new Error('does not tile the log');
       });
       // The log may be ahead of view.json after a crash: add the missing lines as they would have come.
       for (let i = end(this.view.parts.at(-1) ?? { l: 0, i: -1 }); i < T; i++) this.grow(i);
@@ -229,6 +232,12 @@ export class Memory {
     }
   }
 
+  /** A saved line whose node is missing (a tree line lost in a crash) opens into its halves, down to built nodes. */
+  down(p: Pos): Pos[] {
+    if (p.l <= 0 || this.tree.has(key(p))) return [p];
+    return [{ l: p.l - 1, i: 2 * p.i }, { l: p.l - 1, i: 2 * p.i + 1 }].flatMap(c => this.down(c));
+  }
+
   save(): void {
     atomicWrite(join(this.dir, 'view.json'), JSON.stringify({
       view: this.view.parts.map(p => [p.l, p.i]),
@@ -237,19 +246,17 @@ export class Memory {
     }));
   }
 
-  /** Message i joins both views; a chat-view batch resets the compaction view from it (recipe §4). */
+  /** Message i joins both views. */
   grow(i: number): void {
     this.view.append(i);
     this.cview.append(i);
-    this.refit(i + 1);
+    this.refit(i + 1, true);
   }
 
-  refit(T = this.log.length): void {
-    if (this.view.fit(T)) {
-      this.cview.parts = this.view.parts.map(p => ({ ...p }));
-      this.cview.shrinking = this.cview.bytes > this.cview.lo;
-    }
-    this.cview.fit(T);
+  /** Both views run their own sawtooth (UniiChat Memory.ts `fit`); between messages only whole batches land. */
+  refit(T = this.log.length, atMessage = false): void {
+    this.view.fit(T, atMessage);
+    this.cview.fit(T, atMessage);
   }
 
   // ---------------------------------------------------------------- the log
@@ -258,8 +265,9 @@ export class Memory {
    * Append one message to the log (recipe §1). Only appends; each line is fsynced before this returns.
    *
    * - `kind`: 'user' | 'pi' | 'tool' | 'echo' | 'work' | 'note'. A `work` text must start with "[Name]".
-   * - `text`: the message. Tool output (`echo`) is clipped to its head and tail, 30,000 characters in all; any other
-   *   text longer than that is logged as several messages in a row. Empty text logs nothing.
+   * - `text`: the message, made well-formed (no lone surrogates). Tool output (`echo`) is clipped to its head and tail,
+   *   30,000 characters in all; any other text longer than that is logged as several messages in a row, in one write.
+   *   Empty text logs nothing.
    * - `date`: when it happened (Date, ms or ISO string; default now).
    * - `src`: optional idempotency key. A second append with a logged `src` logs nothing, also after a restart.
    *
@@ -273,15 +281,18 @@ export class Memory {
     if ((src !== undefined && this.bySrc.has(src)) || !text.trim()) return [];
     const iso = new Date(date).toISOString();
     const file = join(this.dir, 'main', `${localDay(new Date())}.jsonl`);
-    const written = (kind === 'echo' ? [clip(text)] : split(text, CAP)).map((part, n) => {
-      const record: MemoryRecord = { i: this.log.length, kind, text: part, size: bytes(`${kind}: ${part}`), date: iso };
+    const whole = text.toWellFormed();
+    const written = (kind === 'echo' ? [clip(whole)] : split(whole, CAP)).map((part, n) => {
+      const record: MemoryRecord = { i: this.log.length + n, kind, text: part, size: bytes(`${kind}: ${part}`), date: iso };
       if (src !== undefined) record.src = n === 0 ? src : `${src}#${n}`;
-      appendJson(file, record);
+      return record;
+    });
+    appendJson(file, ...written); // all parts or none: a crash between parts would lose the rest (src is logged)
+    for (const record of written) {
       this.log.push(record);
       if (record.src) this.bySrc.set(record.src, record.i);
       this.grow(record.i);
-      return record;
-    });
+    }
     this.save();
     this.retryFailed(); // a failed call is tried again at the next message
     this.schedule();
@@ -290,12 +301,13 @@ export class Memory {
   }
 
   /**
-   * Log a subagent's report as a `work` message "[name] text". Plug into the agents extension's `onReport`.
+   * Log a subagent's report as a `work` message as Pi sees it (upstream Call.ts `report_text`, Apache-2.0):
+   * `[Name]\ntext\n\nFull chat: zoom("Name")`. Plug into the agents extension's `onReport`.
    * `id` keys it (pass the same `id` as `data.id` of the report's input entry so neither path logs it twice);
    * without one, the same name and text are logged once.
    */
   report({ name: agent, text, id, date }: ReportInput): MemoryRecord[] {
-    const body = text.startsWith(`[${agent}]`) ? text : `[${agent}] ${text}`;
+    const body = `[${agent}]\n${text}\n\nFull chat: zoom("${agent}")`;
     return this.append({ kind: 'work', text: body, date, src: reportSrc({ name: agent, text, id }) });
   }
 
@@ -332,6 +344,25 @@ export class Memory {
     return (k >= this.log.length ? this.view.parts : cut(this.view.parts, k)).every(p => this.tree.has(key(p)));
   }
 
+  /**
+   * Where a turn's new messages [from, T) go whole from (adapted from UniiChat Memory.ts `whole`, Apache-2.0): the
+   * first id from which the messages to the end fit in `limit` bytes; the last message always goes whole. The ones
+   * before it (a huge paste's first parts) belong in the view: render(k) and say(k, T).
+   */
+  whole(from: number, limit = this.view.hi): number {
+    let k = this.log.length, size = 0;
+    for (; k > from; k--) {
+      size += this.at(k - 1).size;
+      if (k < this.log.length && size > limit) return k;
+    }
+    return k;
+  }
+
+  /** Messages [a, b) as one text: a split text's parts rejoined, separate messages a blank line apart. */
+  say(a: number, b = this.log.length): string {
+    return this.log.slice(a, b).map((r, n) => (n > 0 && !/#\d+$/.test(r.src ?? '') ? '\n\n' : '') + r.text).join('');
+  }
+
   /** Wait until ready(k), at most timeoutMs; resolves whether it got there. */
   settle(timeoutMs: number, signal?: AbortSignal, k?: number): Promise<boolean> {
     if (this.ready(k)) return Promise.resolve(true);
@@ -344,18 +375,21 @@ export class Memory {
     });
   }
 
-  /** zoom(id, n): line id+n opened into its two halves; n = 1 gives message id whole, in pages of PAGE characters. */
+  /**
+   * zoom(id, n): line id+n opened into its two halves; n = 1 gives message id whole, a text over PAGE characters in
+   * pages. Bad arguments throw with the tree's roots, where any zoom can start (UniiChat Memory.ts `zoom`).
+   */
   zoom(id: number, n = 1, page = 1): string {
     const T = this.log.length;
     if (!Number.isSafeInteger(id) || id < 0 || !Number.isSafeInteger(n) || n < 1 || (n & (n - 1)) !== 0 || id % n !== 0 || id + n > T) {
-      throw new Error(`No line ${id}+${n}: n is a power of 2, id a multiple of n, and id+n at most ${T}.`);
+      throw new Error(`No line ${id}+${n}: n is a power of 2, id a multiple of n, and id+n at most ${T}. The tree's roots: ${roots(T).map(name).join(', ') || 'none'}.`);
     }
     if (n === 1) {
-      const record = this.at(id), whole = `${record.kind}: ${record.text}`;
-      const pages = Math.max(1, Math.ceil(whole.length / PAGE));
-      if (!Number.isSafeInteger(page) || page < 1 || page > pages) throw new Error(`Message ${id} has ${pages} page(s).`);
-      const body = whole.slice((page - 1) * PAGE, page * PAGE);
-      return pages === 1 ? `${id}+1|${body}` : `${id}+1 (page ${page} of ${pages}; zoom(${id}, 1, page) for the others)|${body}`;
+      const record = this.at(id), pages = split(record.text, PAGE);
+      const body = pages[page - 1];
+      if (!Number.isSafeInteger(page) || body === undefined) throw new Error(`Message ${id} has ${pages.length} page(s).`);
+      const head = pages.length === 1 ? `${id}+1` : `${id}+1 (page ${page} of ${pages.length}; zoom(${id}, 1, page) for the others)`;
+      return `${head}|${record.kind}: ${body}`;
     }
     const l = Math.log2(n) - 1, i = (2 * id) / n;
     return [i, i + 1].map(c => {
@@ -372,7 +406,7 @@ export class Memory {
 
   /**
    * The exchange right before message k, whole: the last user (or work) message and the reply that ends just before k,
-   * in at most `limit` bytes; '' when there is none or it is longer (pi-endless deviation #3).
+   * in at most `limit` bytes; '' when there is none or it is longer (deviation 3 in docs/memory.md).
    */
   previousExchange(k = this.log.length, limit = 16_000): string {
     let j = Math.min(k, this.log.length);
@@ -433,7 +467,9 @@ export class Memory {
   }
 
   leafSource(i: number): string { const r = this.at(i); return `${r.kind}: ${r.text}`; }
-  joined(p: Pos): string { return `${this.text({ l: p.l - 1, i: 2 * p.i })}\n${this.text({ l: p.l - 1, i: 2 * p.i + 1 })}`; }
+  /** A merge's source: its halves, each flat, one per line (UniiChat Memory.ts `source`). */
+  joined(p: Pos): string { return `${flat(this.text({ l: p.l - 1, i: 2 * p.i }) ?? '')}\n${flat(this.text({ l: p.l - 1, i: 2 * p.i + 1 }) ?? '')}`; }
+  source(p: Pos): string { return p.l === 0 ? this.leafSource(p.i) : this.joined(p); }
   busy(p: Pos): boolean { const k = key(p); return this.tree.has(k) || this.inFlight.has(k) || this.failed.has(k); }
 
   /** Node n is built: queue its parent once its sibling is built too. */
@@ -457,18 +493,19 @@ export class Memory {
         const p = this.retryLeaves.shift();
         if (p && !this.busy(p)) this.call(p);
       }
-      while (this.leafNext < this.log.length && this.leafOpen < this.lead) {
-        const p = { l: 0, i: this.leafNext };
-        if (this.tree.has(key(p))) { this.leafNext++; continue; }
-        const source = this.leafSource(p.i), free = bytes(source) <= NODE;
-        if (!free && this.inFlight.size >= this.jobs) break;
+      // Leaves and merges in the order the messages came; a leaf that fits takes no call, so it never waits for one.
+      for (;;) {
+        while (this.leafNext < this.log.length && this.tree.has(`0/${this.leafNext}`)) this.leafNext++;
+        for (let top = this.merges.peek(); top && this.busy(top); top = this.merges.peek()) this.merges.pop();
+        const merge = this.merges.peek(), leaf = this.leafNext < this.log.length && this.leafOpen < this.lead;
+        const slot = this.inFlight.size < this.jobs;
+        if (merge && slot && (!leaf || end(merge) <= this.leafNext)) { this.merges.pop(); this.call(merge); continue; }
+        if (!leaf) break;
+        const p = { l: 0, i: this.leafNext }, source = this.leafSource(p.i), free = bytes(source) <= NODE;
+        if (!free && !slot) break;
         this.leafNext++;
         this.leafOpen++;
         if (free) { this.finish(p, source); progressed = changed = true; } else this.call(p);
-      }
-      while (this.merges.size && this.inFlight.size < this.jobs) {
-        const p = this.merges.pop();
-        if (p && !this.busy(p)) this.call(p);
       }
     }
     if (changed) { this.save(); this.emit(); }
@@ -483,7 +520,7 @@ export class Memory {
     this.failed.delete(k);
     if (p.l === 0 && p.i < this.leafNext) this.leafOpen--;
     this.readyParent(node);
-    this.refit();
+    this.refit(this.log.length, false);
   }
 
   call(p: Pos): void {
@@ -528,33 +565,52 @@ export class Memory {
     return `<chat>\n${lines.join('')}</chat>`;
   }
 
-  /** One node by the model: task with the ruler, then the harness enforces the size (pi-endless deviation #1). */
+  /**
+   * One node by the model: the compaction view and the task with the ruler. A line over 512 bytes is asked again,
+   * `tooLongRetries` times, each a fresh call of the task plus a note on the last line (UniiChat Memory.ts `build`); the
+   * shortest is kept and the harness cuts it to size. An answer with no line (a refusal) makes the node its source,
+   * clipped; any other failure throws, and the node is tried again later.
+   */
   async compact(p: Pos): Promise<string> {
     let task;
+    const source = this.source(p);
     if (p.l === 0) {
       const r = this.at(p.i);
       task = leafTask(p.i, r.kind, r.text);
     } else {
-      const a = { l: p.l - 1, i: 2 * p.i }, b = { l: p.l - 1, i: 2 * p.i + 1 };
-      task = mergeTask(name(a), name(b), start(p), end(p) - 1, this.renderLine(a), this.renderLine(b));
+      const [a = '', b = ''] = source.split('\n');
+      task = mergeTask(name({ l: p.l - 1, i: 2 * p.i }), name({ l: p.l - 1, i: 2 * p.i + 1 }), start(p), end(p) - 1, a, b);
     }
     const { system = PROMPT, tools } = this.compactionPrompt ?? {};
-    const messages: CompactionMessage[] = [{ role: 'user', content: `${this.compactionContext(p)}\n\n${task}` }];
+    const prompt = `${this.compactionContext(p)}\n\n${task}`;
     // One node, one model: a summarizer swapped mid-call serves only the nodes started after it.
     const { summarize } = this;
-    const ask = (): Promise<string> => summarize(system, messages, { signal: this.controller.signal, tools, node: { l: p.l, i: p.i, name: name(p) } });
-    let raw = cleanLine(String(await ask() ?? ''));
-    if (!raw) throw new Error('the compactor returned no text');
+    const ask = async (note?: string): Promise<string> => {
+      const messages: CompactionMessage[] = [{ role: 'user', content: note ? `${prompt}\n\n${note}` : prompt }];
+      return cleanLine(String(await summarize(system, messages, { signal: this.controller.signal, tools, node: { l: p.l, i: p.i, name: name(p) } }) ?? ''));
+    };
+    let raw;
+    try { raw = await ask(); } catch (error) {
+      if (!(error instanceof CompactionRefused) || this.controller.signal.aborted) throw error;
+      return this.clipped(p, source, error.message);
+    }
+    if (!raw) return this.clipped(p, source, 'an empty line');
     let best = raw;
-    for (let n = 0; n < this.tooLongRetries && bytes(best) > NODE; n++) {
-      messages.push({ role: 'assistant', content: raw }, { role: 'user', content: tooLong(raw) });
-      try { raw = cleanLine(String(await ask() ?? '')); } catch (error) {
+    for (let n = 0; n < this.tooLongRetries && bytes(raw) > NODE; n++) {
+      try { raw = await ask(tooLong(raw)); } catch (error) {
         if (this.controller.signal.aborted) throw error;
         break; // keep the shortest line so far; the cut below fits it
       }
-      if (raw && bytes(raw) < bytes(best)) best = raw;
+      if (!raw) break;
+      if (bytes(raw) < bytes(best)) best = raw;
     }
     return cutLine(best).line;
+  }
+
+  /** A node the model answered without a line: its source's first 512 bytes, flat (UniiChat Memory.ts `cut`). */
+  clipped(p: Pos, source: string, why: string): string {
+    this.warn(`unii: compaction ${name(p)}: ${why}; its node is its source, clipped`);
+    return cutBytes(flat(source), NODE);
   }
 
   /** Stop taking work, give calls in flight up to graceMs (they are redone at the next open otherwise), save. */
@@ -574,6 +630,15 @@ export class Memory {
     opened.delete(this.dir);
     this.emit();
   }
+}
+
+/** The tree's roots over T messages: a node per power of two in T, largest first. */
+export function roots(T: number): Pos[] {
+  const out: Pos[] = [];
+  for (let l = Math.floor(Math.log2(Math.max(T, 1))), at = 0; l >= 0; l--) {
+    if (at + 2 ** l <= T) { out.push({ l, i: at / 2 ** l }); at += 2 ** l; }
+  }
+  return out;
 }
 
 export const reportSrc = ({ name: agent, text, id }: ReportInput): string => `report:${id ?? hash(`${agent}\n${text}`)}`;

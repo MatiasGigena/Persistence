@@ -5,14 +5,16 @@ export const NODE = 512;      // bytes per tree node (recipe §2)
 export const CAP = 30_000;    // characters: tool output is clipped to this, other text split at it (§1)
 
 export const bytes = (s: string): number => Buffer.byteLength(s, 'utf8');
-export const flat = (s: string): string => s.replace(/\r\n|\r|\n/g, ' ');
+/** One line: each newline and the whitespace around it become one space (UniiChat Memory.ts `flat`). */
+export const flat = (s: string): string => /[\r\n]/.test(s) ? s.replace(/\s*[\r\n]\s*/g, ' ') : s;
 export const hash = (s: string): string => createHash('sha256').update(s).digest('hex').slice(0, 16);
 const highSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
 
-/** Tool output: head and tail, CAP characters in all, around a marker that does not count. */
+/** Tool output: head and tail around a marker, at most `limit` characters in all (as UniiChat Clip.ts keeps 64 per half for it). */
 export function clip(text: string, limit = CAP): string {
   if (text.length <= limit) return text;
-  let head = limit / 2, tail = text.length - limit / 2;
+  const keep = limit / 2 - 64;
+  let head = keep, tail = text.length - keep;
   if (highSurrogate(text.charCodeAt(head - 1))) head--;
   if (highSurrogate(text.charCodeAt(tail - 1))) tail++;
   return `${text.slice(0, head)}\n[… ${tail - head} characters clipped …]\n${text.slice(tail)}`;
@@ -72,11 +74,11 @@ export function formatDate(value: Date | number | string): string {
   return `${localDay(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${zone} (${weekday})`;
 }
 
-/** Append one JSON line and fsync it before returning. */
-export function appendJson(file: string, value: unknown): void {
+/** Append JSON lines in one write and fsync them before returning. */
+export function appendJson(file: string, ...values: unknown[]): void {
   const fd = openSync(file, 'a', 0o600);
   try {
-    const data = Buffer.from(`${JSON.stringify(value)}\n`);
+    const data = Buffer.from(values.map(value => `${JSON.stringify(value)}\n`).join(''));
     if (writeSync(fd, data) !== data.length) throw new Error(`Incomplete write: ${file}`);
     fsyncSync(fd);
   } finally { closeSync(fd); }

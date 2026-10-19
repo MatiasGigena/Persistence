@@ -107,6 +107,27 @@ describe('unii view', () => {
     assert.equal(v.shrinking, false);
   });
 
+  test('between messages only a whole batch lands; at a message the batch keeps what merged', () => {
+    const built = new Set<string>();
+    const v = new View({ hi: 10, lo: 4, sizeOf: () => 1, built: p => built.has(`${p.l}/${p.i}`) });
+    for (let i = 0; i < 12; i++) { v.append(i); v.fit(i + 1); }
+    for (let i = 0; i < 6; i++) built.add(`1/${i}`);
+    assert.equal(v.fit(12, false), false, 'a node built: 8 lines is not a whole batch');
+    assert.equal(v.parts.length, 12);
+    assert.equal(v.shrinking, true);
+    for (let i = 0; i < 3; i++) built.add(`2/${i}`);
+    built.add('3/0');
+    assert.equal(v.fit(12, false), true, 'now it reaches 4 lines at once');
+    assert.deepEqual(v.parts.map(p => p.l), [3, 1, 0, 0]);
+    assert.equal(v.shrinking, false);
+    const w = new View({ hi: 10, lo: 4, sizeOf: () => 1, built: p => p.l === 1 });
+    for (let i = 0; i < 12; i++) { w.append(i); w.fit(i + 1, false); }
+    assert.equal(w.parts.length, 12, 'partial merges between messages are held back');
+    w.append(12);
+    assert.equal(w.fit(13, true), true);
+    assert.ok(w.parts.length < 13 && w.tiles(13) && w.shrinking, 'a message takes the partial batch');
+  });
+
   test('past twice the budget it takes what is built (a node that keeps failing)', () => {
     const v = new View({ hi: 4, lo: 2, sizeOf: () => 1, built: p => !(p.l === 1 && p.i === 0) });
     for (let i = 0; i < 9; i++) { v.append(i); v.fit(i + 1); }
