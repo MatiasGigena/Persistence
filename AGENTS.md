@@ -1,0 +1,46 @@
+# AGENTS.md
+
+Persistence is a terminal host for one never-ending Pi chat on
+`@earendil-works/pi-durable` 1.3.0. Pi's context is a UniiChat memory view, and Pi
+can spawn background agents. The launcher is `bin/pi-durable`.
+
+## Map
+
+- `src/cli.mjs`: entry. Parses arguments, takes the flock, spawns the host.
+- `src/host/`: `host.mjs` (terminal chat, /commands, reply watcher), `config.mjs` (CLI options, paths).
+- `src/runtime/`: `runtime.mjs` (Harness, extensions, Pi's agent config), `recovery.mjs` (resume, `settleAgents`).
+- `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
+- `src/agents/index.mjs`: agent hierarchy, tools, and delivery tasks.
+- `test/<area>/`: offline tests per area; `test/fixtures/` holds faux models.
+
+## Verify
+
+Run `npm run check && npm test` after every change. Both are offline and take seconds.
+A change is done when both pass and the docs below still match the code.
+
+## Invariants
+
+- **Persisted names are frozen.** Extension names, entry, task, and doc kinds, tool
+  names, memory kinds and `src` keys, and the `chat.sqlite` / `.unii` file layout
+  stay as they are; the full list is in [CONTRIBUTING.md](CONTRIBUTING.md#rules).
+  Renaming one breaks existing chats.
+- **One writer.** Every write to the database and its `.unii` directory happens in
+  the one host process under the CLI's flock. Launch through `bin/pi-durable`.
+- **Memory is Pi's alone.** The `uniichat` extension acts only on the root
+  conversation; spawned agents get it removed.
+- **Exactly-once delivery.** Agent messages and reports travel in `agents.deliver`
+  tasks keyed by task ID, and memory appends are keyed by `src`. Keep every replay
+  path idempotent.
+- **Tools off by default.** Coding tools are enabled only by `--allow-tools` on the
+  current launch, and every launch reconfigures Pi and its agents.
+- **State stays local.** Commit only source, tests, and docs: never `*.sqlite*`,
+  `*.lock`, `*.unii/`, `auth.json`, or `.env`.
+
+## Docs
+
+- Changing the turn flow, persistence, or a file's place: [docs/architecture.md](docs/architecture.md).
+- Changing install, paths, recovery, or backups: [docs/operations.md](docs/operations.md).
+- Changing `src/memory/`: [docs/memory.md](docs/memory.md); keep its recipe deviations list current.
+- Changing `src/agents/`: [docs/agents.md](docs/agents.md).
+- Making a design decision: add an ADR in [docs/decisions/](docs/decisions/).
+- Code style and commit messages: [CONTRIBUTING.md](CONTRIBUTING.md).
