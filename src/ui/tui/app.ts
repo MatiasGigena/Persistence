@@ -4,13 +4,15 @@ import {
   CombinedAutocompleteProvider, Container, Editor, matchesKey, ProcessTerminal, ScrollView, truncateToWidth,
   TuiAltScreen, VStack,
 } from '@earendil-works/pi-tui';
-import type { Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
+import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
 import type { SessionStatus, UiSession } from '../types.ts';
 import { ChatView } from './chat.ts';
 import type { NoticeLevel } from './chat.ts';
 import { Footer } from './footer.ts';
 import { openAgentsPanel } from './panels/agents.ts';
+import { confirm } from './panels/frame.ts';
 import { openMemoryPanel } from './panels/memory.ts';
+import { modelRef, openModelPanel } from './panels/model.ts';
 import { theme } from './theme.ts';
 
 /** Shows host text (a warning, a runtime report) as a notice in the chat. */
@@ -31,6 +33,8 @@ export interface TuiInfo {
 
 export const COMMANDS: readonly SlashCommand[] = [
   { name: 'help', description: 'Commands and keys' },
+  { name: 'model', description: 'Pick a model (ctrl+l), or set provider/id', argumentHint: '[provider/id]' },
+  { name: 'tools', description: 'Coding tools for this launch: on or off', argumentHint: '[on|off]' },
   { name: 'agents', description: 'Agents and their conversations' },
   { name: 'mem', description: "Pi's memory view" },
   { name: 'status', description: 'Model, work, memory and agents' },
@@ -38,12 +42,17 @@ export const COMMANDS: readonly SlashCommand[] = [
 ];
 
 const HELP = [
+  '/model   pick a model (ctrl+l)      /tools  coding tools: on, off',
   '/agents  agents and their chats     /mem  the memory view, zoomable',
   '/status  model, work, memory        /exit  close (ctrl+d on an empty editor)',
   'enter send · shift+enter or alt+enter newline · ↑↓ history · esc interrupt Pi',
   'ctrl+o tool output · ctrl+t thinking · ctrl+c clear, twice quit · pgup/pgdn scroll',
   'Unfinished work and agents resume on the next launch.',
 ].join('\n');
+
+/** Asked before `/tools on`: the tools act on this machine as the user, without a sandbox or approval prompts. */
+export const TOOLS_QUESTION = 'Enable read/write/edit/bash with your user permissions for this launch?'
+  + ' They run without a sandbox or approval prompts.';
 
 /** Two Ctrl+C presses within this many ms exit. */
 const DOUBLE_CTRL_C = 1000;
@@ -93,10 +102,19 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   const chat = new ChatView(session.chat, theme, info.backlog === undefined ? {} : { backlog: info.backlog });
   const footer = new Footer(() => session.status(), theme);
   const editor = new ChatEditor(tui, theme.editor, { paddingX: 1 });
-  editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...COMMANDS], info.cwd));
+  // `/model ` completes available models, as in Pi; Enter takes the highlighted one, a second Enter sends.
+  const completeModel = async (prefix: string): Promise<AutocompleteItem[] | null> => {
+    const needle = prefix.trim().toLowerCase();
+    const items = (await session.models().catch(() => []))
+      .filter(m => m.available && modelRef(m).toLowerCase().includes(needle))
+      .map(m => ({ value: modelRef(m), label: modelRef(m), description: m.name }));
+    return items.length ? items : null;
+  };
+  editor.setAutocompleteProvider(new CombinedAutocompleteProvider(
+    COMMANDS.map(c => (c.name === 'model' ? { ...c, getArgumentCompletions: completeModel } : c)), info.cwd));
   const header = new Line(() => {
     const { model, toolsEnabled } = session.status();
-    return `${theme.bold(theme.accent('Pi'))}${theme.dim(` · ${model} · tools ${toolsEnabled ? 'on' : 'off'}`)}`;
+    return `${theme.bold(theme.accent('Pi'))}${theme.dim(` · ${model} · `)}${toolsEnabled ? theme.warning('tools on') : theme.dim('tools off')}`;
   });
   const document = new Container();
   document.addChild(header);
@@ -149,9 +167,46 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     // Not awaited: the panel takes focus from the editor and hands it back when it closes.
     open(tui, session, theme).catch((error: unknown) => show(`Panel failed: ${message(error)}`, 'error'));
   };
+  const switchModel = (provider: string, id: string): void => {
+    session.setModel(provider, id).then(
+      () => show(`Model: ${provider}/${id} (from the next message; saved as default)`),
+      (error: unknown) => show(`Model not changed: ${message(error)}`, 'error'));
+  };
+  const model = (arg: string): void => {
+    if (!arg) {
+      openModelPanel(tui, session, theme).then(
+        choice => { if (choice) switchModel(choice.provider, choice.id); },
+        (error: unknown) => show(`Panel failed: ${message(error)}`, 'error'));
+      return;
+    }
+    // Ids may hold slashes (openrouter/vendor/model); providers do not.
+    const slash = arg.indexOf('/');
+    if (slash <= 0 || slash === arg.length - 1) show('Usage: /model provider/id, or /model alone to pick one.', 'warn');
+    else switchModel(arg.slice(0, slash), arg.slice(slash + 1));
+  };
+  const setTools = (enabled: boolean): void => {
+    session.setTools(enabled).then(
+      () => show(enabled ? 'Coding tools on for this launch' : 'Coding tools off', enabled ? 'warn' : 'info'),
+      (error: unknown) => show(`Tools not changed: ${message(error)}`, 'error'));
+  };
+  const tools = (arg: string): void => {
+    const on = session.status().toolsEnabled;
+    if (arg === 'off') setTools(false);
+    else if (arg === 'on' && on) show('Coding tools on for this launch', 'warn');
+    else if (arg === 'on') {
+      confirm(tui, theme, TOOLS_QUESTION).then(
+        yes => { if (yes) setTools(true); else show('Coding tools stay off.'); },
+        (error: unknown) => show(`Confirmation failed: ${message(error)}`, 'error'));
+    } else if (arg) show('Usage: /tools, /tools on or /tools off.', 'warn');
+    else show(on ? 'Coding tools on for this launch: read, write, edit, bash. /tools off turns them off.'
+      : 'Coding tools off. /tools on enables read, write, edit and bash for this launch.');
+  };
   const command = (line: string): void => {
     const name = line.slice(1).split(/\s/, 1)[0] ?? '';
+    const arg = line.slice(1 + name.length).trim();
     if (name === 'help') show(HELP);
+    else if (name === 'model') model(arg);
+    else if (name === 'tools') tools(arg);
     else if (name === 'status') show(statusText(session.status()));
     else if (name === 'agents') panel(openAgentsPanel);
     else if (name === 'mem') panel(openMemoryPanel);
@@ -182,6 +237,8 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       chat.toolsExpanded = !chat.toolsExpanded;
     } else if (matchesKey(data, 'ctrl+t')) {
       chat.thinkingExpanded = !chat.thinkingExpanded;
+    } else if (matchesKey(data, 'ctrl+l')) {
+      model('');
     } else return false;
     render();
     return true;

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
-import type { ChatFeed, ChatItem, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
 import { runTui } from '../../src/ui/tui/app.ts';
 import { ChatView, TOOL_PREVIEW } from '../../src/ui/tui/chat.ts';
 import { Footer, footerText } from '../../src/ui/tui/footer.ts';
@@ -37,14 +37,24 @@ class FakeSession implements UiSession {
   readonly chat: FakeFeed;
   readonly sent: string[] = [];
   aborts = 0;
+  private current: SessionStatus = STATUS;
+  private readonly listeners = new Set<() => void>();
   constructor(items: readonly ChatItem[] = []) { this.chat = new FakeFeed(items); }
-  status(): SessionStatus { return STATUS; }
-  onStatus(): () => void { return () => undefined; }
+  status(): SessionStatus { return this.current; }
+  onStatus(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  /** Changes the status and notifies, as the session does. */
+  update(change: Partial<SessionStatus>): void {
+    this.current = { ...this.current, ...change };
+    for (const listener of this.listeners) listener();
+  }
   send(text: string): Promise<void> { this.sent.push(text); return Promise.resolve(); }
   abort(): Promise<void> { this.aborts++; return Promise.resolve(); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): readonly ViewLine[] { return []; }
   zoom(): string { return ''; }
+  models(): Promise<readonly ModelChoice[]> { return Promise.resolve([]); }
+  setModel(provider: string, id: string): Promise<void> { this.update({ model: `${provider}/${id}` }); return Promise.resolve(); }
+  setTools(enabled: boolean): Promise<void> { this.update({ toolsEnabled: enabled }); return Promise.resolve(); }
 }
 
 /** A terminal that records what is written and lets the test type. */
@@ -192,6 +202,19 @@ test('slash commands dispatch, and Ctrl+C twice exits', async () => {
   terminal.type('\x03', '\x03');
   await done;
   assert.equal(terminal.stopped, true);
+});
+
+test('the header and footer follow status changes, and tools on is in the warning color', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.output = '';
+  session.update({ model: 'faux/model-2', toolsEnabled: true });
+  await delay(30);
+  assert.match(terminal.text(), /faux\/model-2/);
+  assert.match(terminal.text(), /tools on/);
+  assert.ok(terminal.output.includes(theme.warning('tools on')), 'tools on is yellow');
+  terminal.type('/exit', '\r');
+  await done;
 });
 
 test('/exit and the host shutdown signal both end the TUI', async () => {

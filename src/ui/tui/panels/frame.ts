@@ -1,6 +1,7 @@
 // The overlay panels' shared parts: a bordered, near-full-screen frame holding a stack of views
 // (a breadcrumb title, an optional header, the top view, a one-line key hint), a selectable list,
-// and a scrollable text view. Only pi-tui; colors come from the shell through PanelTheme.
+// a scrollable text view, and a one-key confirmation box. Only pi-tui; colors come from the shell
+// through PanelTheme.
 import { decodeKittyPrintable, getKeybindings, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, Keybinding, TUI } from '@earendil-works/pi-tui';
 
@@ -139,6 +140,10 @@ export interface ListOptions {
   readonly followEnd?: boolean;
   /** `/` filters the rows by substring. */
   readonly filterable?: boolean;
+  /** The hint's word for Enter (default "open"). */
+  readonly verb?: string;
+  /** Typing filters at once, as in Pi's selectors: `/` is a plain character, and Esc closes even while filtering. */
+  readonly typeToFilter?: boolean;
   /** Whether this is the panel's first level, for the hint. */
   readonly root?: boolean;
   readonly dispose?: () => void;
@@ -164,8 +169,9 @@ export class ListView implements PanelView {
 
   get hint(): string {
     if (this.typing) return 'type to filter · enter keep · esc clear';
-    const filter = this.options.filterable ? ' · / filter' : '';
-    return `↑↓ move · enter open${filter} · esc ${this.options.root ? 'close' : 'back'}`;
+    const enter = `enter ${this.options.verb ?? 'open'}`, esc = `esc ${this.options.root ? 'close' : 'back'}`;
+    if (this.options.typeToFilter) return `type to filter · ↑↓ move · ${enter} · ${esc}`;
+    return `↑↓ move · ${enter}${this.options.filterable ? ' · / filter' : ''} · ${esc}`;
   }
 
   dispose(): void { this.options.dispose?.(); }
@@ -198,14 +204,18 @@ export class ListView implements PanelView {
     else if (is(data, 'tui.select.confirm')) {
       const row = rows[index];
       if (row) { this.select(rows, index); this.options.onOpen(row); }
-    } else if (data === '/' && this.options.filterable) this.typing = true;
+    } else if (this.options.typeToFilter) return this.handleFilter(data);
+    else if (data === '/' && this.options.filterable) this.typing = true;
     else return false;
     return true;
   }
 
   private handleFilter(data: string): boolean {
-    if (is(data, 'tui.select.cancel')) { this.filter = ''; this.typing = false; }
-    else if (is(data, 'tui.select.confirm')) this.typing = false;
+    if (is(data, 'tui.select.cancel')) {
+      if (this.options.typeToFilter) return false;
+      this.filter = '';
+      this.typing = false;
+    } else if (is(data, 'tui.select.confirm')) this.typing = false;
     else if (matchesKey(data, 'backspace')) this.filter = this.filter.slice(0, -1);
     else {
       const char = decodeKittyPrintable(data) ?? data;
@@ -234,7 +244,8 @@ export class ListView implements PanelView {
     }
     if (showFilter) {
       while (lines.length < this.height) lines.push('');
-      lines.push(theme.accent(`/${this.filter}${this.typing ? '▏' : ''}`));
+      const live = this.options.typeToFilter ?? false;
+      lines.push(theme.accent(`${live ? 'filter ' : '/'}${this.filter}${this.typing || live ? '▏' : ''}`));
     }
     return lines;
   }
@@ -294,4 +305,45 @@ export class TextView implements PanelView {
 /** Plain text wrapped to `width`, paragraph by paragraph. */
 export function wrap(text: string, width: number): string[] {
   return wrapTextWithAnsi(clean(text.replace(/\r\n?/g, '\n')), width);
+}
+
+/** A question in a small box. Only `y` says yes; any other key, Esc and Enter included, says no. */
+class ConfirmBox implements Component {
+  onAnswer: (yes: boolean) => void = () => undefined;
+  private readonly theme: PanelTheme;
+  private readonly question: string;
+
+  constructor(theme: PanelTheme, question: string) {
+    this.theme = theme;
+    this.question = question;
+  }
+
+  handleInput(data: string): void {
+    const key = decodeKittyPrintable(data) ?? data;
+    this.onAnswer(key === 'y' || key === 'Y');
+  }
+
+  invalidate(): void { /* renders from its fixed text */ }
+
+  render(width: number): string[] {
+    if (width < 8) return [];
+    const { dim, bold, accent } = this.theme, inner = width - 4;
+    const row = (line: string): string => `${dim('│')} ${fit(line, inner)} ${dim('│')}`;
+    return [
+      dim(`╭${'─'.repeat(width - 2)}╮`),
+      ...wrap(this.question, inner).map(line => row(bold(line))),
+      row(''),
+      row(`${accent('y')} ${dim('yes ·')} ${accent('any other key')} ${dim('no')}`),
+      dim(`╰${'─'.repeat(width - 2)}╯`),
+    ];
+  }
+}
+
+/** Asks `question` in a centered box over the chat; resolves on the first key, true only for `y`. */
+export function confirm(tui: TUI, theme: PanelTheme, question: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const box = new ConfirmBox(theme, question);
+    const handle = tui.showOverlay(box, { anchor: 'center', width: '60%', minWidth: 40 });
+    box.onAnswer = yes => { box.onAnswer = () => undefined; handle.hide(); tui.requestRender(); resolve(yes); };
+  });
 }
