@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline/promises';
+import { resolve } from 'node:path';
 import { format } from 'node:util';
 import type { Interface } from 'node:readline/promises';
 import type { AttachedReplicatedState } from '@earendil-works/chord';
@@ -13,6 +14,9 @@ import { resumeInstance, settleAgents } from '../runtime/recovery.ts';
 import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts';
 import { listAgents, REPORT_KIND } from '../agents/index.ts';
 import { claudeCliProvider } from '../providers/claude-cli.ts';
+import { backupOffline } from '../server/backup.ts';
+import { formatBytes } from '../server/admin.ts';
+import { serve } from '../server/serve.ts';
 import { createUiSession } from '../ui/session.ts';
 import { runTui } from '../ui/tui/app.ts';
 import { errorMessage, isRecord, parseConfig } from './config.ts';
@@ -142,6 +146,13 @@ async function checkModel(models: Models): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (config.command === 'backup') {
+    // Under the flock with no server: this process is the only writer, and needs no models.
+    const { path, bytes } = await backupOffline(config, config.out === undefined ? {} : { out: resolve(config.out) });
+    console.log(`Backup written: ${path} (${formatBytes(bytes)})`);
+    return;
+  }
+  if (config.command !== 'chat' && config.command !== 'serve') throw new Error(`${config.command} runs without the host`);
   let models: Models;
   // Registered on every launch, inspection included: persisted agents may name claude-cli models.
   const claude = claudeCliProvider();
@@ -157,6 +168,8 @@ async function main(): Promise<void> {
     await checkModel(models);
   }
   if (stopping) return;
+  // The server owns its Instance, and closes it after its clients got `bye`.
+  if (config.command === 'serve') return serve(config, { models, signal: shutdown.signal });
   instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly,
     onReport: report => console.error(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   if (stopping) return;

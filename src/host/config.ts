@@ -133,6 +133,8 @@ export interface Options {
   local?: boolean;
   /** Attach to the running server, or fail. */
   attach?: boolean;
+  /** The first launch setting given (e.g. "--model"): an attach refuses it, since the server's settings apply. */
+  launchOption?: string;
   database?: string;
   dataDir?: string;
   cwd?: string;
@@ -273,10 +275,9 @@ export function parseArgs(args: readonly string[]): Options {
       if (spelling) throw new Error(`${spelling} applies only to ${key === 'portSpec' ? 'serve' : key === 'revoke' ? 'serve devices' : 'backup'}`);
     }
     if (options.local && options.attach) throw new Error('Choose either --local or --attach');
-    if (options.attach) {
-      const local = LAUNCH_ONLY.map(key => given.get(key)).find(spelling => spelling !== undefined);
-      if (local) throw new Error(`${local} does not apply to --attach: the server's settings apply (use /model and /tools there)`);
-    }
+    const local = LAUNCH_ONLY.map(key => given.get(key)).find(spelling => spelling !== undefined);
+    if (local && options.attach) throw new Error(`${local} does not apply to --attach: the server's settings apply (use /model and /tools there)`);
+    if (local) options.launchOption = local;
   }
   if (options.portSpec !== undefined) options.port = parsePort(options.portSpec, '--port');
   if (options.revoke !== undefined && !options.revoke.trim()) throw new Error('--revoke requires a device name');
@@ -411,7 +412,7 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
 }
 
 const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'settingsPath', 'serveDir', 'authFile'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out'] as const satisfies readonly (keyof Config)[];
+const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out', 'launchOption'] as const satisfies readonly (keyof Config)[];
 const BOOLEANS = ['allowTools', 'exists', 'inspectOnly'] as const satisfies readonly (keyof Config)[];
 const OPTIONAL_BOOLEANS = ['help', 'version', 'resume', 'history', 'status', 'plain', 'local', 'attach'] as const satisfies readonly (keyof Config)[];
 const isPort = (x: unknown): boolean => typeof x === 'number' && Number.isInteger(x) && x >= 1 && x <= 65535;

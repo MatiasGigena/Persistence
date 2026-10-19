@@ -213,15 +213,13 @@ test('resolved serve and admin configs survive the trip to the host; admin comma
   }
 });
 
-test('the launcher says which phase builds a command that is not there yet', async t => {
-  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-pending-'));
+test('the admin commands need a running server or a saved chat; serve refuses --allow-tools', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-admin-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   const env = { ...process.env, PI_DURABLE_DATA_DIR: join(folder, 'state') };
-  for (const [args, message] of [[['serve'], 'serve is not implemented yet (phase 2)'], [['backup'], 'backup is not implemented yet (phase 2)'],
-    [['serve', 'pair'], 'serve pair is not implemented yet (phase 4)'], [['serve', 'devices'], 'serve devices is not implemented yet (phase 4)'],
-    [['--attach'], '--attach is not implemented yet (phase 3)']] as const) {
-    await assert.rejects(exec(launcher, args, { env }),
-      { code: 1, stderr: new RegExp(message.replace(/[()]/g, '\\$&')) }, args.join(' '));
+  for (const args of [['serve', 'pair'], ['serve', 'devices'], ['serve', 'devices', '--revoke', 'phone']]) {
+    await assert.rejects(exec(launcher, args, { env }), { code: 1, stderr: /No server is running for this chat/ }, args.join(' '));
   }
+  await assert.rejects(exec(launcher, ['backup'], { env }), { code: 1, stderr: /No saved chat to back up/ });
   await assert.rejects(exec(launcher, ['serve', '--allow-tools'], { env }), { code: 1, stderr: /serve always starts with coding tools off/ });
 });
