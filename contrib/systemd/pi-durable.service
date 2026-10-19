@@ -1,0 +1,27 @@
+# pi-durable serve as a systemd user service: the one chat, running headless around the clock.
+# Install: docs/operations.md, "Server mode". Edit ExecStart if the checkout is not ~/pi-durable-instance.
+[Unit]
+Description=Persistence: the Pi chat server (pi-durable serve)
+Documentation=file://%h/pi-durable-instance/docs/operations.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+# PI_DURABLE_ORIGIN, PI_DURABLE_ALLOW_LOGIN and the other PI_DURABLE_* settings; optional.
+EnvironmentFile=-%h/.config/pi-durable/env
+ExecStart=%h/pi-durable-instance/bin/pi-durable serve --cwd %h/projects
+# SIGTERM: every client gets bye 1012 and the chat closes durably; unfinished work resumes at the next start.
+KillMode=mixed
+TimeoutStopSec=60
+# The server exits 143 after SIGTERM, which is a clean stop.
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+# Exit 75: the chat is open in another process (a local pi-durable --local); wait rather than spin.
+RestartPreventExitStatus=75
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

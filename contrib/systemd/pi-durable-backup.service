@@ -1,0 +1,13 @@
+# One online backup of the chat, through the running server or, without one, under the chat's flock.
+# Backups go to backups/ beside the chat; those older than 14 days are deleted. Run by pi-durable-backup.timer.
+[Unit]
+Description=Persistence: back up the Pi chat (pi-durable backup)
+Documentation=file://%h/pi-durable-instance/docs/operations.md
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/pi-durable/env
+ExecStart=%h/pi-durable-instance/bin/pi-durable backup
+UMask=0077
+Nice=10
+IOSchedulingClass=idle

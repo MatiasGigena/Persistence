@@ -1,0 +1,11 @@
+# A daily backup of the chat; a run missed while the machine was off happens at the next boot.
+[Unit]
+Description=Persistence: daily backup of the Pi chat
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
