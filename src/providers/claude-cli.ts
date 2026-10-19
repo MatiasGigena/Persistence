@@ -1,9 +1,14 @@
 import { spawn } from 'node:child_process';
+import type { ChildProcessByStdio } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createAssistantMessageEventStream, createProvider, parseStreamingJson } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, AuthCheck, ImageContent, JsonObject,
+  Message, Model, Provider, SimpleStreamOptions, SystemMessage, TextContent, ThinkingLevel, TranscriptContext,
+  Usage } from '@earendil-works/pi-ai';
 import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
 
 // Claude through the unmodified official `claude` CLI in print mode, signed in with the user's own login
@@ -14,9 +19,10 @@ export const CLAUDE_CLI = 'claude-cli';
 const API = 'claude-cli';
 const PREFIX = 'mcp__pi__';
 const STUB = fileURLToPath(new URL('./claude-cli-mcp.ts', import.meta.url));
-const EFFORT = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' };
-const STOP = { end_turn: 'stop', stop_sequence: 'stop', refusal: 'stop', tool_use: 'toolUse', max_tokens: 'length',
-  model_context_window_exceeded: 'length' };
+const EFFORT: Record<ThinkingLevel, string> = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' };
+type Done = Extract<AssistantMessageEvent, { type: 'done' }>['reason'];
+const STOP: Partial<Record<string, Done>> = { end_turn: 'stop', stop_sequence: 'stop', refusal: 'stop', tool_use: 'toolUse',
+  max_tokens: 'length', model_context_window_exceeded: 'length' };
 // Markers a parent Claude Code session exports to its children; this CLI call is a fresh, separate session.
 const PARENT_SESSION_ENV = ['CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_EFFORT', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
   'CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED', 'CLAUDE_CODE_MESSAGING_SOCKET',
@@ -30,31 +36,136 @@ export const CONVENTION = [
   'To use a tool now, call it through the provided tools. Never write these tags yourself.',
 ].join('\n');
 
-const MODEL = { api: API, provider: CLAUDE_CLI, baseUrl: 'local:claude', reasoning: true, input: ['text'],
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 64_000,
+export type ClaudeCliModel = Model<typeof API>;
+const MODEL: Omit<ClaudeCliModel, 'id' | 'name'> = { api: API, provider: CLAUDE_CLI, baseUrl: 'local:claude', reasoning: true,
+  input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 64_000,
   thinkingLevelMap: { off: null, minimal: 'low' } };
 /** The CLI's own aliases, so each one follows the CLI to the latest model of its family. */
-export const MODELS = [
+export const MODELS: readonly ClaudeCliModel[] = [
   { id: 'opus', name: 'Claude Opus 5.5 (Claude Code)' },
   { id: 'sonnet', name: 'Claude Sonnet 5.5 (Claude Code)' },
   { id: 'haiku', name: 'Claude Haiku 5.5 (Claude Code)' },
   { id: 'fable', name: 'Claude Fable 5.1 (Claude Code)' },
 ].map(model => ({ ...MODEL, ...model }));
 
-const zeroUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+// The stream-json lines of `claude -p --output-format stream-json --verbose --include-partial-messages`, as far as
+// this provider reads them. Lines are parsed as unknown and narrowed below; anything else is ignored.
+
+/** Token counts of the Anthropic Messages API. */
+interface ApiUsage { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number }
+type ApiContentBlock = { type: 'text' } | { type: 'thinking' } | { type: 'redacted_thinking' }
+  | { type: 'tool_use'; id: string; name: string };
+type ApiDelta = { type: 'text_delta'; text: string } | { type: 'thinking_delta'; thinking: string }
+  | { type: 'signature_delta'; signature: string } | { type: 'input_json_delta'; partial_json: string };
+/** The raw Anthropic streaming events a `stream_event` line carries. */
+type ApiStreamEvent =
+  | { type: 'message_start'; message?: { id?: string; usage?: ApiUsage } }
+  | { type: 'content_block_start'; index: number; content_block?: ApiContentBlock }
+  | { type: 'content_block_delta'; index: number; delta?: ApiDelta }
+  | { type: 'content_block_stop'; index: number }
+  | { type: 'message_delta'; delta?: { stop_reason?: string }; usage?: ApiUsage }
+  | { type: 'message_stop' };
+interface RateLimitInfo { status?: string; resetsAt?: number; rateLimitType?: string }
+/** One line of the CLI's own stream. */
+type CliEvent =
+  | { type: 'system'; subtype: 'init'; model?: string }
+  | { type: 'system'; subtype: 'api_retry'; error?: string }
+  | { type: 'stream_event'; event?: ApiStreamEvent }
+  | { type: 'assistant'; message: unknown }
+  | { type: 'rate_limit_event'; rate_limit_info?: RateLimitInfo }
+  | { type: 'result'; subtype?: string; is_error: boolean; result?: string; errors?: string[]; api_error_status?: number;
+    stop_reason?: string; usage?: ApiUsage };
+
+type Json = Record<string, unknown>;
+const isJson = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isList = (value: unknown): value is unknown[] => Array.isArray(value);
+// JSON.parse yields JSON values only, so a parsed object is a JsonObject.
+const isJsonObject = (value: unknown): value is JsonObject => isJson(value);
+const str = (value: unknown) => typeof value === 'string' ? value : undefined;
+const num = (value: unknown) => typeof value === 'number' ? value : undefined;
+const parseJson = (text: string): unknown => JSON.parse(text);
+
+function parseUsage(value: unknown): ApiUsage | undefined {
+  if (!isJson(value)) return undefined;
+  return { input_tokens: num(value.input_tokens), output_tokens: num(value.output_tokens),
+    cache_read_input_tokens: num(value.cache_read_input_tokens), cache_creation_input_tokens: num(value.cache_creation_input_tokens) };
+}
+
+function parseBlock(value: unknown): ApiContentBlock | undefined {
+  if (!isJson(value)) return undefined;
+  const { type } = value;
+  if (type === 'text' || type === 'thinking' || type === 'redacted_thinking') return { type };
+  if (type === 'tool_use') return { type, id: str(value.id) ?? '', name: str(value.name) ?? '' };
+  return undefined;
+}
+
+function parseDelta(value: unknown): ApiDelta | undefined {
+  if (!isJson(value)) return undefined;
+  const { type } = value;
+  if (type === 'text_delta' && typeof value.text === 'string') return { type, text: value.text };
+  if (type === 'thinking_delta' && typeof value.thinking === 'string') return { type, thinking: value.thinking };
+  if (type === 'signature_delta' && typeof value.signature === 'string') return { type, signature: value.signature };
+  if (type === 'input_json_delta' && typeof value.partial_json === 'string') return { type, partial_json: value.partial_json };
+  return undefined;
+}
+
+function parseStreamEvent(value: unknown): ApiStreamEvent | undefined {
+  if (!isJson(value)) return undefined;
+  const { type } = value, index = num(value.index);
+  if (type === 'message_start') {
+    const message = isJson(value.message) ? { id: str(value.message.id), usage: parseUsage(value.message.usage) } : undefined;
+    return { type, message };
+  }
+  if (type === 'content_block_start' && index !== undefined) return { type, index, content_block: parseBlock(value.content_block) };
+  if (type === 'content_block_delta' && index !== undefined) return { type, index, delta: parseDelta(value.delta) };
+  if (type === 'content_block_stop' && index !== undefined) return { type, index };
+  if (type === 'message_delta') {
+    return { type, delta: isJson(value.delta) ? { stop_reason: str(value.delta.stop_reason) } : undefined, usage: parseUsage(value.usage) };
+  }
+  if (type === 'message_stop') return { type };
+  return undefined;
+}
+
+function parseCliEvent(value: unknown): CliEvent | undefined {
+  if (!isJson(value)) return undefined;
+  const { type } = value;
+  if (type === 'system') {
+    if (value.subtype === 'init') return { type, subtype: 'init', model: str(value.model) };
+    if (value.subtype === 'api_retry') return { type, subtype: 'api_retry', error: str(value.error) };
+    return undefined;
+  }
+  if (type === 'stream_event') return { type, event: parseStreamEvent(value.event) };
+  if (type === 'assistant') return { type, message: value.message };
+  if (type === 'rate_limit_event') {
+    const info = value.rate_limit_info;
+    return { type, rate_limit_info: isJson(info)
+      ? { status: str(info.status), resetsAt: num(info.resetsAt), rateLimitType: str(info.rateLimitType) } : undefined };
+  }
+  if (type === 'result') {
+    return { type, subtype: str(value.subtype), is_error: Boolean(value.is_error), result: str(value.result),
+      errors: isList(value.errors) ? value.errors.filter(e => typeof e === 'string') : undefined,
+      api_error_status: num(value.api_error_status), stop_reason: str(value.stop_reason), usage: parseUsage(value.usage) };
+  }
+  return undefined;
+}
+
+const zeroUsage = (): Usage => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
 
-function childEnv(env) {
+function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env };
   for (const name of PARENT_SESSION_ENV) delete out[name];
   return out;
 }
 
-const textOf = content => typeof content === 'string' ? content
+const textOf = (content: string | (TextContent | ImageContent)[]) => typeof content === 'string' ? content
   : content.map(b => b.type === 'text' ? b.text : `[image: ${b.mimeType}, not shown]`).join('\n');
-const attr = value => JSON.stringify(String(value));
+const attr = (value: string) => JSON.stringify(String(value));
 
-function renderMessage(m) {
+type Turn = Exclude<Message, SystemMessage>;
+
+function renderMessage(m: Turn): string {
   if (m.role === 'user') return `<user>\n${textOf(m.content)}\n</user>`;
   if (m.role === 'toolResult') {
     return `<tool_result id=${attr(m.toolCallId)} name=${attr(m.toolName)} is_error="${Boolean(m.isError)}">\n${textOf(m.content)}\n</tool_result>`;
@@ -69,16 +180,26 @@ function renderMessage(m) {
  * The one user prompt for a request: the context's messages folded into a tagged transcript (see CONVENTION),
  * then the latest user message as is. A lone user message is sent unchanged.
  */
-export function renderPrompt(messages) {
-  const body = messages.filter(m => m.role !== 'system');
-  const last = body.at(-1)?.role === 'user' ? body.pop() : undefined;
+export function renderPrompt(messages: readonly Message[]): string {
+  const body = messages.filter((m): m is Turn => m.role !== 'system');
+  const tail = body.at(-1);
+  const last = tail?.role === 'user' ? tail : undefined;
+  if (last) body.pop();
   const history = body.map(renderMessage).filter(Boolean).join('\n\n');
   if (!history) return last ? textOf(last.content) : '';
   return `<transcript>\n${history}\n</transcript>\n\n${last ? textOf(last.content) : 'Continue from the last tool result.'}`;
 }
 
+export interface ClaudeArgsOptions {
+  /** Holds the system prompt. */
+  systemFile: string;
+  /** Holds the stub MCP server's tool list; without it Claude gets no tools. */
+  toolsFile?: string;
+  reasoning?: ThinkingLevel;
+}
+
 /** argv for one request: `systemFile` holds the system prompt; `toolsFile`, when given, the stub's tool list. */
-export function claudeArgs(model, { systemFile, toolsFile, reasoning }) {
+export function claudeArgs(model: Pick<Model<Api>, 'id'>, { systemFile, toolsFile, reasoning }: ClaudeArgsOptions): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--no-session-persistence', '--tools', '', '--strict-mcp-config', '--disable-slash-commands',
     '--setting-sources', '', '--settings', SETTINGS, '--model', model.id, '--max-turns', '1',
@@ -86,21 +207,27 @@ export function claudeArgs(model, { systemFile, toolsFile, reasoning }) {
   if (toolsFile) {
     args.push('--mcp-config', JSON.stringify({ mcpServers: { pi: { type: 'stdio', command: process.execPath, args: [STUB, toolsFile] } } }));
   }
-  if (EFFORT[reasoning]) args.push('--effort', EFFORT[reasoning]);
+  if (reasoning) args.push('--effort', EFFORT[reasoning]);
   return args;
 }
 
-function limitMessage(info) {
+function limitMessage(info: RateLimitInfo): string {
   const at = info.resetsAt ? ` · resets ${new Date(info.resetsAt * 1000).toLocaleString()}` : '';
   // "quota exceeded" keeps pi-ai's retry policy from retrying a limit that lasts hours.
   return `Claude usage limit reached (${info.rateLimitType ?? 'plan'} quota exceeded)${at}`;
 }
 
+/** How a request ends: a stop reason, an error message, or an abort. */
+type Ending = { stopReason: Done } | { error: string } | { aborted: true };
+/** A block event without its `partial`, which `push` adds. */
+type BlockEvent = Exclude<AssistantMessageEvent, { type: 'start' | 'done' | 'error' }>;
+type WithoutPartial<T> = T extends unknown ? Omit<T, 'partial'> : never;
+
 /** Translates the CLI's stream-json lines into pi-ai events on `stream`; `finish` ends the request once. */
-function createParser(stream, output, finish) {
-  let blocks = new Map(); // API block index -> { index, json } for the current API message
+function createParser(stream: AssistantMessageEventStream, output: AssistantMessage, finish: (ending: Ending) => void) {
+  let blocks = new Map<number, { index: number; json: string }>(); // API block index -> output block, current API message
   let toolUse = false;
-  const usage = u => {
+  const usage = (u: ApiUsage | undefined) => {
     if (!u) return;
     const o = output.usage;
     if (u.input_tokens !== undefined) o.input = u.input_tokens;
@@ -109,115 +236,124 @@ function createParser(stream, output, finish) {
     if (u.output_tokens !== undefined) o.output = u.output_tokens;
     o.totalTokens = o.input + o.output + o.cacheRead + o.cacheWrite;
   };
-  const push = (type, contentIndex, extra = {}) => stream.push({ type, contentIndex, ...extra, partial: output });
+  const push = (event: WithoutPartial<BlockEvent>) => stream.push({ ...event, partial: output });
+  const stopOf = (raw: string | undefined): Done => toolUse ? 'toolUse' : (raw === undefined ? undefined : STOP[raw]) ?? 'stop';
 
-  function onStreamEvent(e) {
+  function onStreamEvent(e: ApiStreamEvent) {
     if (e.type === 'message_start') {
       blocks = new Map();
       output.responseId = e.message?.id;
       usage(e.message?.usage);
     } else if (e.type === 'content_block_start') {
-      const b = e.content_block ?? {};
+      const b = e.content_block;
       const index = output.content.length;
-      if (b.type === 'text') {
+      if (b?.type === 'text') {
         output.content.push({ type: 'text', text: '' });
-        push('text_start', index);
-      } else if (b.type === 'thinking' || b.type === 'redacted_thinking') {
+        push({ type: 'text_start', contentIndex: index });
+      } else if (b?.type === 'thinking' || b?.type === 'redacted_thinking') {
         output.content.push({ type: 'thinking', thinking: '', ...(b.type === 'redacted_thinking' ? { redacted: true } : {}) });
-        push('thinking_start', index);
-      } else if (b.type === 'tool_use') {
+        push({ type: 'thinking_start', contentIndex: index });
+      } else if (b?.type === 'tool_use') {
         toolUse = true;
-        if (!b.name?.startsWith(PREFIX)) return; // not one of Pi's tools: nothing here can run it
+        if (!b.name.startsWith(PREFIX)) return; // not one of Pi's tools: nothing here can run it
         output.content.push({ type: 'toolCall', id: b.id, name: b.name.slice(PREFIX.length), arguments: {} });
-        push('toolcall_start', index);
+        push({ type: 'toolcall_start', contentIndex: index });
       } else return;
       blocks.set(e.index, { index, json: '' });
     } else if (e.type === 'content_block_delta') {
       const at = blocks.get(e.index);
-      if (!at) return;
-      const block = output.content[at.index], d = e.delta ?? {};
-      if (d.type === 'text_delta') {
+      const block = at && output.content[at.index], d = e.delta;
+      if (!at || !block || !d) return;
+      if (d.type === 'text_delta' && block.type === 'text') {
         block.text += d.text;
-        push('text_delta', at.index, { delta: d.text });
-      } else if (d.type === 'thinking_delta') {
+        push({ type: 'text_delta', contentIndex: at.index, delta: d.text });
+      } else if (d.type === 'thinking_delta' && block.type === 'thinking') {
         block.thinking += d.thinking;
-        push('thinking_delta', at.index, { delta: d.thinking });
-      } else if (d.type === 'signature_delta') block.thinkingSignature = (block.thinkingSignature ?? '') + d.signature;
-      else if (d.type === 'input_json_delta') {
+        push({ type: 'thinking_delta', contentIndex: at.index, delta: d.thinking });
+      } else if (d.type === 'signature_delta' && block.type === 'thinking') {
+        block.thinkingSignature = (block.thinkingSignature ?? '') + d.signature;
+      } else if (d.type === 'input_json_delta' && block.type === 'toolCall') {
         at.json += d.partial_json;
-        block.arguments = parseStreamingJson(at.json);
-        push('toolcall_delta', at.index, { delta: d.partial_json });
+        block.arguments = parseStreamingJson<JsonObject>(at.json);
+        push({ type: 'toolcall_delta', contentIndex: at.index, delta: d.partial_json });
       }
     } else if (e.type === 'content_block_stop') {
       const at = blocks.get(e.index);
-      if (!at) return;
+      const block = at && output.content[at.index];
+      if (!at || !block) return;
       blocks.delete(e.index);
-      const block = output.content[at.index];
-      if (block.type === 'text') push('text_end', at.index, { content: block.text });
-      else if (block.type === 'thinking') push('thinking_end', at.index, { content: block.thinking });
+      if (block.type === 'text') push({ type: 'text_end', contentIndex: at.index, content: block.text });
+      else if (block.type === 'thinking') push({ type: 'thinking_end', contentIndex: at.index, content: block.thinking });
       else {
-        try { block.arguments = at.json.trim() ? JSON.parse(at.json) : {}; } catch {
+        let args: unknown;
+        try { args = at.json.trim() ? parseJson(at.json) : {}; } catch { args = undefined; }
+        if (isJsonObject(args)) block.arguments = args;
+        else {
           block.arguments = {};
           block.argumentsError = `Tool arguments are not valid JSON: ${at.json}`;
         }
-        push('toolcall_end', at.index, { toolCall: block });
+        push({ type: 'toolcall_end', contentIndex: at.index, toolCall: block });
       }
     } else if (e.type === 'message_delta') {
       if (e.delta?.stop_reason) output.rawStopReason = e.delta.stop_reason;
       usage(e.usage);
-    } else if (e.type === 'message_stop') {
-      // The message is complete. Stopping here keeps the CLI from acting on it (denying the tool calls, continuing
-      // after max_tokens); --max-turns 1 is the backstop.
-      finish({ stopReason: toolUse ? 'toolUse' : STOP[output.rawStopReason] ?? 'stop' });
+    } else {
+      // message_stop: the message is complete. Stopping here keeps the CLI from acting on it (denying the tool calls,
+      // continuing after max_tokens); --max-turns 1 is the backstop.
+      finish({ stopReason: stopOf(output.rawStopReason) });
     }
   }
 
-  return line => {
-    let event;
-    try { event = JSON.parse(line); } catch { return; }
-    if (event.type === 'stream_event') onStreamEvent(event.event ?? {});
-    else if (event.type === 'rate_limit_event' && event.rate_limit_info?.status === 'rejected') {
+  return (line: string) => {
+    let event: CliEvent | undefined;
+    try { event = parseCliEvent(parseJson(line)); } catch { return; }
+    if (event?.type === 'stream_event') {
+      if (event.event) onStreamEvent(event.event);
+    } else if (event?.type === 'rate_limit_event' && event.rate_limit_info?.status === 'rejected') {
       finish({ error: limitMessage(event.rate_limit_info) });
-    } else if (event.type === 'system' && event.subtype === 'api_retry' && event.error === 'authentication_failed') {
+    } else if (event?.type === 'system' && event.subtype === 'api_retry' && event.error === 'authentication_failed') {
       finish({ error: 'claude-cli: Claude Code is not signed in or its login expired (401). Run `claude`, then /login (or `claude auth login`).' });
-    } else if (event.type === 'result') {
+    } else if (event?.type === 'result') {
       if (event.is_error) {
-        const detail = typeof event.result === 'string' && event.result ? event.result : (event.errors ?? []).join('; ');
+        const detail = event.result || (event.errors ?? []).join('; ');
         finish({ error: `claude-cli: ${event.api_error_status ? `API error ${event.api_error_status}: ` : ''}${detail || event.subtype || 'request failed'}` });
       } else {
         usage(event.usage);
-        if (!output.content.length && typeof event.result === 'string' && event.result) {
-          output.content.push({ type: 'text', text: event.result });
-        }
-        finish({ stopReason: toolUse ? 'toolUse' : STOP[event.stop_reason] ?? 'stop' });
+        if (!output.content.length && event.result) output.content.push({ type: 'text', text: event.result });
+        finish({ stopReason: stopOf(event.stop_reason) });
       }
     }
   };
 }
 
-function streamClaude(model, context, options = {}, { bin, env }) {
+type Child = ChildProcessByStdio<Writable, Readable, Readable>;
+interface Cli { bin: string; env: NodeJS.ProcessEnv }
+
+function streamClaude(model: Model<Api>, context: TranscriptContext, options: SimpleStreamOptions = {}, { bin, env }: Cli) {
   const stream = createAssistantMessageEventStream();
-  const output = { role: 'assistant', content: [], api: model.api, provider: model.provider, model: model.id,
+  const output: AssistantMessage = { role: 'assistant', content: [], api: model.api, provider: model.provider, model: model.id,
     usage: zeroUsage(), stopReason: 'pending', timestamp: Date.now() };
-  let child, dir, done = false, stderr = '', timer;
+  let child: Child | undefined, dir: string | undefined, done = false, stderr = '', timer: NodeJS.Timeout | undefined;
   const signal = options.signal;
 
-  const finish = ({ stopReason, error, aborted }) => {
+  const finish = (ending: Ending) => {
     if (done) return;
     done = true;
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM');
-      setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 5_000).unref();
+    const running = child;
+    if (running && running.exitCode === null && running.signalCode === null) {
+      running.kill('SIGTERM');
+      setTimeout(() => { if (running.exitCode === null && running.signalCode === null) running.kill('SIGKILL'); }, 5_000).unref();
     }
-    if (aborted || error) {
-      output.stopReason = aborted ? 'aborted' : 'error';
-      output.errorMessage = aborted ? 'Request was aborted' : error;
-      stream.push({ type: 'error', reason: output.stopReason, error: output });
+    if ('stopReason' in ending) {
+      output.stopReason = ending.stopReason;
+      stream.push({ type: 'done', reason: ending.stopReason, message: output });
     } else {
-      output.stopReason = stopReason;
-      stream.push({ type: 'done', reason: stopReason, message: output });
+      const reason = 'aborted' in ending ? 'aborted' : 'error';
+      output.stopReason = reason;
+      output.errorMessage = 'aborted' in ending ? 'Request was aborted' : ending.error;
+      stream.push({ type: 'error', reason, error: output });
     }
     stream.end(output);
     if (dir) void rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -242,11 +378,12 @@ function streamClaude(model, context, options = {}, { bin, env }) {
       if (toolsFile) await writeFile(toolsFile, JSON.stringify(tools.map(({ name, description, parameters }) => ({ name, description, parameters }))));
       if (done) return;
       stream.push({ type: 'start', partial: output });
-      child = spawn(bin, claudeArgs(model, { systemFile, toolsFile, reasoning: options.reasoning }),
+      const proc: Child = spawn(bin, claudeArgs(model, { systemFile, toolsFile, reasoning: options.reasoning }),
         { cwd: dir, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
+      child = proc;
       const parse = createParser(stream, output, finish);
       let buffer = '';
-      child.stdout.setEncoding('utf8').on('data', chunk => {
+      proc.stdout.setEncoding('utf8').on('data', (chunk: string) => {
         buffer += chunk;
         let nl;
         while (!done && (nl = buffer.indexOf('\n')) >= 0) {
@@ -254,37 +391,52 @@ function streamClaude(model, context, options = {}, { bin, env }) {
           buffer = buffer.slice(nl + 1);
         }
       });
-      child.stderr.setEncoding('utf8').on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
-      child.on('error', error => finish({ error: error.code === 'ENOENT'
+      proc.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-4000); });
+      proc.on('error', error => finish({ error: 'code' in error && error.code === 'ENOENT'
         ? `claude-cli: ${bin} not found. Install Claude Code or set PI_DURABLE_CLAUDE_BIN.` : `claude-cli: ${error.message}` }));
-      child.on('close', (code, sig) => {
+      proc.on('close', (code, sig) => {
         if (buffer.trim()) parse(buffer);
         finish({ error: `claude-cli: claude exited (${sig ?? `status ${code}`}) without a reply${stderr.trim() ? `: ${stderr.trim().split('\n').at(-1)}` : ''}` });
       });
-      child.stdin.on('error', () => {}); // a CLI that exits early closes its stdin; close reports why
+      proc.stdin.on('error', () => {}); // a CLI that exits early closes its stdin; close reports why
       // The prompt goes on stdin, not argv, so its length is not limited by the OS.
-      child.stdin.end(renderPrompt(messages));
+      proc.stdin.end(renderPrompt(messages));
     } catch (error) {
-      finish({ error: `claude-cli: ${error.message}` });
+      finish({ error: `claude-cli: ${error instanceof Error ? error.message : String(error)}` });
     }
   });
   return stream;
 }
 
+/** What `claude auth status --json` reports, as far as the provider reads it. */
+export interface ClaudeAuthStatus { loggedIn: boolean; authMethod?: string }
+export interface ClaudeAuthStatusOptions { bin: string; env: NodeJS.ProcessEnv; timeoutMs?: number }
+
 /** `claude auth status` as JSON, or undefined when the CLI is missing, fails, or takes over `timeoutMs`. */
-export function claudeAuthStatus({ bin, env, timeoutMs = 10_000 }) {
+export function claudeAuthStatus({ bin, env, timeoutMs = 10_000 }: ClaudeAuthStatusOptions): Promise<ClaudeAuthStatus | undefined> {
   return new Promise(resolve => {
     let out = '';
     const child = spawn(bin, ['auth', 'status', '--json'], { cwd: tmpdir(), env: childEnv(env), stdio: ['ignore', 'pipe', 'ignore'] });
     // Not spawn's `timeout`: its timer outlives a binary that never started.
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
-    const settle = value => { clearTimeout(timer); resolve(value); };
-    child.stdout.setEncoding('utf8').on('data', chunk => { out += chunk; });
+    const settle = (value: ClaudeAuthStatus | undefined) => { clearTimeout(timer); resolve(value); };
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => { out += chunk; });
     child.on('error', () => settle(undefined));
     child.on('close', () => {
-      try { settle(JSON.parse(out)); } catch { settle(undefined); }
+      let status: unknown;
+      try { status = parseJson(out); } catch { return settle(undefined); }
+      settle(isJson(status) ? { loggedIn: Boolean(status.loggedIn), authMethod: str(status.authMethod) } : undefined);
     });
   });
+}
+
+export interface ClaudeCliProviderOptions {
+  /** The environment the CLI runs in; defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
+  /** The `claude` binary; defaults to PI_DURABLE_CLAUDE_BIN in `env`, else `claude` on PATH. */
+  bin?: string;
+  /** How long `claude auth status` may take; defaults to 10 s. */
+  statusTimeoutMs?: number;
 }
 
 /**
@@ -292,15 +444,15 @@ export function claudeAuthStatus({ bin, env, timeoutMs = 10_000 }) {
  * passes through (an ANTHROPIC_API_KEY there makes the CLI bill that key instead of the plan), minus the markers of
  * a parent Claude Code session.
  */
-export function claudeCliProvider({ env = process.env, bin = env.PI_DURABLE_CLAUDE_BIN || 'claude', statusTimeoutMs } = {}) {
-  let status; // one `claude auth status` serves the checks of one moment (ModelRuntime runs several at once)
-  const check = async () => {
+export function claudeCliProvider({ env = process.env, bin = env.PI_DURABLE_CLAUDE_BIN || 'claude', statusTimeoutMs }: ClaudeCliProviderOptions = {}): Provider<typeof API> {
+  let status: Promise<ClaudeAuthStatus | undefined> | undefined; // one `claude auth status` serves the checks of one moment (ModelRuntime runs several at once)
+  const check = async (): Promise<AuthCheck | undefined> => {
     status ??= claudeAuthStatus({ bin, env, timeoutMs: statusTimeoutMs })
       .finally(() => setTimeout(() => { status = undefined; }, 5_000).unref());
     const result = await status;
     return result?.loggedIn ? { type: 'api_key', source: `claude CLI (${result.authMethod ?? 'signed in'})` } : undefined;
   };
-  const stream = (model, context, options) => streamClaude(model, context, options, { bin, env });
+  const stream = (model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions) => streamClaude(model, context, options, { bin, env });
   return createProvider({
     id: CLAUDE_CLI,
     name: 'Claude Code CLI',

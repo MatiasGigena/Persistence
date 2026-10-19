@@ -6,34 +6,53 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { describe, test } from 'node:test';
+import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import type { Context } from '@earendil-works/chord';
 import { createModels, Type } from '@earendil-works/pi-ai';
+import type { AssistantMessage, AssistantMessageEventStream, AuthCheck, AuthResult, Credential, Models, ThinkingLevel, Tool,
+  ToolResultMessage, Usage, UserMessage } from '@earendil-works/pi-ai';
+import type { Conversation } from '@earendil-works/pi-durable';
 import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
 import { isRetryableAssistantError } from '@earendil-works/pi-ai/utils/retry';
 import { anthropicSubscriptionSource } from '../../src/providers/anthropic.ts';
+import type { AnthropicAuthModels } from '../../src/providers/anthropic.ts';
 import { claudeArgs, claudeCliProvider, CONVENTION, MODELS, renderPrompt } from '../../src/providers/claude-cli.ts';
 import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
+import type { FakeClaudeStep } from '../fixtures/fake-claude.ts';
 
 const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.ts', import.meta.url));
 const STUB = fileURLToPath(new URL('../../src/providers/claude-cli-mcp.ts', import.meta.url));
 
+type Json = Record<string, unknown>;
+const isJson = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isList = (value: unknown): value is unknown[] => Array.isArray(value);
+const isString = (value: unknown): value is string => typeof value === 'string';
+const parseJson = (text: string): unknown => JSON.parse(text);
+/** The value at `path` inside parsed JSON, or undefined. */
+function dig(value: unknown, ...path: (string | number)[]): unknown {
+  let at = value;
+  for (const key of path) at = isList(at) ? (typeof key === 'number' ? at[key] : undefined) : isJson(at) ? at[key] : undefined;
+  return at;
+}
+
 // stream-json lines as claude 2.1.303 prints them with --include-partial-messages.
-const ev = event => ({ type: 'stream_event', event, session_id: 's', parent_tool_use_id: null });
+const ev = (event: Json): Json => ({ type: 'stream_event', event, session_id: 's', parent_tool_use_id: null });
 const init = { type: 'system', subtype: 'init', tools: [], model: 'claude-haiku-5-5' };
 const start = ev({ type: 'message_start', message: { id: 'msg_1', usage: {
   input_tokens: 10, cache_read_input_tokens: 4, cache_creation_input_tokens: 2, output_tokens: 1 } } });
-const text = (index, ...parts) => [
+const text = (index: number, ...parts: string[]) => [
   ev({ type: 'content_block_start', index, content_block: { type: 'text', text: '' } }),
   ...parts.map(part => ev({ type: 'content_block_delta', index, delta: { type: 'text_delta', text: part } })),
   ev({ type: 'content_block_stop', index }),
 ];
-const thinking = (index, part) => [
+const thinking = (index: number, part: string) => [
   ev({ type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '' } }),
   ev({ type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: part } }),
   ev({ type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: 'sig' } }),
   ev({ type: 'content_block_stop', index }),
 ];
-const toolUse = (index, id, name, input) => {
+const toolUse = (index: number, id: string, name: string, input: Json) => {
   const json = JSON.stringify(input), half = Math.floor(json.length / 2);
   return [
     ev({ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name: `mcp__pi__${name}`, input: {} } }),
@@ -42,13 +61,24 @@ const toolUse = (index, id, name, input) => {
     ev({ type: 'content_block_stop', index }),
   ];
 };
-const end = stop_reason => [ev({ type: 'message_delta', delta: { stop_reason }, usage: { output_tokens: 5 } }), ev({ type: 'message_stop' })];
-const result = extra => ({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: '',
+const end = (stop_reason: string) => [ev({ type: 'message_delta', delta: { stop_reason }, usage: { output_tokens: 5 } }), ev({ type: 'message_stop' })];
+const result = (extra: Json) => ({ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: '',
   usage: { input_tokens: 10, output_tokens: 5 }, total_cost_usd: 0.01, ...extra });
-const reply = (...parts) => ({ lines: [init, start, ...text(0, ...parts), ...end('end_turn'), result({ result: parts.join('') })], exit: 0 });
+const reply = (...parts: string[]): FakeClaudeStep => ({ lines: [init, start, ...text(0, ...parts), ...end('end_turn'), result({ result: parts.join('') })], exit: 0 });
+
+/** What the fake CLI logged for one call (see test/fixtures/fake-claude.ts); a SIGTERM logs `killed` alone. */
+interface Call { argv: string[]; stdin: string; cwd: string; env: unknown; system: string | null; mcp: unknown; tools: unknown[];
+  killed: boolean }
+
+function parseCall(line: string): Call {
+  const value = parseJson(line), o: Json = isJson(value) ? value : {};
+  return { argv: isList(o.argv) ? o.argv.filter(isString) : [], stdin: isString(o.stdin) ? o.stdin : '',
+    cwd: isString(o.cwd) ? o.cwd : '', env: o.env, system: isString(o.system) ? o.system : null, mcp: o.mcp,
+    tools: isList(o.tools) ? o.tools : [], killed: o.killed === true };
+}
 
 /** A provider whose `claude` is the fake CLI playing `script`; `calls()` reads what each call received. */
-async function fakeCli(t, script = [], { auth, env: extra = {} } = {}) {
+async function fakeCli(t: TestContext, script: FakeClaudeStep[] = [], { auth, env: extra = {} }: { auth?: Json; env?: NodeJS.ProcessEnv } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'pi-durable-fake-claude-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const bin = join(dir, 'claude');
@@ -61,25 +91,33 @@ async function fakeCli(t, script = [], { auth, env: extra = {} } = {}) {
     ...(auth ? { FAKE_CLAUDE_AUTH: JSON.stringify(auth) } : {}), ...extra };
   const models = createModels();
   models.setProvider(claudeCliProvider({ env, bin }));
-  const calls = async () => (await readFile(log, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
-  return { dir, bin, models, model: models.getModel('claude-cli', 'haiku'), calls };
+  const calls = async () => (await readFile(log, 'utf8')).split('\n').filter(Boolean).map(parseCall);
+  const model = models.getModel('claude-cli', 'haiku');
+  assert.ok(model);
+  return { dir, bin, models, model, calls };
 }
 
-async function collect(stream) {
+async function collect(stream: AssistantMessageEventStream) {
   const events = [];
   for await (const event of stream) events.push(event);
   return { events, types: events.map(e => e.type), message: await stream.result() };
 }
 
-async function until(predicate, ms = 3_000) {
+async function until(predicate: () => boolean | Promise<boolean>, ms = 3_000) {
   for (const stop = Date.now() + ms; Date.now() < stop; await new Promise(r => setTimeout(r, 20))) {
     if (await predicate()) return true;
   }
   return false;
 }
 
-const user = (content, timestamp = 1) => ({ role: 'user', content, timestamp });
-const tools = [{ name: 'read', description: 'Read a file', parameters: Type.Object({ path: Type.String() }) },
+const user = (content: UserMessage['content'], timestamp = 1): UserMessage => ({ role: 'user', content, timestamp });
+const firstText = (message: AssistantMessage) => {
+  const [block] = message.content;
+  return block?.type === 'text' ? block.text : undefined;
+};
+const noUsage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+const tools: Tool[] = [{ name: 'read', description: 'Read a file', parameters: Type.Object({ path: Type.String() }) },
   { name: 'date', description: 'Date of a message', parameters: Type.Object({ id: Type.Integer() }) }];
 
 describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
@@ -93,15 +131,16 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.deepEqual({ ...message.usage, cost: message.usage.cost.total },
       { input: 10, output: 5, cacheRead: 4, cacheWrite: 2, totalTokens: 21, cost: 0 });
     const [call] = await cli.calls();
+    assert.ok(call);
     assert.equal(call.stdin, 'Hi there');
     for (const flag of ['-p', '--verbose', '--include-partial-messages', '--no-session-persistence', '--strict-mcp-config', '--disable-slash-commands']) {
       assert.ok(call.argv.includes(flag), flag);
     }
-    const value = flag => call.argv[call.argv.indexOf(flag) + 1];
+    const value = (flag: string) => call.argv[call.argv.indexOf(flag) + 1];
     assert.equal(value('--output-format'), 'stream-json');
     assert.equal(value('--tools'), '');
     assert.equal(value('--setting-sources'), '');
-    assert.deepEqual(JSON.parse(value('--settings')), { autoMemoryEnabled: false, disableAllHooks: true });
+    assert.deepEqual(parseJson(value('--settings') ?? ''), { autoMemoryEnabled: false, disableAllHooks: true });
     assert.equal(value('--model'), 'haiku');
     assert.equal(value('--max-turns'), '1');
     assert.equal(value('--effort'), 'high');
@@ -127,10 +166,11 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.deepEqual(types.filter(type => type.startsWith('toolcall')), ['toolcall_start', 'toolcall_delta', 'toolcall_delta', 'toolcall_end']);
     assert.ok(await until(async () => (await cli.calls()).some(c => c.killed)), 'the CLI was killed');
     const [call] = await cli.calls();
-    assert.deepEqual(call.mcp.mcpServers.pi.command, process.execPath);
-    assert.equal(call.mcp.mcpServers.pi.args[0], STUB);
-    assert.deepEqual(call.tools.map(tool => tool.name), ['read', 'date']);
-    assert.equal(call.tools[0].parameters.properties.path.type, 'string');
+    assert.ok(call);
+    assert.deepEqual(dig(call.mcp, 'mcpServers', 'pi', 'command'), process.execPath);
+    assert.equal(dig(call.mcp, 'mcpServers', 'pi', 'args', 0), STUB);
+    assert.deepEqual(call.tools.map(tool => dig(tool, 'name')), ['read', 'date']);
+    assert.equal(dig(call.tools, 0, 'parameters', 'properties', 'path', 'type'), 'string');
   });
 
   test('parallel tool_use blocks become parallel toolCalls', async (t) => {
@@ -138,17 +178,18 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
       ...toolUse(1, 'toolu_b', 'date', { id: 3 }), ...end('tool_use')] }]);
     const { message } = await collect(cli.models.streamSimple(cli.model, { tools, messages: [user('both')] }));
     assert.equal(message.stopReason, 'toolUse');
-    assert.deepEqual(message.content.map(b => [b.id, b.name, b.arguments]), [['toolu_a', 'read', { path: 'a' }], ['toolu_b', 'date', { id: 3 }]]);
+    assert.deepEqual(message.content.map(b => b.type === 'toolCall' ? [b.id, b.name, b.arguments] : b.type), [['toolu_a', 'read', { path: 'a' }], ['toolu_b', 'date', { id: 3 }]]);
   });
 
   test('history is folded into one tagged prompt, tool results included', async (t) => {
     const cli = await fakeCli(t, [reply('It says hi.')]);
-    const assistant = { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret' }, { type: 'text', text: 'Sure.' },
+    const assistant: AssistantMessage = { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret' }, { type: 'text', text: 'Sure.' },
       { type: 'toolCall', id: 't1', name: 'read', arguments: { path: 'a.txt' } }], api: 'claude-cli', provider: 'claude-cli',
-    model: 'haiku', usage: {}, stopReason: 'toolUse', timestamp: 2 };
-    const result = { role: 'toolResult', toolCallId: 't1', toolName: 'read', content: [{ type: 'text', text: 'hi' }], isError: false, timestamp: 3 };
+    model: 'haiku', usage: noUsage, stopReason: 'toolUse', timestamp: 2 };
+    const result: ToolResultMessage = { role: 'toolResult', toolCallId: 't1', toolName: 'read', content: [{ type: 'text', text: 'hi' }], isError: false, timestamp: 3 };
     await collect(cli.models.streamSimple(cli.model, { tools, messages: [user('Read a.txt'), assistant, result] }));
     const [call] = await cli.calls();
+    assert.ok(call);
     assert.equal(call.stdin, [
       '<transcript>', '<user>\nRead a.txt\n</user>', '', '<assistant>\nSure.\n</assistant>',
       '<tool_call id="t1" name="read">{"path":"a.txt"}</tool_call>', '',
@@ -164,18 +205,22 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     const cli = await fakeCli(t, [reply('a line')]);
     const { message } = await collect(cli.models.streamSimple(cli.model, { systemPrompt: 'S', tools, messages: [user('summarize')] },
       { toolChoice: 'none', reasoning: 'low' }));
-    assert.equal(message.content[0].text, 'a line');
+    assert.equal(firstText(message), 'a line');
     const [call] = await cli.calls();
+    assert.ok(call);
     assert.ok(!call.argv.includes('--mcp-config'));
     assert.ok(call.argv.includes('--strict-mcp-config'));
   });
 
   test('thinking levels map to --effort', () => {
-    const effort = reasoning => {
-      const args = claudeArgs(MODELS[0], { systemFile: 'system.md', reasoning });
+    const [opus] = MODELS;
+    assert.ok(opus);
+    const effort = (reasoning: ThinkingLevel | undefined) => {
+      const args = claudeArgs(opus, { systemFile: 'system.md', reasoning });
       return args.includes('--effort') ? args[args.indexOf('--effort') + 1] : undefined;
     };
-    assert.deepEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', undefined].map(effort),
+    const levels: (ThinkingLevel | undefined)[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', undefined];
+    assert.deepEqual(levels.map(effort),
       ['low', 'low', 'medium', 'high', 'xhigh', 'max', undefined]);
     assert.deepEqual(MODELS.map(m => m.id), ['opus', 'sonnet', 'haiku', 'fable']);
   });
@@ -194,12 +239,12 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.equal(overloaded.errorMessage, 'claude-cli: API error 529: API Error: 529 Overloaded');
     assert.ok(isRetryableAssistantError(overloaded));
     const limited = await ask();
-    assert.match(limited.errorMessage, /^Claude usage limit reached \(five_hour quota exceeded\) · resets /);
+    assert.match(limited.errorMessage ?? '', /^Claude usage limit reached \(five_hour quota exceeded\) · resets /);
     assert.ok(!isRetryableAssistantError(limited), 'a plan limit lasts hours: no retries');
     const crashed = await ask();
     assert.equal(crashed.errorMessage, 'claude-cli: claude exited (status 2) without a reply: fatal: something broke');
     const signedOut = await ask();
-    assert.match(signedOut.errorMessage, /not signed in.*claude auth login/);
+    assert.match(signedOut.errorMessage ?? '', /not signed in.*claude auth login/);
     assert.ok(await until(async () => (await cli.calls()).filter(c => c.killed).length === 2), 'limit and 401 calls were killed');
   });
 
@@ -207,7 +252,7 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     const cli = await fakeCli(t, [{ lines: [init, start, ...text(0, 'partial')] }, { lines: [init] }]);
     const controller = new AbortController();
     const stream = cli.models.streamSimple(cli.model, { messages: [user('x')] }, { signal: controller.signal });
-    const types = [];
+    const types: string[] = [];
     for await (const event of stream) {
       types.push(event.type);
       if (event.type === 'text_delta') controller.abort();
@@ -215,10 +260,10 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     const aborted = await stream.result();
     assert.equal(types.at(-1), 'error');
     assert.equal(aborted.stopReason, 'aborted');
-    assert.equal(aborted.content[0].text, 'partial');
+    assert.equal(firstText(aborted), 'partial');
     const timed = (await collect(cli.models.streamSimple(cli.model, { messages: [user('x')] }, { timeoutMs: 300 }))).message;
     assert.equal(timed.stopReason, 'error');
-    assert.match(timed.errorMessage, /timed out after 300 ms/);
+    assert.match(timed.errorMessage ?? '', /timed out after 300 ms/);
     assert.ok(isRetryableAssistantError(timed));
     assert.ok(await until(async () => (await cli.calls()).filter(c => c.killed).length === 2));
   });
@@ -226,9 +271,9 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
   test('auth check asks `claude auth status`, logged in or not', async (t) => {
     const signedIn = await fakeCli(t, [], { auth: { loggedIn: true, authMethod: 'claude.ai' } });
     assert.deepEqual(await signedIn.models.checkAuth('claude-cli'), { type: 'api_key', source: 'claude CLI (claude.ai)' });
-    assert.deepEqual((await signedIn.models.getAuth('claude-cli')).auth, {});
+    assert.deepEqual((await signedIn.models.getAuth('claude-cli'))?.auth, {});
     const [status] = await signedIn.calls();
-    assert.deepEqual(status.argv, ['auth', 'status', '--json']);
+    assert.deepEqual(status?.argv, ['auth', 'status', '--json']);
     const signedOut = await fakeCli(t, [], { auth: { loggedIn: false } });
     assert.equal(await signedOut.models.checkAuth('claude-cli'), undefined);
     const missing = createModels();
@@ -244,21 +289,25 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
       { lines: [init, start, ...toolUse(0, 'toolu_1', 'read', { path: 'note.txt' }), ...end('tool_use')] },
       reply('The note says hi.'),
     ]);
-    const instance = await openInstance({ databasePath: join(cwd, 'state', 'chat.sqlite'), cwd, allowTools: true,
-      models: cli.models, model: { provider: 'claude-cli', modelId: 'haiku' } });
+    // src/runtime is not typed yet: name what this test uses of the instance.
+    const instance: { root: Conversation; context: Context; memory?: { jobs: number }; close(): Promise<void> } = await openInstance({
+      databasePath: join(cwd, 'state', 'chat.sqlite'), cwd, allowTools: true, models: cli.models,
+      model: { provider: 'claude-cli', modelId: 'haiku' }, onReport: undefined });
     try {
-      assert.equal(instance.memory.jobs, 2, 'claude-cli compactions run 2 at a time');
+      assert.equal(instance.memory?.jobs, 2, 'claude-cli compactions run 2 at a time');
       const submission = await instance.root.submit({ type: 'input', content: 'Read note.txt.' }, instance.context);
       assert.equal(await answerText(instance.root, await submission.wait(instance.context), instance.context), 'The note says hi.');
-      const calls = (await cli.calls()).filter(c => c.argv);
+      const calls = (await cli.calls()).filter(c => c.argv.length);
       assert.equal(calls.length, 2);
-      assert.ok(calls[0].tools.some(tool => tool.name === 'read') && calls[0].tools.some(tool => tool.name === 'zoom'));
-      assert.match(calls[0].system, /UniiChat|zoom/);
-      assert.ok(calls[1].stdin.includes('<tool_call id="toolu_1" name="read">{"path":"note.txt"}</tool_call>'));
-      assert.ok(calls[1].stdin.includes('<tool_result id="toolu_1" name="read" is_error="false">'));
-      assert.ok(calls[1].stdin.includes('the note says hi'));
-      const entries = await transcript(instance.root, instance.context);
-      assert.ok(entries.some(entry => entry.kind === 'pi.tool-result' && JSON.stringify(entry.model).includes('the note says hi')));
+      const [first, second] = calls;
+      assert.ok(first && second);
+      assert.ok(first.tools.some(tool => dig(tool, 'name') === 'read') && first.tools.some(tool => dig(tool, 'name') === 'zoom'));
+      assert.match(first.system ?? '', /UniiChat|zoom/);
+      assert.ok(second.stdin.includes('<tool_call id="toolu_1" name="read">{"path":"note.txt"}</tool_call>'));
+      assert.ok(second.stdin.includes('<tool_result id="toolu_1" name="read" is_error="false">'));
+      assert.ok(second.stdin.includes('the note says hi'));
+      const entries: unknown[] = await transcript(instance.root, instance.context);
+      assert.ok(entries.some(entry => dig(entry, 'kind') === 'pi.tool-result' && JSON.stringify(dig(entry, 'model')).includes('the note says hi')));
     } finally {
       await instance.close();
     }
@@ -273,18 +322,20 @@ describe('claude-cli stub MCP server', () => {
     await writeFile(file, JSON.stringify([{ name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } }]));
     const child = spawn(process.execPath, [STUB, file], { stdio: ['pipe', 'pipe', 'inherit'] });
     const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
-    const call = async (id, method, params) => {
+    const call = async (id: number, method: string, params?: Json) => {
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-      return JSON.parse((await lines.next()).value);
+      const line = await lines.next();
+      if (line.done) throw new Error('the stub closed its output');
+      return parseJson(line.value);
     };
     try {
-      assert.equal((await call(1, 'initialize', { protocolVersion: '2025-06-18' })).result.serverInfo.name, 'pi');
+      assert.equal(dig(await call(1, 'initialize', { protocolVersion: '2025-06-18' }), 'result', 'serverInfo', 'name'), 'pi');
       child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
-      assert.deepEqual((await call(2, 'tools/list')).result.tools, [{ name: 'read', description: 'Read a file',
+      assert.deepEqual(dig(await call(2, 'tools/list'), 'result', 'tools'), [{ name: 'read', description: 'Read a file',
         inputSchema: { type: 'object', properties: { path: { type: 'string' } } } }]);
-      assert.deepEqual((await call(3, 'tools/call', { name: 'read', arguments: { path: 'x' } })).result,
+      assert.deepEqual(dig(await call(3, 'tools/call', { name: 'read', arguments: { path: 'x' } }), 'result'),
         { content: [{ type: 'text', text: 'deferred to host' }] });
-      assert.equal((await call(4, 'resources/list')).error.code, -32601);
+      assert.equal(dig(await call(4, 'resources/list'), 'error', 'code'), -32601);
     } finally {
       child.kill();
     }
@@ -292,14 +343,16 @@ describe('claude-cli stub MCP server', () => {
 });
 
 describe('anthropic subscription refusal', () => {
-  const fake = (check, auth) => ({ checkAuth: async () => check, getAuth: async () => auth });
+  const fake = (check: AuthCheck | undefined, auth?: AuthResult): AnthropicAuthModels =>
+    ({ checkAuth: async () => check, getAuth: async () => auth });
+  const source = async (models: AnthropicAuthModels) => await anthropicSubscriptionSource(models) ?? '';
 
   test('detects a Claude subscription however it is supplied', async () => {
-    assert.match(await anthropicSubscriptionSource(fake({ type: 'oauth', source: 'OAuth' })), /Pro\/Max login/);
+    assert.match(await source(fake({ type: 'oauth', source: 'OAuth' })), /Pro\/Max login/);
     assert.equal(await anthropicSubscriptionSource(fake({ type: 'api_key', source: 'ANTHROPIC_OAUTH_TOKEN' })), 'ANTHROPIC_OAUTH_TOKEN');
-    assert.match(await anthropicSubscriptionSource(fake({ type: 'api_key', source: 'stored credential' },
+    assert.match(await source(fake({ type: 'api_key', source: 'stored credential' },
       { auth: { apiKey: 'sk-ant-oat01-abc' }, source: 'stored credential' })), /subscription token in stored credential/);
-    assert.match(await anthropicSubscriptionSource(fake({ type: 'api_key', source: 'ANTHROPIC_AUTH_TOKEN' },
+    assert.match(await source(fake({ type: 'api_key', source: 'ANTHROPIC_AUTH_TOKEN' },
       { auth: { headers: { Authorization: 'Bearer sk-ant-oat01-abc' } }, source: 'ANTHROPIC_AUTH_TOKEN' })), /ANTHROPIC_AUTH_TOKEN/);
     assert.equal(await anthropicSubscriptionSource(fake({ type: 'api_key', source: 'ANTHROPIC_API_KEY' },
       { auth: { apiKey: 'sk-ant-api03-abc' }, source: 'ANTHROPIC_API_KEY' })), undefined);
@@ -307,18 +360,18 @@ describe('anthropic subscription refusal', () => {
   });
 
   test('reads pi-ai\'s real anthropic auth without refreshing an OAuth login', async () => {
-    const real = (credential, vars = {}) => {
+    const real = (credential: Credential | undefined, vars: Record<string, string> = {}): Models => {
       const models = createModels({
         credentials: { read: async () => credential, list: async () => [], modify: async () => { throw new Error('no writes'); }, delete: async () => {} },
-        authContext: { env: async name => vars[name], fileExists: async () => false },
+        authContext: { env: async (name: string) => vars[name], fileExists: async () => false },
       });
       models.setProvider(anthropicProvider());
       return models;
     };
-    const expired = { type: 'oauth', access: 'sk-ant-oat01-x', refresh: 'r', expires: 0 };
-    assert.match(await anthropicSubscriptionSource(real(expired)), /Pro\/Max login/);
+    const expired: Credential = { type: 'oauth', access: 'sk-ant-oat01-x', refresh: 'r', expires: 0 };
+    assert.match(await source(real(expired)), /Pro\/Max login/);
     assert.equal(await anthropicSubscriptionSource(real(undefined, { ANTHROPIC_OAUTH_TOKEN: 'sk-ant-oat01-x' })), 'ANTHROPIC_OAUTH_TOKEN');
-    assert.match(await anthropicSubscriptionSource(real(undefined, { ANTHROPIC_API_KEY: 'sk-ant-oat01-x' })), /ANTHROPIC_API_KEY/);
+    assert.match(await source(real(undefined, { ANTHROPIC_API_KEY: 'sk-ant-oat01-x' })), /ANTHROPIC_API_KEY/);
     assert.equal(await anthropicSubscriptionSource(real(undefined, { ANTHROPIC_API_KEY: 'sk-ant-api03-x' })), undefined);
     assert.equal(await anthropicSubscriptionSource(real({ type: 'api_key', key: 'sk-ant-api03-x' })), undefined);
   });
