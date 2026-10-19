@@ -416,6 +416,16 @@ export class Memory {
   /** The prompt and tools of the latest turn, so compactions share the turns' prefix (set by the extension). */
   setCompactionPrompt(prompt: CompactionPrompt): void { this.compactionPrompt = prompt; }
 
+  /**
+   * Compact with `summarize` from now on, at most `jobs` calls at once (e.g. after the turn model changed). Calls in
+   * flight finish with the summarizer they started with; lowering `jobs` only delays new calls.
+   */
+  setSummarizer(summarize: Summarizer, jobs = this.jobs): void {
+    this.summarize = summarize;
+    this.jobs = jobs;
+    this.schedule();
+  }
+
   schedule(): void {
     if (this.scheduled || this.closing) return;
     this.scheduled = true;
@@ -530,7 +540,9 @@ export class Memory {
     }
     const { system = PROMPT, tools } = this.compactionPrompt ?? {};
     const messages: CompactionMessage[] = [{ role: 'user', content: `${this.compactionContext(p)}\n\n${task}` }];
-    const ask = (): Promise<string> => this.summarize(system, messages, { signal: this.controller.signal, tools, node: { l: p.l, i: p.i, name: name(p) } });
+    // One node, one model: a summarizer swapped mid-call serves only the nodes started after it.
+    const { summarize } = this;
+    const ask = (): Promise<string> => summarize(system, messages, { signal: this.controller.signal, tools, node: { l: p.l, i: p.i, name: name(p) } });
     let raw = cleanLine(String(await ask() ?? ''));
     if (!raw) throw new Error('the compactor returned no text');
     let best = raw;

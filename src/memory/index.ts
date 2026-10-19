@@ -4,7 +4,7 @@
 //   const extension = createUniiExtension({ memory, resolveAgentChat });
 //   memory.append({ kind: 'work', text: '[Name] report…' });       // or memory.report({ name, text, id })
 //   memory.render();                                              // the current view in <chat> tags
-export { isKind, KINDS, Memory, openMemory } from './memory.ts';
+export { isKind, JOBS, KINDS, Memory, openMemory } from './memory.ts';
 export type {
   AppendInput, Budget, CompactionPrompt, Kind, MemoryOptions, MemoryRecord, MemoryStatus, ReportInput, TreeNode,
 } from './memory.ts';
