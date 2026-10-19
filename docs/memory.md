@@ -42,7 +42,8 @@ The log is append-only. Each record is one JSON line in `main/YYYY-MM-DD.jsonl`:
 | `src` | Optional idempotency key (see below). |
 
 The file name is the local day of the write, not of `date`. Files split by day only to stay small. Each line is
-fsynced before `append()` returns. Damaged lines are skipped with a warning.
+fsynced before `append()` returns. Damaged lines are skipped with a warning; a line that parses but lacks one of
+these fields (with its type) is dropped.
 
 ### Kinds
 
@@ -60,7 +61,7 @@ not logged. Empty or whitespace-only text logs nothing.
 
 ### Clipping and splitting
 
-The limit is `CAP = 30_000` characters (`src/memory/util.mjs`).
+The limit is `CAP = 30_000` characters (`src/memory/util.ts`).
 
 - `echo` text is **clipped**: the first 15,000 and the last 15,000 characters, around a marker
   `[… N characters clipped …]` that does not count toward the limit.
@@ -135,7 +136,7 @@ due = (T - last) / 2^l          last: the pair's last message
 ```
 
 The batch merges the most due pair, the oldest on ties, and repeats. With every parent built, this order equals
-Taelin's rollback `push` at every step (`test/memory/view.test.mjs` checks t = 0..5000).
+Taelin's rollback `push` at every step (`test/memory/view.test.ts` checks t = 0..5000).
 
 A batch merges only a pair whose parent node is built. If the most due pair's parent is not built yet, the batch
 **waits** for it instead of merging a less due pair. The view may stay over 128 KB until the summary lands. Past twice
@@ -199,7 +200,7 @@ A compaction is a call like a turn. It sends:
   the same new lines and runs its own batches past 32 KB. For a leaf it holds the built lines before the message; for
   a merge, the built lines up to the merge's last message. It stops at the first unbuilt line, so a compaction never
   sees a placeholder.
-- **The task** is the recipe's text (`leafTask`, `mergeTask` in `src/memory/prompt.mjs`), with a ruler of 512 dashes
+- **The task** is the recipe's text (`leafTask`, `mergeTask` in `src/memory/prompt.ts`), with a ruler of 512 dashes
   that shows the length.
 
 ### The size cut
@@ -216,7 +217,7 @@ An empty reply is a failed call. See [ADR 0007](decisions/0007-cheap-compaction-
 
 ### The model
 
-`defaultCompactionModel(turnModel, models)` in `src/memory/summarizer.mjs` picks the compaction model:
+`defaultCompactionModel(turnModel, models)` in `src/memory/summarizer.ts` picks the compaction model:
 
 | Turn provider | Compaction model |
 |---|---|
@@ -232,7 +233,7 @@ catalog it costs $0.10/$0.50 per million tokens (cache read $0.01), against $2/$
 272k window.
 
 With `claude-cli`, every compaction is a full `claude` call that draws on the plan's usage limits, so the host opens the
-memory with `jobs: 2` (`src/runtime/runtime.mjs`). Such calls get no tools, since the compactor sends
+memory with `jobs: 2` (`src/runtime/runtime.ts`). Such calls get no tools, since the compactor sends
 `toolChoice: "none"`, and the CLI ignores `maxTokens`. See [models.md](models.md).
 
 The host has no flag for the compaction model. Programmatically, `openMemory(dir, { compactionModel })` overrides
@@ -304,7 +305,7 @@ zoom("Name")
 - `zoom(id, 1)` gives message `id` whole as `id+1|kind: text`. A message over 16,000 characters (`PAGE`) comes in
   pages: `id+1 (page p of P; zoom(id, 1, page) for the others)|…`. A message that was split at 30,000 characters is
   several ids; each `zoom(id, 1)` gives one part.
-- `zoom("Name")` gives an agent's whole chat, from `agentTranscript` in `src/agents/index.mjs`. A string of digits is
+- `zoom("Name")` gives an agent's whole chat, from `agentTranscript` in `src/agents/index.ts`. A string of digits is
   read as an id; square brackets around a name are stripped. `zoom("Pi")` gives Pi's own transcript.
 
 The tool's output is limited to 256 KiB and 100,000 lines.
@@ -337,13 +338,13 @@ Directories are created with mode 0700 and files with 0600. `view.json.<pid>.tmp
 
 | File | Contents |
 |---|---|
-| `src/memory/index.mjs` | Public exports: `openMemory`, `Memory`, `KINDS`, `createUniiExtension`, `REPORT_KIND`, `createPiAiSummarizer`, `defaultCompactionModel`, `PROMPT`. |
-| `src/memory/memory.mjs` | `Memory`: the log, the tree, both views, the compactor queues, `render`, `settle`, `zoom`, `date`, `previousExchange`, `status`; `openMemory` and its one-open-per-process guard. |
-| `src/memory/view.mjs` | `View`: the sawtooth `fit` and the `due` order; node helpers `start`, `end`, `key`, `name`, `parentOf`; `cut` for a view ending before message k. |
-| `src/memory/prompt.mjs` | The system prompt `PROMPT`, the compaction tasks `leafTask` and `mergeTask`, `tooLong`, the 512-dash `RULER`, the placeholder text. |
-| `src/memory/summarizer.mjs` | The default pi-ai summarizer and the compaction model choice (`CHEAP_MODELS`, `defaultCompactionModel`). |
-| `src/memory/extension.mjs` | The `uniichat` pi-durable extension: the request rewrite, the logging hooks, the `zoom` and `date` tools, the declined compactions. |
-| `src/memory/util.mjs` | `NODE`, `CAP`, `clip`, `split`, `cutLine`, `cleanLine`, byte helpers, date formatting, `appendJson`, `atomicWrite`. |
+| `src/memory/index.ts` | Public exports: `openMemory`, `Memory`, `KINDS`, `isKind`, `createUniiExtension`, `REPORT_KIND`, `createPiAiSummarizer`, `defaultCompactionModel`, `PROMPT`, and their types (`Kind`, `MemoryRecord`, `MemoryOptions`, `Summarizer`, `UniiExtensionOptions`, …). |
+| `src/memory/memory.ts` | `Memory`: the log, the tree, both views, the compactor queues, `render`, `settle`, `zoom`, `date`, `previousExchange`, `status`; `openMemory` and its one-open-per-process guard. |
+| `src/memory/view.ts` | `View`: the sawtooth `fit` and the `due` order; node helpers `start`, `end`, `key`, `name`, `parentOf`; `cut` for a view ending before message k. |
+| `src/memory/prompt.ts` | The system prompt `PROMPT`, the compaction tasks `leafTask` and `mergeTask`, `tooLong`, the 512-dash `RULER`, the placeholder text. |
+| `src/memory/summarizer.ts` | The default pi-ai summarizer and the compaction model choice (`CHEAP_MODELS`, `defaultCompactionModel`). |
+| `src/memory/extension.ts` | The `uniichat` pi-durable extension: the request rewrite, the logging hooks, the `zoom` and `date` tools, the declined compactions. |
+| `src/memory/util.ts` | `NODE`, `CAP`, `clip`, `split`, `cutLine`, `cleanLine`, byte helpers, date formatting, `appendJson`, `atomicWrite`, `errorMessage`, `isObject`. |
 
 ## Deviations from the recipe
 

@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { cut, end, start, View } from '../../src/memory/view.ts';
+import type { Pos } from '../../src/memory/view.ts';
 
 // Taelin's rollback push (recipe §3.1), the reference for the view's merge order.
-function push(s, states) {
+type States = { keep: number; life: number; state: number; older: States | null };
+function push(s: number, states: States | null): States {
   if (states === null) return { keep: 0, life: 0, state: s, older: null };
   const { keep, life, state, older } = states;
   if (keep === 0) return { keep: 1, life, state, older };
   if (life > 0) return { keep: 0, life: 0, state: s, older: { keep: 0, life: life - 1, state, older } };
   return { keep: 0, life, state: s, older: push(state, older) };
 }
-function pushView(states, T) {
-  const starts = [];
+function pushView(states: States | null, T: number): Pos[] {
+  const starts: number[] = [];
   for (let s = states; s; s = s.older) starts.push(s.state);
   starts.reverse();
   return starts.map((st, k) => { const n = (starts[k + 1] ?? T) - st; return { l: Math.log2(n), i: st / n }; });
@@ -20,7 +22,7 @@ function pushView(states, T) {
 describe('unii view', () => {
   test('due = (T - last) / 2^l with the push list length as budget makes exactly the merges push makes (t = 0..5000)', () => {
     const v = new View({ hi: Infinity, lo: Infinity, sizeOf: () => 1, built: () => true });
-    let states = null;
+    let states: States | null = null;
     for (let t = 0; t <= 5000; t++) {
       states = push(t, states);
       const want = pushView(states, t + 1);
@@ -44,10 +46,15 @@ describe('unii view', () => {
   test('sawtooth: between batches the view only grows at its end; few lines rewritten per message', () => {
     let seed = 1;
     const rnd = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
-    const sizes = new Map();
-    const sizeOf = p => { const k = `${p.l}/${p.i}`; if (!sizes.has(k)) sizes.set(k, 150 + Math.floor(rnd() * 362)); return sizes.get(k); };
+    const sizes = new Map<string, number>();
+    const sizeOf = (p: Pos): number => {
+      const k = `${p.l}/${p.i}`;
+      let size = sizes.get(k);
+      if (size === undefined) sizes.set(k, size = 150 + Math.floor(rnd() * 362));
+      return size;
+    };
     const v = new View({ hi: 128_000, lo: 64_000, sizeOf, built: () => true });
-    let prev = [], resent = 0, batches = 0;
+    let prev: Pos[] = [], resent = 0, batches = 0;
     const N = 5000;
     for (let t = 0; t < N; t++) {
       v.append(t);
@@ -58,7 +65,7 @@ describe('unii view', () => {
         assert.deepEqual(v.parts.slice(0, prev.length), prev, 'no batch: the old view is a prefix of the new one');
       }
       let k = 0;
-      while (k < prev.length && k < v.parts.length && prev[k].l === v.parts[k].l && prev[k].i === v.parts[k].i) k++;
+      while (k < prev.length && k < v.parts.length && prev[k]?.l === v.parts[k]?.l && prev[k]?.i === v.parts[k]?.i) k++;
       resent += v.parts.length - k;
       prev = v.parts.map(p => ({ ...p }));
       assert.ok(v.tiles(t + 1));
@@ -69,16 +76,16 @@ describe('unii view', () => {
   });
 
   test('a lagging compactor: the batch waits for the most due pair, the newest lines stay one per message', () => {
-    let ready = p => p.l <= 1;
+    let ready = (p: Pos): boolean => p.l <= 1;
     const v = new View({ hi: 20, lo: 10, sizeOf: () => 1, built: p => ready(p) });
     for (let i = 0; i < 40; i++) { v.append(i); v.fit(i + 1); }
-    assert.equal(v.parts.at(-1).l, 0);
-    assert.equal(v.parts.at(-2).l, 0);
+    assert.equal(v.parts.at(-1)?.l, 0);
+    assert.equal(v.parts.at(-2)?.l, 0);
     ready = () => true;
     v.fit(40);
     assert.ok(v.parts.length <= 10);
     assert.ok(v.tiles(40));
-    assert.equal(v.parts.at(-1).l, 0);
+    assert.equal(v.parts.at(-1)?.l, 0);
   });
 
   test('only built parents merge; the batch resumes as they land', () => {

@@ -1,22 +1,53 @@
+import type { Context } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
+import type { AssistantMessage, ImageContent, Message, TextContent, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 import { getCurrentSystemMessage, getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
 import {
   CompactionTask, defineExtension, defineTool, GenerationTask, hook, ROOT_CONVERSATION_ID, section, ToolTask,
 } from '@earendil-works/pi-durable';
+import type { ConversationId, EntryRecord, Extension, HookApi } from '@earendil-works/pi-durable';
 import { reportSrc } from './memory.ts';
+import type { Memory, ReportInput } from './memory.ts';
 import { PROMPT } from './prompt.ts';
-import { CAP, clip, formatDate, hash } from './util.ts';
+import { CAP, clip, formatDate, hash, isObject } from './util.ts';
 
 export const REPORT_KIND = 'agents.report';
 const LOGGED = new Set(['stop', 'length', 'toolUse']);
-const isFinal = m => m.role === 'assistant'
+/** What the extension reads of a pi-durable ContextView: entries (ids, kinds, data) and their model messages. */
+export type ContextEntries = {
+  readonly entries: readonly (Pick<EntryRecord, 'kind' | 'data'> & { readonly id: number })[];
+  readonly contributions: readonly (readonly Message[])[];
+};
+/**
+ * What beforeRequest uses of its HookApi. HookApi does not declare context(), but the task runtime behind it has it
+ * (pi-durable's TaskRuntime.context, which returns a ContextView); without it, inputs are keyed by timestamp.
+ */
+export type RequestApi = Pick<HookApi, 'conversationId'> & {
+  readonly context?: (conversationId: ConversationId, context: Context) => Promise<ContextEntries>;
+};
+export type UniiExtensionOptions = {
+  memory: Memory;
+  isRoot?: (conversationId: ConversationId) => boolean;
+  /** The whole chat of agent `name`, for zoom("Name"). */
+  resolveAgentChat?: (name: string) => string | Promise<string>;
+  settleMs?: number;
+  prevBytes?: number;
+  now?: () => Date;
+  name?: string;
+};
+type Content = UserMessage['content'] | ToolResultMessage['content'];
+/** One loggable message of the context; `run`: it belongs to the current run. */
+type Item = { m: UserMessage | AssistantMessage | ToolResultMessage; run: boolean; src: string; report?: ReportInput | undefined; calls?: string[] };
+
+const isFinal = (m: Message | undefined): boolean => m?.role === 'assistant'
   && (m.stopReason === 'stop' || m.stopReason === 'length' || (m.stopReason === 'toolUse' && !m.content.some(b => b.type === 'toolCall')));
-const textOf = content => typeof content === 'string' ? content
+const textOf = (content: Content | undefined): string => typeof content === 'string' ? content
   : (content ?? []).map(b => b.type === 'text' ? b.text : b.type === 'image' ? '[image]' : '').filter(Boolean).join('\n');
-const blocksOf = content => typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+const blocksOf = (content: UserMessage['content']): (TextContent | ImageContent)[] =>
+  typeof content === 'string' ? [{ type: 'text', text: content }] : content;
 
 /** Log one assistant message: its text as `pi`, each tool call (name and JSON input) as `tool`. Never its thinking. */
-function logAssistant(memory, message) {
+function logAssistant(memory: Memory, message: AssistantMessage): void {
   if (!LOGGED.has(message.stopReason)) return;
   const date = message.timestamp ?? Date.now();
   const text = message.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
@@ -26,13 +57,18 @@ function logAssistant(memory, message) {
   }
 }
 
-function logResult(memory, { toolCallId, toolName, content, isError, timestamp }) {
+function logResult(memory: Memory, { toolCallId, toolName, content, isError, timestamp }: {
+  toolCallId: string; toolName: string; content: Content; isError?: boolean | undefined; timestamp?: number;
+}): void {
   memory.append({ kind: 'echo', text: `${toolName}: ${isError ? 'error: ' : ''}${textOf(content)}`, date: timestamp ?? Date.now(), src: `r:${toolCallId}` });
 }
 
-const reportOf = entry => entry.kind === REPORT_KIND && typeof entry.data?.name === 'string' && typeof entry.data?.text === 'string'
-  ? entry.data : undefined;
-const userSrc = (entry, n) => `e:${entry.id}${n ? `:${n}` : ''}`;
+function reportOf(entry: ContextEntries['entries'][number]): ReportInput | undefined {
+  const { data } = entry;
+  if (entry.kind !== REPORT_KIND || !isObject(data) || typeof data.name !== 'string' || typeof data.text !== 'string') return undefined;
+  return { name: data.name, text: data.text, id: typeof data.id === 'string' || typeof data.id === 'number' ? data.id : undefined };
+}
+const userSrc = (entry: { readonly id: number }, n: number): string => `e:${entry.id}${n ? `:${n}` : ''}`;
 
 /**
  * UniiChat as a pi-durable extension (recipe §5-§6), for the root conversation only.
@@ -52,9 +88,9 @@ const userSrc = (entry, n) => `e:${entry.id}${n ? `:${n}` : ''}`;
 export function createUniiExtension({
   memory, isRoot = id => id === ROOT_CONVERSATION_ID, resolveAgentChat = async () => 'unknown agent',
   settleMs = 8_000, prevBytes = 16_000, now = () => new Date(), name = 'uniichat',
-}) {
+}: UniiExtensionOptions): Extension {
   if (!memory) throw new Error('createUniiExtension needs { memory }');
-  const runs = new Map(); // run key -> frozen [view, state, previous exchange] blocks, so a run's requests share a prefix
+  const runs = new Map<string, TextContent[]>(); // run key -> frozen [view, state, previous exchange] blocks, so a run's requests share a prefix
 
   const zoom = defineTool({
     name: 'zoom',
@@ -85,10 +121,10 @@ export function createUniiExtension({
    * The context from the last final answer on (that answer included, for catch-up), as loggable items in order:
    * `{ message, src, report?, user }`. With committed entries, inputs are keyed by entry id; without, by timestamp.
    */
-  function items(messages, view) {
-    const out = [];
-    const add = (m, input, j) => {
-      if (m.role === 'user') out.push({ m, run: j, user: true, report: input?.report, src: input?.src ?? `u:${m.timestamp}:${hash(textOf(m.content))}` });
+  function items(messages: readonly Message[], view: ContextEntries | undefined): Item[] {
+    const out: Item[] = [];
+    const add = (m: Message, input: { report: ReportInput | undefined; src: string } | undefined, j: boolean): void => {
+      if (m.role === 'user') out.push({ m, run: j, report: input?.report, src: input?.src ?? `u:${m.timestamp}:${hash(textOf(m.content))}` });
       else if (m.role === 'assistant') out.push({ m, run: j, src: `a:${m.timestamp}:${hash(m.content.filter(b => b.type === 'text').map(b => b.text).join('\n'))}`,
         calls: m.content.filter(b => b.type === 'toolCall').map(c => `c:${c.id}`) });
       else if (m.role === 'toolResult') out.push({ m, run: j, src: `r:${m.toolCallId}` });
@@ -96,10 +132,12 @@ export function createUniiExtension({
     if (view) {
       const { entries, contributions } = view;
       let from = entries.length;
-      while (from > 0 && !contributions[from - 1].some(isFinal)) from--;
+      while (from > 0 && !contributions[from - 1]?.some(isFinal)) from--;
       for (let j = Math.max(0, from - 1); j < entries.length; j++) {
-        const report = reportOf(entries[j]);
-        contributions[j].forEach((m, n) => add(m, m.role === 'user' && { report, src: report ? reportSrc(report) : userSrc(entries[j], n) }, j >= from));
+        const entry = entries[j];
+        if (!entry) continue;
+        const report = reportOf(entry);
+        contributions[j]?.forEach((m, n) => add(m, m.role === 'user' ? { report, src: report ? reportSrc(report) : userSrc(entry, n) } : undefined, j >= from));
       }
     } else {
       const body = messages.filter(m => m.role !== 'system');
@@ -110,26 +148,28 @@ export function createUniiExtension({
     return out;
   }
 
-  function log(item) {
-    if (item.user) {
+  function log(item: Item): void {
+    const { m } = item;
+    if (m.role === 'user') {
       if (item.report) memory.report(item.report);
-      else memory.append({ kind: 'user', text: textOf(item.m.content), date: item.m.timestamp, src: item.src });
-    } else if (item.m.role === 'assistant') logAssistant(memory, item.m);
-    else logResult(memory, item.m);
+      else memory.append({ kind: 'user', text: textOf(m.content), date: m.timestamp, src: item.src });
+    } else if (m.role === 'assistant') logAssistant(memory, m);
+    else logResult(memory, m);
   }
 
   /**
    * Where the view ends for this run: before the run's own messages when they are already the log's tail (a run
    * resumed after a restart), else at the end of the log (a new run, whose message is logged after the render).
    */
-  function viewEnd(run) {
+  function viewEnd(run: readonly Item[]): number {
     const mine = new Set(run.flatMap(item => [item.src, ...(item.calls ?? [])]));
     let k = memory.T;
-    while (k > 0 && mine.has((memory.log[k - 1].src ?? '').replace(/#\d+$/, ''))) k--;
+    while (k > 0 && mine.has((memory.log[k - 1]?.src ?? '').replace(/#\d+$/, ''))) k--;
     return k;
   }
 
-  async function beforeRequest({ messages }, api, context) {
+  async function beforeRequest({ messages }: { readonly messages: readonly Message[] }, api: RequestApi, context: Context):
+    Promise<{ messages: Message[] } | undefined> {
     if (!isRoot(api.conversationId)) return undefined;
     memory.setCompactionPrompt({ system: getCurrentSystemPrompt(messages), tools: getCurrentTools(messages) });
     const body = messages.filter(m => m.role !== 'system');
@@ -140,15 +180,15 @@ export function createUniiExtension({
     // Committed entries give ids and kinds; HookApi does not declare context(), but the task runtime behind it has it.
     const view = typeof api.context === 'function' ? await api.context(api.conversationId, context) : undefined;
     const all = items(messages, view), mine = all.filter(item => item.run);
-    const first = mine.find(item => item.user);
+    const first = mine.find(item => item.m.role === 'user');
     const runKey = first && `${api.conversationId}:${first.src}`;
 
-    let frozen = runKey && runs.get(runKey);
+    let frozen = runKey ? runs.get(runKey) : undefined;
     if (!frozen) {
       if (!memory.ready(viewEnd(mine))) await memory.settle(settleMs, context?.abortSignal, viewEnd(mine));
       const k = viewEnd(mine); // the view is rendered before the run's message is logged (recipe §6)
       frozen = [memory.render(k), `<turn>\nnow: ${formatDate(now())}\n</turn>`, memory.previousExchange(k, prevBytes)]
-        .filter(Boolean).map(text => ({ type: 'text', text }));
+        .filter(Boolean).map((text): TextContent => ({ type: 'text', text }));
       if (runKey) {
         runs.set(runKey, frozen);
         for (const old of runs.keys()) if (runs.size > 8) runs.delete(old);
@@ -156,9 +196,10 @@ export function createUniiExtension({
     }
     for (const item of all) log(item);
 
-    const steps = run.map(m => m.role !== 'toolResult' || typeof m.content === 'string' ? m
+    const steps: Message[] = run.map(m => m.role !== 'toolResult' || typeof m.content === 'string' ? m
       : { ...m, content: m.content.map(b => b.type === 'text' && b.text.length > CAP ? { ...b, text: clip(b.text) } : b) });
-    if (steps[0]?.role === 'user') steps[0] = { ...steps[0], content: [...frozen, ...blocksOf(steps[0].content)] };
+    const head = steps[0];
+    if (head?.role === 'user') steps[0] = { ...head, content: [...frozen, ...blocksOf(head.content)] };
     else steps.unshift({ role: 'user', content: frozen, timestamp: now().getTime() });
     const system = getCurrentSystemMessage(messages);
     return { messages: [...(system ? [system] : []), ...steps] };

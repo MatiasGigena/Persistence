@@ -90,7 +90,7 @@ exactly. Tag each item with its kind ("user: ...; echo: ..."), and credit quoted
 text to its real author. Never make anything look further along than it was. If
 told the line is too long, shorten it. Non-ASCII characters cost 2-4 bytes.`;
 
-export function leafTask(id, kind, text) {
+export function leafTask(id: number, kind: string, text: string): string {
   return `Compaction: compress message ${id} into one line of at most 512 bytes
 (about 70 words), the length of this ruler:
 ${RULER}
@@ -100,7 +100,7 @@ ${kind}: ${text}
 }
 
 /** `a`, `b`: the two lines as the view renders them (`id+n|text`); `first`..`last`: their messages, inclusive. */
-export function mergeTask(nameA, nameB, first, last, a, b) {
+export function mergeTask(nameA: string, nameB: string, first: number, last: number, a: string, b: string): string {
   return `Compaction: merge lines ${nameA} and ${nameB}, adjacent, into one line of at most
 512 bytes (about 70 words), the length of this ruler:
 ${RULER}
@@ -112,7 +112,7 @@ ${b}
 </input>`;
 }
 
-export function tooLong(line) {
+export function tooLong(line: string): string {
   return `Too long: your line is ${Buffer.byteLength(line, 'utf8')} bytes, over the 512-byte limit. Write
 the whole line again for the same <input>, cutting just enough of the
 least valuable items to fit before this cut:
