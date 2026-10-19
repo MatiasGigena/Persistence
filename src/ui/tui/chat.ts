@@ -2,12 +2,15 @@
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import type { ChatFeed, ChatItem } from '../types.ts';
+import { NARROW } from './theme.ts';
 import type { Theme } from './theme.ts';
 
 export type NoticeLevel = Extract<ChatItem, { kind: 'notice' }>['level'];
 
 /** Tool output lines shown while collapsed. */
 export const TOOL_PREVIEW = 4;
+/** Tool output lines shown while collapsed, below NARROW columns. */
+export const TOOL_PREVIEW_NARROW = 2;
 /** Chat items shown from the feed's history when the view opens. */
 export const BACKLOG = 6;
 
@@ -31,6 +34,55 @@ const wrap = (text: string, width: number): string[] => wrapTextWithAnsi(text, M
 /** `mark` (one column) and a space, then `lines` indented under it. */
 const gutter = (mark: string, lines: readonly string[]): string[] => lines.map((line, i) => `${i ? ' ' : mark} ${line}`);
 
+/** The argument that says what a call does, by tool name; zoom is handled on its own. */
+const SUMMARY_KEY: Readonly<Record<string, string>> = {
+  bash: 'command', read: 'path', write: 'path', edit: 'path',
+  spawn_agent: 'name', send_message: 'to', last_message: 'name', stop_agent: 'name',
+};
+/** Longest compact-JSON summary, for tools without a known argument. */
+const SUMMARY_JSON = 60;
+
+/** A string field of possibly partial JSON (arguments stream in), or undefined. */
+function field(args: string, key: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(args);
+    if (typeof parsed !== 'object' || parsed === null) return undefined;
+    const value: unknown = Object.entries(parsed).find(([name]) => name === key)?.[1];
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
+  } catch {
+    const match = new RegExp(`"${key}"\\s*:\\s*(?:"((?:[^"\\\\]|\\\\.)*)|(\\d+))`).exec(args);
+    const raw = match?.[1];
+    return raw === undefined ? match?.[2] : unescape(raw);
+  }
+}
+
+/** A JSON string's body without its escapes; as is when it does not parse (cut mid-escape). */
+function unescape(raw: string): string {
+  try {
+    const value: unknown = JSON.parse(`"${raw}"`);
+    return typeof value === 'string' ? value : raw;
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * One meaningful argument of a tool call, on one line: bash its command, read/write/edit the path, zoom `id+n`
+ * or the agent name, agent tools the agent's name; any other tool its arguments as compact JSON, truncated.
+ */
+export function toolSummary(name: string, args: string): string {
+  if (name === 'zoom') {
+    const id = field(args, 'id');
+    if (id !== undefined) return /^\d+$/.test(id) ? `${id}+${field(args, 'n') ?? '1'}` : oneLine(id);
+  }
+  const key = SUMMARY_KEY[name];
+  const value = key === undefined ? undefined : field(args, key);
+  if (value !== undefined) return oneLine(value);
+  const json = [...oneLine(args)];
+  if (json.join('') === '{}') return '';
+  return json.length > SUMMARY_JSON ? `${json.slice(0, SUMMARY_JSON - 1).join('')}…` : json.join('');
+}
+
 const sameItem = (a: ChatItem, b: ChatItem): boolean => {
   if (a === b) return true;
   const x: Record<string, unknown> = a;
@@ -44,6 +96,7 @@ class ItemBlock implements Component {
   item: ChatItem;
   private readonly state: ViewState;
   private markdown: Markdown | undefined;
+  private markdownPadding = 2;
   private cache: { width: number; key: string; lines: string[] } | undefined;
 
   constructor(item: ChatItem, state: ViewState) {
@@ -87,8 +140,11 @@ class ItemBlock implements Component {
       case 'assistant': {
         const text = item.text.trim();
         if (!text) return [];
-        if (this.markdown) this.markdown.setText(text);
-        else this.markdown = new Markdown(text, 2, 0, theme.markdown);
+        // Markdown keeps its padding, so a narrow screen gets a new one without it.
+        const padding = width < NARROW ? 0 : 2;
+        if (this.markdown && this.markdownPadding === padding) this.markdown.setText(text);
+        else this.markdown = new Markdown(text, padding, 0, theme.markdown);
+        this.markdownPadding = padding;
         return this.markdown.render(width);
       }
       case 'thinking':
@@ -113,25 +169,30 @@ class ItemBlock implements Component {
     if (first === undefined) return [];
     const style = (s: string): string => theme.dim(theme.italic(s));
     if (thinkingExpanded) return gutter(style('∴'), wrap(style(lines.join('\n')), width - 2));
-    const more = lines.length > 1 ? theme.dim(` (+${lines.length - 1} lines, ctrl+t)`) : '';
+    const hidden = lines.length - 1;
+    const more = hidden > 0 ? theme.dim(width < NARROW ? ` +${hidden} ^t` : ` (+${hidden} lines, ctrl+t)`) : '';
     return [`${style('∴')} ${truncateToWidth(style(first), Math.max(1, width - 2 - visibleWidth(more)))}${more}`];
   }
 
   private tool(item: Extract<ChatItem, { kind: 'tool' }>, width: number): string[] {
     const { theme, toolsExpanded } = this.state;
+    const narrow = width < NARROW, indent = narrow ? ' ' : '  ';
     const mark = item.status === 'running' ? theme.dim('…') : item.status === 'done' ? theme.success('✓') : theme.error('✗');
-    const head = `${theme.accent('▸')} ${theme.bold(oneLine(item.name))}`;
-    const room = width - visibleWidth(head) - 3;
-    const args = oneLine(item.args);
-    const header = `${head}${room > 1 && args ? ` ${theme.dim(truncateToWidth(args, room))}` : ''} ${mark}`;
+    const head = `${mark} ${theme.bold(oneLine(item.name))}`;
+    const room = width - visibleWidth(head) - 1;
+    const summary = toolSummary(item.name, item.args);
+    const header = `${head}${room > 1 && summary ? ` ${theme.dim(truncateToWidth(summary, room, '…'))}` : ''}`;
     const output = clean(item.output).replace(/\s+$/, '');
     if (!output) return [header];
     const style = item.status === 'error' ? theme.error : theme.dim;
     const lines = output.split('\n');
-    if (toolsExpanded) return [header, ...lines.flatMap(line => wrap(style(line), width - 2)).map(line => `  ${line}`)];
-    const shown = lines.slice(0, TOOL_PREVIEW).map(line => `  ${truncateToWidth(style(line), Math.max(1, width - 2))}`);
+    const inner = Math.max(1, width - indent.length);
+    if (toolsExpanded) return [header, ...lines.flatMap(line => wrap(style(line), inner)).map(line => `${indent}${line}`)];
+    const shown = lines.slice(0, narrow ? TOOL_PREVIEW_NARROW : TOOL_PREVIEW)
+      .map(line => `${indent}${truncateToWidth(style(line), inner)}`);
     const hidden = lines.length - shown.length;
-    return [header, ...shown, ...hidden > 0 ? [`  ${theme.dim(`… ${hidden} more lines, ctrl+o to expand`)}`] : []];
+    const more = narrow ? `+${hidden} lines ^o` : `… ${hidden} more lines, ctrl+o to expand`;
+    return [header, ...shown, ...hidden > 0 ? [`${indent}${theme.dim(more)}`] : []];
   }
 }
 

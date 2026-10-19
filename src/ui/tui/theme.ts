@@ -5,6 +5,9 @@ import type { EditorTheme, MarkdownTheme, SelectListTheme, TextStyle } from '@ea
 
 export type Style = (text: string) => string;
 
+/** Below this many columns (a phone), the TUI switches to its compact layout. */
+export const NARROW = 60;
+
 /** Styles shared by the chat, the footer, the editor and the panels. */
 export interface Theme {
   readonly accent: Style;
