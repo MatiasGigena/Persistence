@@ -23,6 +23,7 @@ you launch from (or --cwd).
   --model PROVIDER/ID    Default: openai-codex/gpt-6.1-sol
   --thinking LEVEL       off|minimal|low|medium|high|xhigh|max (default: high)
   --allow-tools          Enable read/write/edit/bash with your user privileges
+  --plain                Line-by-line chat instead of the full-screen terminal UI
   --auth-file PATH       Pi-compatible credentials (default: Pi auth.json)
   --request-id ID        Deduplicate a one-shot prompt, including after restart
   -h, --help             Show this help
@@ -34,16 +35,17 @@ CLI signed in with claude auth login); anthropic/claude-sonnet-5-5 and other
 anthropic/... models with an API key in ANTHROPIC_API_KEY (never a subscription
 login). See docs/models.md.
 
-Chat commands: /help, /history, /agents, /status, /exit
-Ctrl+C or /exit closes the host; unfinished work resumes next launch.
+Chat commands: /help, /agents, /mem, /status, /exit (--plain: /help, /history,
+/agents, /status, /exit). Ctrl+D or /exit closes the host, and so does Ctrl+C
+(twice in the terminal UI); unfinished work resumes next launch.
 No background daemon, boot service, inbound listener, or approval guards.
 Tools are OFF unless --allow-tools is supplied on this launch.
 `;
 
-type Flag = 'help' | 'version' | 'allowTools' | 'resume' | 'history' | 'status';
+type Flag = 'help' | 'version' | 'allowTools' | 'resume' | 'history' | 'status' | 'plain';
 type Value = 'database' | 'dataDir' | 'cwd' | 'modelSpec' | 'thinkingLevel' | 'authFile' | 'requestId' | 'prompt';
 const FLAGS = new Map<string, Flag>([['--help', 'help'], ['-h', 'help'], ['--version', 'version'], ['-v', 'version'],
-  ['--allow-tools', 'allowTools'], ['--resume', 'resume'], ['--history', 'history'], ['--status', 'status']]);
+  ['--allow-tools', 'allowTools'], ['--resume', 'resume'], ['--history', 'history'], ['--status', 'status'], ['--plain', 'plain']]);
 const VALUES = new Map<string, Value>([
   ['--database', 'database'], ['--data-dir', 'dataDir'],
   ['--cwd', 'cwd'], ['--model', 'modelSpec'], ['--thinking', 'thinkingLevel'],
@@ -60,6 +62,8 @@ export interface Options {
   resume?: boolean;
   history?: boolean;
   status?: boolean;
+  /** Interactive chat as readline lines instead of the terminal UI. */
+  plain?: boolean;
   database?: string;
   dataDir?: string;
   cwd?: string;
@@ -143,7 +147,7 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
 const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'authFile'] as const satisfies readonly (keyof Config)[];
 const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt'] as const satisfies readonly (keyof Config)[];
 const BOOLEANS = ['allowTools', 'exists', 'inspectOnly'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_BOOLEANS = ['help', 'version', 'resume', 'history', 'status'] as const satisfies readonly (keyof Config)[];
+const OPTIONAL_BOOLEANS = ['help', 'version', 'resume', 'history', 'status', 'plain'] as const satisfies readonly (keyof Config)[];
 export const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 
 function isConfig(x: unknown): x is Config {

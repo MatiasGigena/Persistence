@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline/promises';
+import { format } from 'node:util';
 import type { Interface } from 'node:readline/promises';
 import type { AttachedReplicatedState } from '@earendil-works/chord';
 import { createModels } from '@earendil-works/pi-ai/models';
@@ -12,6 +13,8 @@ import { resumeInstance, settleAgents } from '../runtime/recovery.ts';
 import { listAgents, REPORT_KIND } from '../agents/index.ts';
 import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
 import { CLAUDE_CLI, claudeCliProvider } from '../providers/claude-cli.ts';
+import { createUiSession } from '../ui/session.ts';
+import { runTui } from '../ui/tui/app.ts';
 import { errorMessage, isRecord, parseConfig } from './config.ts';
 
 // Internal entry point: src/cli.ts owns the database flock for this process.
@@ -108,6 +111,22 @@ async function send(prompt: string, requestId?: string, { print = true } = {}): 
   if (print) console.log(answer);
 }
 
+// The terminal UI owns the screen while it runs: stray console output (runtime reports, memory
+// warnings) becomes chat notices instead of drawing over it.
+async function chatTui(): Promise<void> {
+  const session = await createUiSession(opened(), config);
+  const { error, warn } = console;
+  try {
+    await runTui(session, { cwd: config.cwd, signal: shutdown.signal, onStart: show => {
+      console.error = console.warn = (...args: unknown[]) => show(format(...args), 'warn');
+    } });
+  } finally {
+    console.error = error;
+    console.warn = warn;
+    await session.close();
+  }
+}
+
 async function checkCredentials(models: Models): Promise<void> {
   const { provider, modelId } = config.model;
   const signal = AbortSignal.any([shutdown.signal, AbortSignal.timeout(15000)]);
@@ -165,6 +184,7 @@ async function main(): Promise<void> {
     if (!prompt.trim()) throw new Error('Supply a prompt, pipe text, or run in a terminal for interactive chat');
     return send(prompt);
   }
+  if (process.stdout.isTTY && !config.plain) return chatTui();
   console.log(`Pi · one chat that never ends · ${config.model.provider}/${config.model.modelId}\nDatabase: ${config.databasePath}\nMemory: ${config.memoryDir}`);
   console.log(`Tools: ${config.allowTools ? 'ENABLED — full user permissions; no approval guards' : 'OFF (use --allow-tools to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
   await printHistory(6);

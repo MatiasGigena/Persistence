@@ -22,6 +22,11 @@ test('parse prompt, explicit tool opt-in, and namespaced model IDs', () => {
   assert.equal(parseArgs(['--', '--literal']).prompt, '--literal');
 });
 
+test('--plain selects the line chat', () => {
+  assert.equal(parseArgs(['--plain']).plain, true);
+  assert.equal(parseArgs([]).plain, undefined);
+});
+
 test('reject malformed and conflicting CLI inputs', () => {
   for (const args of [['--session', 'named'], ['--model', 'no-provider'], ['--thinking', 'huge'],
     ['--history', '--resume'], ['--status', 'hello'],
