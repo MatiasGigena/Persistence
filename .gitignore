@@ -1,0 +1,11 @@
+node_modules/
+.state/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.lock
+.env
+*.unii/
+.DS_Store
+coverage/
+auth.json
