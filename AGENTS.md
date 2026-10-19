@@ -11,6 +11,7 @@ can spawn background agents. The launcher is `bin/pi-durable`.
 - `src/runtime/`: `runtime.mjs` (Harness, extensions, Pi's agent config), `recovery.mjs` (resume, `settleAgents`).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.mjs`: agent hierarchy, tools, and delivery tasks.
+- `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
 - `test/<area>/`: offline tests per area; `test/fixtures/` holds faux models.
 
 ## Verify
@@ -42,5 +43,6 @@ A change is done when both pass and the docs below still match the code.
 - Changing install, paths, recovery, or backups: [docs/operations.md](docs/operations.md).
 - Changing `src/memory/`: [docs/memory.md](docs/memory.md); keep its recipe deviations list current.
 - Changing `src/agents/`: [docs/agents.md](docs/agents.md).
+- Changing `src/providers/` or model routes: [docs/models.md](docs/models.md).
 - Making a design decision: add an ADR in [docs/decisions/](docs/decisions/).
 - Code style and commit messages: [CONTRIBUTING.md](CONTRIBUTING.md).

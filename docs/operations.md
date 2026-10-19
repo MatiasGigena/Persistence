@@ -76,14 +76,27 @@ tmux attach -t pi-durable
 - API-key providers also accept their usual environment variables, such as
   `OPENAI_API_KEY` for `--model openai/gpt-4o-mini`. Keep secrets out of commands
   that you share or commit.
+- Claude through your plan: install Claude Code, sign in with `claude auth login`
+  (or `claude`, then `/login`), and launch with `--model claude-cli/sonnet` (or
+  `opus`, `haiku`, `fable`). The login stays inside the CLI; the host never reads
+  it. `PI_DURABLE_CLAUDE_BIN` selects the `claude` binary (default: `claude` on
+  PATH). An `ANTHROPIC_API_KEY` in the environment makes the CLI bill that key
+  instead of the plan. On a VPS, sign in to Claude Code there.
+- Claude through the API: `ANTHROPIC_API_KEY=sk-ant-api03-…` with
+  `--model anthropic/claude-sonnet-5-5`. The host refuses the `anthropic` provider
+  when its credential is a Claude subscription token (a Pi "Claude Pro/Max"
+  login, `ANTHROPIC_OAUTH_TOKEN`, or an `sk-ant-oat…` token). See
+  [models.md](models.md).
 - Default model: `openai-codex/gpt-6.1-sol`, thinking `high`.
   `PI_DURABLE_MODEL=PROVIDER/ID` changes the default; `--model PROVIDER/ID` wins over both.
   `--thinking` takes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
-- Models must exist in the pinned Pi 1.3.0 catalog. Personal model overrides
+- Models must exist in the pinned Pi 1.3.0 catalog, or be one of the `claude-cli`
+  aliases. Personal model overrides
   (`models.json`) are deliberately not loaded, and the host fetches no model list.
 - The compaction model is chosen from the turn model's provider: `gpt-6-luna` for
-  `openai-codex` and `openai`, if the catalog has it; otherwise the turn model
-  itself. It uses the same credentials, with reasoning `low`. There is no flag for it.
+  `openai-codex` and `openai`, `haiku` for `claude-cli` (2 calls at a time),
+  `claude-haiku-5-5` for `anthropic`, if the catalog has it; otherwise the turn
+  model itself. It uses the same credentials, with reasoning `low`. There is no flag for it.
 - Before any work launch, the host checks that the model exists and that credentials
   for its provider are available, with a 15 s timeout. `--status` and `--history`
   need no credentials.
@@ -164,6 +177,8 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | Exit status 75, "already open in another pi-durable process" | Another host holds the lock on this database (perhaps in tmux, or through a symlink alias). Close it first. |
 | `pi-durable requires flock` | Install util-linux. |
 | `No credentials for PROVIDER` | Run `npm exec -- pi` in the install dir, then `/login`; or set the provider's API-key variable; or pass `--auth-file`. The message names the auth file it read. |
+| `No Claude Code login for claude-cli` | Run `claude auth login` (or `claude`, then `/login`). More `claude-cli` symptoms are in [models.md](models.md#troubleshooting). |
+| `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key in `ANTHROPIC_API_KEY` after removing any stored Pi `anthropic` login. |
 | `Unknown model … in pinned Pi 1.3.0 catalog` | Pick a model from the Pi 1.3.0 catalog. Check `PI_DURABLE_MODEL`. |
 | `Node.js >=22.19.0 is required` | Install a newer Node, or set `PI_DURABLE_NODE` to one. |
 | An `ExperimentalWarning` about SQLite | Expected on Node 22. Harmless. |

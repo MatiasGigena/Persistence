@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `claude-cli` provider: `--model claude-cli/opus`, `sonnet`, `haiku` or `fable`
+  runs each request through the official `claude` CLI (`claude -p`, stream-json)
+  signed in with your own Claude plan. Claude only proposes tool calls, through a
+  stub MCP server that runs nothing; the Pi Harness executes them. Each request is
+  isolated from your Claude Code settings, hooks, memory and `CLAUDE.md` files.
+  `PI_DURABLE_CLAUDE_BIN` selects the binary. See `docs/models.md` and ADR 0010.
+- Compaction with `claude-cli` uses `claude-cli/haiku`, at most 2 calls at once;
+  with `anthropic`, `anthropic/claude-haiku-5-5`.
+
+### Changed
+
+- The `anthropic` provider is refused when its credential is a Claude
+  subscription token (a Pi "Claude Pro/Max" login, `ANTHROPIC_OAUTH_TOKEN`, or an
+  `sk-ant-oat…` key); it works with an Anthropic Console API key.
+
 ## [0.1.0] - 2026-10-19
 
 ### Added

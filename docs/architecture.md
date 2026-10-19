@@ -35,8 +35,9 @@ agents, and each agent is another conversation in the same database.
 - **CLI** (`src/cli.mjs`): sets umask 077, parses arguments, resolves paths, and
   starts the host under `flock`. `--help`, `--version`, and inspection of a missing
   database finish here without a lock.
-- **Host** (`src/host/`): creates the model runtime, checks the model and
-  credentials, opens the instance, resumes pending work, then runs the chosen mode:
+- **Host** (`src/host/`): creates the model runtime, registers the `claude-cli`
+  provider, checks the model and credentials (refusing a subscription token on
+  `anthropic`), opens the instance, resumes pending work, then runs the chosen mode:
   `--status`, `--history`, `--resume`, one prompt, piped stdin, or interactive chat.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,
   installs the three extensions, and configures Pi for this launch.
@@ -44,6 +45,9 @@ agents, and each agent is another conversation in the same database.
   `uniichat` extension that feeds the view to Pi.
 - **Agents** (`src/agents/`): the agent registry, the agent tools, and the
   `agents.deliver` tasks that move messages and reports between conversations.
+- **Providers** (`src/providers/`): the `claude-cli` model provider, which runs
+  each request through the official `claude` CLI and returns its tool calls to
+  the Harness, and the `anthropic` subscription check. See [models.md](models.md).
 
 ## How a turn flows
 
@@ -109,6 +113,7 @@ Details: [agents.md](agents.md), [decisions/](decisions/).
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
 | `chat.sqlite.lock` | nothing; the flock target | `flock` | none needed |
 | Pi's `auth.json` | credentials | Pi's `ModelRuntime` | outside this project |
+| `$TMPDIR/pi-durable-claude-*/` | one `claude-cli` request's system prompt and tool list | the provider | removed after the request |
 
 The two stores are not committed together. The memory follows SQLite:
 
@@ -130,6 +135,9 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
   In one process, a second `openMemory` of the same directory throws.
 - No daemon, boot service, or inbound listener. Agents and the compactor run inside
   the host. They stop when it exits and continue at the next work launch.
+- With `claude-cli`, each model request runs a short-lived `claude -p` child (with
+  its stub MCP server), killed when the reply's message ends or the request aborts.
+  A crash mid-request leaves no CLI session behind; the Harness reissues the request.
 - Shutdown closes the Harness without aborting durable work. The memory gives
   compaction calls in flight up to 5 s, then saves; unfinished calls are redone at
   the next open.
@@ -151,10 +159,14 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/memory/summarizer.mjs` | Cheap compaction model choice and the pi-ai summarizer |
 | `src/memory/extension.mjs` | The `uniichat` extension: `beforeRequest` view, logging hooks, `zoom` and `date` tools |
 | `src/memory/util.mjs` | Sizes, clipping and splitting, line cutting, dates, fsynced appends, atomic writes |
+| `src/providers/claude-cli.mjs` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
+| `src/providers/claude-cli-mcp.mjs` | Stub stdio MCP server that lists Pi's tools to the CLI and runs none |
+| `src/providers/anthropic.mjs` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
 | `src/agents/index.mjs` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
 | `scripts/check.mjs` | Syntax check of every `.mjs` in `src/` and `scripts/`, and of the launcher |
 | `test/host/` | CLI parsing, paths, global chat, flock, shutdown |
 | `test/runtime/` | Reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript |
 | `test/memory/` | Log, tree, view, compactor, extension |
 | `test/agents/` | Roles, messaging, exactly-once delivery across close and SIGKILL |
-| `test/fixtures/` | Faux models and child-process instances for the tests |
+| `test/providers/` | `claude-cli` against a fake CLI, through the Harness; the stub MCP server; the subscription check |
+| `test/fixtures/` | Faux models, the fake `claude` CLI, and child-process instances for the tests |

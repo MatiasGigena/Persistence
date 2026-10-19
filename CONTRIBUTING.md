@@ -24,8 +24,8 @@ npm audit --omit=dev
 ```
 
 Run `npm run check` and `npm test` before every commit. The tests are offline: they
-use pi-ai's faux provider and temporary data directories, so they need no
-credentials and make no network calls. They include real SIGKILL and reopen
+use pi-ai's faux provider, a fake `claude` CLI, and temporary data directories, so
+they need no credentials and make no network calls. They include real SIGKILL and reopen
 recovery, request deduplication, queued-input recovery after a model failure, tool
 opt-in and reset, synchronous FULL commits, pagination, the one global chat, lock
 exclusion, shutdown with open stdin, and exactly-once agent delivery.
@@ -33,6 +33,8 @@ Node 22 may print its expected experimental SQLite warning.
 
 A real Codex login and model smoke test once returned `durable-ready` and exited
 successfully. Repeat one by hand after changes to credentials or model handling.
+For `src/providers/`, also run `--model claude-cli/haiku -p 'Reply with exactly:
+claude-ready'`, and one prompt with `--allow-tools` that makes Pi read a file.
 
 ## Test layout
 
@@ -41,10 +43,12 @@ test/host/       CLI parsing, paths, global chat, flock, shutdown
 test/runtime/    reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript
 test/memory/     log, tree, view, compactor, uniichat extension
 test/agents/     roles, messaging, delivery across close and SIGKILL
-test/fixtures/   faux models and child-process instances
+test/providers/  claude-cli with a fake CLI, stub MCP server, subscription check
+test/fixtures/   faux models, the fake claude CLI, child-process instances
 ```
 
-Put a test next to the area it covers. Use `test/fixtures/faux-model.mjs` for models.
+Put a test next to the area it covers. Use `test/fixtures/faux-model.mjs` for models, and
+`test/fixtures/fake-claude.mjs` (through `PI_DURABLE_CLAUDE_BIN`) instead of a real `claude`.
 Give each test its own temporary data directory.
 
 ## Code style

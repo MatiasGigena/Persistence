@@ -169,7 +169,7 @@ The compactor builds the tree in the background, in the host process that owns t
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `JOBS` | 8 | compaction calls in flight at once |
+| `JOBS` | 8 | compaction calls in flight at once (the host passes 2 when the compaction model is `claude-cli`) |
 | `LEAD` | 8 | a leaf starts once fewer than 8 leaves before it are unbuilt |
 
 Work comes from ready queues; the tree is never scanned:
@@ -222,12 +222,18 @@ An empty reply is a failed call. See [ADR 0007](decisions/0007-cheap-compaction-
 |---|---|
 | `openai-codex` | `openai-codex/gpt-6-luna`, if the catalog has it |
 | `openai` | `openai/gpt-6-luna`, if the catalog has it |
+| `claude-cli` | `claude-cli/haiku` (Claude Haiku 5.5 through the `claude` CLI) |
+| `anthropic` | `anthropic/claude-haiku-5-5`, if the catalog has it |
 | any other | the turn model itself |
 
 The turn model comes from `--model PROVIDER/ID`, else `PI_DURABLE_MODEL`, else `openai-codex/gpt-6.1-sol`. So the
 default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.3.0
 catalog it costs $0.10/$0.50 per million tokens (cache read $0.01), against $2/$10 for `gpt-6.1-sol`, with the same
 272k window.
+
+With `claude-cli`, every compaction is a full `claude` call that draws on the plan's usage limits, so the host opens the
+memory with `jobs: 2` (`src/runtime/runtime.mjs`). Such calls get no tools, since the compactor sends
+`toolChoice: "none"`, and the CLI ignores `maxTokens`. See [models.md](models.md).
 
 The host has no flag for the compaction model. Programmatically, `openMemory(dir, { compactionModel })` overrides
 it, and `openMemory(dir, { summarize })` replaces the summarizer entirely. The default summarizer
@@ -350,7 +356,9 @@ deviations (its numbers are given); the rest are specific to this host.
    shortening when it works; the cut makes the limit hold regardless.
 2. **A cheap OpenAI model as compactor.** The recipe uses Claude Haiku at xhigh effort. This host's default provider
    is `openai-codex`, so the compactor is `gpt-6-luna` at `reasoning: 'low'`, the cheapest model of that provider in the
-   pinned catalog. Another provider gets its turn model. See [ADR 0007](decisions/0007-cheap-compaction-model.md).
+   pinned catalog. With `claude-cli` or `anthropic` it is Haiku 5.5, the recipe's family, at low effort; with
+   `claude-cli` at most 2 run at once. Another provider gets its turn model. See
+   [ADR 0007](decisions/0007-cheap-compaction-model.md) and [ADR 0010](decisions/0010-claude-via-cli.md).
 3. **The previous exchange is sent whole** after the view, up to 16,000 bytes (pi-endless #3). Follow-up questions such
    as "why?" work without a zoom, and the view prefix is unchanged.
 4. **Turns wait at most 8 s** for pending summaries, then render placeholders (pi-endless #4). The recipe waits until

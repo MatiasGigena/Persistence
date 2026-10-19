@@ -53,10 +53,21 @@ Other flags: `--database PATH`, `--data-dir PATH`, `--cwd PATH`, `--auth-file PA
 Chat commands: `/help`, `/history`, `/agents`, `/status`, `/exit` (or `/quit`, or Ctrl+C).
 Closing never discards unfinished work; the next launch resumes it.
 
+## Models
+
+The default is `openai-codex/gpt-6.1-sol` with your Pi login. For Claude:
+
+- `--model claude-cli/sonnet` (or `opus`, `haiku`, `fable`) uses your Claude plan through the official
+  `claude` CLI. Sign in once with `claude auth login`. Claude only proposes tool calls; the host runs them.
+- `--model anthropic/claude-sonnet-5-5` uses an Anthropic Console API key in `ANTHROPIC_API_KEY`. The host
+  refuses a Claude subscription login on this provider, as Anthropic's terms require.
+
+Personal use only. Routes, policy, isolation and limits: [docs/models.md](docs/models.md).
+
 ## How memory works
 
 - The chat is the memory. Every message, reply, tool call, tool result, and agent report is logged word for word in `chat.unii/main/`.
-- In the background, a cheap model (`openai-codex/gpt-6-luna` by default) compresses the log into a binary tree of lines of at most 512 bytes (`chat.unii/tree/`).
+- In the background, a cheap model (`openai-codex/gpt-6-luna` by default, `claude-cli/haiku` with `claude-cli`) compresses the log into a binary tree of lines of at most 512 bytes (`chat.unii/tree/`).
 - Each turn is a fresh model call. It sees a 64–128 KB view of the tree (`chat.unii/view.json`): recent lines are fine, old ones coarse. Then comes the new message.
 - Pi opens a vague line with `zoom(id, n)`, down to the original message. `date(id)` gives a message's time.
 - pi-durable's own compaction is off. Only Pi has this memory; agents do not.
@@ -102,15 +113,17 @@ src/host/           terminal chat, /commands, reply watcher; CLI options and pat
 src/runtime/        Harness, extensions, Pi's agent config; resume and agent settling
 src/memory/         UniiChat memory: log, tree, view, compactor, extension
 src/agents/         agent hierarchy and messaging
+src/providers/      claude-cli provider (official claude CLI) and the anthropic subscription check
 scripts/check.mjs   syntax check
 test/               offline tests, by area, with fixtures
-docs/               architecture, operations, memory, agents, decisions
+docs/               architecture, operations, models, memory, agents, decisions
 ```
 
 ## Docs
 
 - [docs/architecture.md](docs/architecture.md): components, turn flow, persistence, module map
 - [docs/operations.md](docs/operations.md): install, credentials, state, backups, troubleshooting
+- [docs/models.md](docs/models.md): model routes, the Claude policy, how `claude-cli` works
 - [docs/memory.md](docs/memory.md): UniiChat memory and recipe deviations
 - [docs/agents.md](docs/agents.md): agent roles, messaging, delivery
 - [docs/decisions/](docs/decisions/): architecture decision records
