@@ -1,10 +1,12 @@
-import { access, mkdir, realpath } from 'node:fs/promises';
+import { access, mkdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
+import { atomicWrite } from '../memory/util.ts';
 
 export const VERSION = '0.1.0';
+export const DEFAULT_MODEL = 'openai-codex/gpt-6.1-sol';
 export const HELP = `pi-durable — personal terminal host for Pi Durable 1.3.0
 
 Usage: pi-durable [options] [prompt]
@@ -20,7 +22,9 @@ you launch from (or --cwd).
   --database PATH        Explicit SQLite file instead of the one global chat
   --data-dir PATH        State root (or PI_DURABLE_DATA_DIR)
   --cwd PATH             Working directory (default: current directory)
-  --model PROVIDER/ID    Default: openai-codex/gpt-6.1-sol
+  --model PROVIDER/ID    Model for this launch. Without it: PI_DURABLE_MODEL, else
+                         the last /model choice (settings.json beside the
+                         database), else openai-codex/gpt-6.1-sol
   --thinking LEVEL       off|minimal|low|medium|high|xhigh|max (default: high)
   --allow-tools          Enable read/write/edit/bash with your user privileges
   --plain                Line-by-line chat instead of the full-screen terminal UI
@@ -35,11 +39,12 @@ CLI signed in with claude auth login); anthropic/claude-sonnet-5-5 and other
 anthropic/... models with an API key in ANTHROPIC_API_KEY (never a subscription
 login). See docs/models.md.
 
-Chat commands: /help, /agents, /mem, /status, /exit (--plain: /help, /history,
-/agents, /status, /exit). Ctrl+D or /exit closes the host, and so does Ctrl+C
-(twice in the terminal UI); unfinished work resumes next launch.
+Chat commands: /help, /model, /tools, /agents, /mem, /status, /exit (--plain:
+/help, /history, /agents, /status, /exit). Ctrl+D or /exit closes the host, and
+so does Ctrl+C (twice in the terminal UI); unfinished work resumes next launch.
 No background daemon, boot service, inbound listener, or approval guards.
-Tools are OFF unless --allow-tools is supplied on this launch.
+Tools are OFF unless --allow-tools is supplied on this launch; /tools turns them
+on or off until the host exits, never for later launches.
 `;
 
 type Flag = 'help' | 'version' | 'allowTools' | 'resume' | 'history' | 'status' | 'plain';
@@ -54,7 +59,11 @@ const VALUES = new Map<string, Value>([
 const THINKING: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const isThinkingLevel = (x: unknown): x is ModelThinkingLevel => THINKING.some(level => level === x);
 
-/** Parsed command line. `model` is set unless `help` or `version` is. */
+/** Where the launch's model came from, highest precedence first. */
+export type ModelSource = 'flag' | 'env' | 'settings' | 'default';
+const MODEL_SOURCES: readonly ModelSource[] = ['flag', 'env', 'settings', 'default'];
+
+/** Parsed command line. `model` is the --model flag's; resolveOptions() applies the other sources. */
 export interface Options {
   help?: boolean;
   version?: boolean;
@@ -81,10 +90,18 @@ export interface Config extends Options {
   dataDir: string;
   databasePath: string;
   memoryDir: string;
+  /** The host's saved choices (settings.json), beside the database. */
+  settingsPath: string;
   exists: boolean;
   inspectOnly: boolean;
   authFile: string;
   model: ModelRef;
+  modelSource: ModelSource;
+}
+
+/** What settings.json holds: the default model for launches without --model or PI_DURABLE_MODEL. */
+export interface Settings {
+  model?: ModelRef;
 }
 
 export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -116,16 +133,46 @@ export function parseArgs(args: readonly string[]): Options {
   if (modes.length > 1) throw new Error('Choose only one of --resume, --history, --status, or a prompt');
   if (!isThinkingLevel(thinking)) throw new Error('Invalid --thinking level');
   options.thinkingLevel = thinking;
-  const spec = options.modelSpec ?? process.env.PI_DURABLE_MODEL ?? 'openai-codex/gpt-6.1-sol';
-  const slash = spec.indexOf('/');
-  if (slash < 1 || slash === spec.length - 1) throw new Error('--model must be PROVIDER/MODEL_ID');
-  options.model = { provider: spec.slice(0, slash), modelId: spec.slice(slash + 1) };
+  if (options.modelSpec !== undefined) options.model = parseModel(options.modelSpec, '--model');
   return options;
 }
 
+/** `PROVIDER/ID` as a ModelRef; the ID may contain slashes. `what` names the source in the error. */
+export function parseModel(spec: string, what: string): ModelRef {
+  const slash = spec.indexOf('/');
+  if (slash < 1 || slash === spec.length - 1) throw new Error(`${what} must be PROVIDER/MODEL_ID`);
+  return { provider: spec.slice(0, slash), modelId: spec.slice(slash + 1) };
+}
+
+/** settings.json, or {} when there is none. Rejects on a file that is not valid settings. */
+export async function readSettings(path: string): Promise<Settings> {
+  let text: string;
+  try { text = await readFile(path, 'utf8'); } catch (error) {
+    if (errorCode(error) === 'ENOENT') return {};
+    throw error;
+  }
+  let value: unknown;
+  try { value = JSON.parse(text); } catch (error) { throw new Error(`${path} is not valid JSON (${errorMessage(error)}); fix or delete it`); }
+  if (!isRecord(value) || (value.model !== undefined && typeof value.model !== 'string')) {
+    throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID"}; fix or delete it`);
+  }
+  return value.model === undefined ? {} : { model: parseModel(value.model, `"model" in ${path}`) };
+}
+
+/** Replace settings.json atomically (mode 600). Only work launches write it, under the database's flock. */
+export function writeSettings(path: string, { model }: Settings): void {
+  atomicWrite(path, `${JSON.stringify(model ? { model: `${model.provider}/${model.modelId}` } : {}, null, 2)}\n`);
+}
+
+/** The launch's model: --model, else PI_DURABLE_MODEL, else settings.json, else the built-in default. */
+async function resolveModel(options: Options, env: NodeJS.ProcessEnv, settingsPath: string): Promise<{ model: ModelRef; modelSource: ModelSource }> {
+  if (options.model) return { model: options.model, modelSource: 'flag' };
+  if (env.PI_DURABLE_MODEL) return { model: parseModel(env.PI_DURABLE_MODEL, 'PI_DURABLE_MODEL'), modelSource: 'env' };
+  const { model } = await readSettings(settingsPath);
+  return model ? { model, modelSource: 'settings' } : { model: parseModel(DEFAULT_MODEL, 'the default model'), modelSource: 'default' };
+}
+
 export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
-  const { model } = options;
-  if (!model) throw new Error('--model must be PROVIDER/MODEL_ID');
   const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
   const dataDir = resolve(options.dataDir ?? env.PI_DURABLE_DATA_DIR ?? join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'pi-durable'));
   let databasePath = resolve(options.database ?? join(dataDir, 'chat.sqlite'));
@@ -140,11 +187,13 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
   const agentDir = env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent');
   // The chat's memory (log, tree, view) lives beside its database, under its flock.
   const memoryDir = databasePath.replace(/(\.sqlite)?$/, '.unii');
-  return { ...options, model, cwd, dataDir, databasePath, memoryDir, exists, inspectOnly,
-    authFile: resolve(options.authFile ?? join(agentDir, 'auth.json')) };
+  // Beside the database, under its flock; read here, written only by a work launch's /model.
+  const settingsPath = join(dirname(databasePath), 'settings.json');
+  return { ...options, ...await resolveModel(options, env, settingsPath), cwd, dataDir, databasePath, memoryDir, settingsPath,
+    exists, inspectOnly, authFile: resolve(options.authFile ?? join(agentDir, 'auth.json')) };
 }
 
-const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'authFile'] as const satisfies readonly (keyof Config)[];
+const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'settingsPath', 'authFile'] as const satisfies readonly (keyof Config)[];
 const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt'] as const satisfies readonly (keyof Config)[];
 const BOOLEANS = ['allowTools', 'exists', 'inspectOnly'] as const satisfies readonly (keyof Config)[];
 const OPTIONAL_BOOLEANS = ['help', 'version', 'resume', 'history', 'status', 'plain'] as const satisfies readonly (keyof Config)[];
@@ -153,6 +202,7 @@ export const isRecord = (x: unknown): x is Record<string, unknown> => typeof x =
 function isConfig(x: unknown): x is Config {
   if (!isRecord(x) || !isRecord(x.model)) return false;
   return typeof x.model.provider === 'string' && typeof x.model.modelId === 'string' && isThinkingLevel(x.thinkingLevel)
+    && MODEL_SOURCES.some(source => source === x.modelSource)
     && STRINGS.every(key => typeof x[key] === 'string') && BOOLEANS.every(key => typeof x[key] === 'boolean')
     && OPTIONAL_STRINGS.every(key => x[key] === undefined || typeof x[key] === 'string')
     && OPTIONAL_BOOLEANS.every(key => x[key] === undefined || typeof x[key] === 'boolean');

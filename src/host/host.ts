@@ -10,12 +10,13 @@ import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { resumeInstance, settleAgents } from '../runtime/recovery.ts';
+import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts';
 import { listAgents, REPORT_KIND } from '../agents/index.ts';
-import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
-import { CLAUDE_CLI, claudeCliProvider } from '../providers/claude-cli.ts';
+import { claudeCliProvider } from '../providers/claude-cli.ts';
 import { createUiSession } from '../ui/session.ts';
 import { runTui } from '../ui/tui/app.ts';
 import { errorMessage, isRecord, parseConfig } from './config.ts';
+import type { ModelSource } from './config.ts';
 
 // Internal entry point: src/cli.ts owns the database flock for this process.
 process.umask(0o077);
@@ -62,6 +63,7 @@ async function printStatus(): Promise<void> {
   const { harness, root, context, memory } = opened();
   const inspection = await harness.inspect(context);
   console.log(JSON.stringify({ database: config.databasePath, conversationId: root.id,
+    model: `${config.model.provider}/${config.model.modelId}`, modelSource: config.modelSource,
     memory: memory?.status() ?? config.memoryDir,
     scheduler: inspection.scheduling, pendingTasks: inspection.tasks.length,
     pendingSubmissions: inspection.submissions.length }, null, 2));
@@ -127,18 +129,16 @@ async function chatTui(): Promise<void> {
   }
 }
 
-async function checkCredentials(models: Models): Promise<void> {
-  const { provider, modelId } = config.model;
-  const signal = AbortSignal.any([shutdown.signal, AbortSignal.timeout(15000)]);
-  if (!await models.checkAuth(provider, { signal })) {
-    throw new Error(provider === CLAUDE_CLI
-      ? 'No Claude Code login for claude-cli. Install Claude Code, run claude, then /login (or run claude auth login). PI_DURABLE_CLAUDE_BIN selects another claude binary.'
-      : `No credentials for ${provider}. Run pi (or npm exec -- pi from the installation directory), then /login. API-key providers also accept their usual environment variable. Auth file: ${config.authFile}`);
-  }
-  const subscription = provider === 'anthropic' && await anthropicSubscriptionSource(models, { signal });
-  if (subscription) {
-    throw new Error(`Refusing anthropic/${modelId}: its credential is a Claude subscription (${subscription}), which Anthropic allows only in its own apps such as Claude Code. Use --model claude-cli/opus (or sonnet, haiku, fable), which runs the official claude CLI with your login, or an Anthropic Console API key in ANTHROPIC_API_KEY (remove a stored anthropic login first). See docs/models.md.`);
-  }
+const SOURCE: Readonly<Record<ModelSource, string>> = { flag: '--model', env: 'PI_DURABLE_MODEL',
+  settings: 'saved by /model', default: 'default' };
+
+/** The launch model must be in the catalog and have usable credentials; the same checks as /model. */
+async function checkModel(models: Models): Promise<void> {
+  const problem = catalogProblem(models, config.model) ?? accessProblem(config.model,
+    await checkAccess(models, config.model.provider, { timeoutMs: 15_000, signal: shutdown.signal }), config.authFile);
+  if (!problem) return;
+  throw new Error(config.modelSource === 'settings'
+    ? `${problem} (This model was saved by /model in ${config.settingsPath}; pass --model to launch with another.)` : problem);
 }
 
 async function main(): Promise<void> {
@@ -154,12 +154,7 @@ async function main(): Promise<void> {
       allowModelNetwork: false, refreshOnCreate: false, signal: shutdown.signal });
     runtime.registerNativeProvider(claude);
     models = runtime;
-    if (!models.getModel(config.model.provider, config.model.modelId)) {
-      throw new Error(config.model.provider === CLAUDE_CLI
-        ? `Unknown model claude-cli/${config.model.modelId}. Use opus, sonnet, haiku or fable.`
-        : `Unknown model ${config.model.provider}/${config.model.modelId} in pinned Pi 1.3.0 catalog`);
-    }
-    await checkCredentials(models);
+    await checkModel(models);
   }
   if (stopping) return;
   instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly,
@@ -185,7 +180,7 @@ async function main(): Promise<void> {
     return send(prompt);
   }
   if (process.stdout.isTTY && !config.plain) return chatTui();
-  console.log(`Pi · one chat that never ends · ${config.model.provider}/${config.model.modelId}\nDatabase: ${config.databasePath}\nMemory: ${config.memoryDir}`);
+  console.log(`Pi · one chat that never ends · ${config.model.provider}/${config.model.modelId} (${SOURCE[config.modelSource]})\nDatabase: ${config.databasePath}\nMemory: ${config.memoryDir}`);
   console.log(`Tools: ${config.allowTools ? 'ENABLED — full user permissions; no approval guards' : 'OFF (use --allow-tools to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
   await printHistory(6);
   watcher = await watchReplies();
@@ -205,7 +200,7 @@ async function main(): Promise<void> {
     catch (error) { if (stopping) break; throw error; }
     if (!line) continue;
     if (line === '/exit' || line === '/quit') break;
-    if (line === '/help') console.log('/history — saved messages\n/agents — spawned agents and whether they are busy\n/status — storage, memory and pending work\n/exit — close without discarding unfinished work\nAgents work in the background; their reports and Pi\'s replies print as they arrive.\nTools can only be changed by relaunching with or without --allow-tools.');
+    if (line === '/help') console.log('/history — saved messages\n/agents — spawned agents and whether they are busy\n/status — storage, memory and pending work\n/exit — close without discarding unfinished work\nAgents work in the background; their reports and Pi\'s replies print as they arrive.\nHere, tools and the model change only by relaunching (--allow-tools, --model); the terminal UI has /tools and /model.');
     else if (line === '/history') await printHistory();
     else if (line === '/agents') await printAgents();
     else if (line === '/status') await printStatus();

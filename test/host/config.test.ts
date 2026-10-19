@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
-import { mkdtemp, mkdir, rm, symlink, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { isRecord, parseArgs, resolveOptions } from '../../src/host/config.ts';
+import { isRecord, parseArgs, resolveOptions, writeSettings } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 
 const exec = promisify(execFile);
@@ -20,6 +20,30 @@ test('parse prompt, explicit tool opt-in, and namespaced model IDs', () => {
   assert.equal(parseArgs([]).allowTools, false);
   assert.equal(parseArgs(['hello', 'world']).prompt, 'hello world');
   assert.equal(parseArgs(['--', '--literal']).prompt, '--literal');
+});
+
+test('the model: --model, else PI_DURABLE_MODEL, else settings.json, else the default', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-settings-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const settingsPath = join(folder, 'settings.json');
+  const launch = async (args: string[], env: NodeJS.ProcessEnv = {}) => {
+    const config = await resolveOptions(parseArgs(['--database', join(folder, 'chat.sqlite'), '--cwd', folder, ...args]), env);
+    return [`${config.model.provider}/${config.model.modelId}`, config.modelSource];
+  };
+  assert.equal(parseArgs([]).model, undefined, 'parseArgs reads no environment');
+  assert.deepEqual(await launch([]), ['openai-codex/gpt-6.1-sol', 'default']);
+  assert.equal((await resolveOptions(parseArgs(['--database', join(folder, 'chat.sqlite'), '--cwd', folder]), {})).settingsPath, settingsPath);
+  writeSettings(settingsPath, { model: { provider: 'claude-cli', modelId: 'sonnet' } });
+  assert.equal((await stat(settingsPath)).mode & 0o777, 0o600);
+  assert.deepEqual(await launch([]), ['claude-cli/sonnet', 'settings']);
+  assert.deepEqual(await launch([], { PI_DURABLE_MODEL: 'openrouter/vendor/model' }), ['openrouter/vendor/model', 'env']);
+  assert.deepEqual(await launch(['--model', 'anthropic/claude-sonnet-5-5'], { PI_DURABLE_MODEL: 'openai/gpt-4o' }), ['anthropic/claude-sonnet-5-5', 'flag']);
+  await assert.rejects(launch([], { PI_DURABLE_MODEL: 'no-provider' }), /PI_DURABLE_MODEL must be PROVIDER\/MODEL_ID/);
+  for (const bad of ['{"model":', '{"model":7}', '{"model":"no-provider"}', '[]']) {
+    await writeFile(settingsPath, bad);
+    await assert.rejects(launch([]), /settings\.json/, bad);
+  }
+  assert.deepEqual(await launch(['--model', 'claude-cli/haiku']), ['claude-cli/haiku', 'flag'], 'a flag skips the file');
 });
 
 test('--plain selects the line chat', () => {
@@ -90,5 +114,7 @@ test('flock rejects a second host and a symlink alias; status needs no credentia
   assert.equal(status.pendingTasks, 0);
   assert.equal(status.scheduler, 'paused');
   assert.equal(status.database, databasePath);
+  assert.equal(typeof status.modelSource, 'string');
   await assert.rejects(stat(join(folder, 'absent-auth.json')), { code: 'ENOENT' });
+  await assert.rejects(stat(join(folder, 'settings.json')), { code: 'ENOENT' }, 'an inspection writes no settings');
 });
