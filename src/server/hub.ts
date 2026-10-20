@@ -325,12 +325,12 @@ export class Hub implements PeerHub {
     const failed = (error: unknown): OpError => error instanceof OpError ? error
       : new OpError(ErrorCode.failed, error instanceof Error ? error.message : String(error));
     return {
-      send: async ({ text, requestId }) => {
+      send: async ({ text, requestId, steer }) => {
         if (!text.trim()) throw new OpError(ErrorCode.badRequest, 'The message is empty.');
         if (requestId !== undefined && (requestId.length < 1 || requestId.length > 128)) {
           throw new OpError(ErrorCode.badRequest, 'requestId must be 1 to 128 characters.');
         }
-        try { await this.need().send(text, requestId); } catch (error) { throw failed(error); }
+        try { await this.need().send(text, requestId, steer === true); } catch (error) { throw failed(error); }
         return null;
       },
       abort: async () => { await this.need().abort(); return null; },

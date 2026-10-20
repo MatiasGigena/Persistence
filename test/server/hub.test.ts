@@ -151,6 +151,8 @@ test('requests: send with requestId, errors, unknown ops, malformed messages, pi
   assert.deepEqual(effort?.t === 'res' && !effort.ok && effort.error, { code: 'failed', message: 'faux/faux-1 takes low, medium, high; not max.' });
   link.deliver({ t: 'ping', n: 7 });
   assert.deepEqual(last(link), { t: 'pong', n: 7 });
+  await request(link, 'send', { text: 'the red ones', requestId: 'web-1', steer: true });
+  assert.equal(session.calls.at(-1), 'send the red ones web-1 steer');
 });
 
 test('socket-only and web-only ops are forbidden to the other peer', async t => {

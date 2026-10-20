@@ -161,8 +161,8 @@ export class RemoteSession implements UiSession {
   }
 
   /** Admitted once even if resent: the requestId (given, or made here) stays with the text across reconnects. */
-  async send(text: string, requestId = `${this.clientId}-${++this.sends}`): Promise<void> {
-    await this.request('send', { text, requestId });
+  async send(text: string, requestId = `${this.clientId}-${++this.sends}`, steer = false): Promise<void> {
+    await this.request('send', steer ? { text, requestId, steer } : { text, requestId });
   }
 
   async abort(): Promise<void> { await this.request('abort', {}); }

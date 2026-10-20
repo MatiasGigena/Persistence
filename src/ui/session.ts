@@ -123,9 +123,10 @@ export async function createUiSession(
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    async send(text, requestId) {
-      // Admitted durably, not awaited: the feed shows the answer. A busy Pi gets it as a follow-up.
-      await root.submit({ type: 'input', content: text, ...requestId === undefined ? {} : { requestId } }, context);
+    async send(text, requestId, steer) {
+      // Admitted durably, not awaited: the feed shows the answer. A busy Pi gets it as a follow-up, or steered.
+      await root.submit({ type: 'input', content: text, ...requestId === undefined ? {} : { requestId },
+        ...steer ? { whenBusy: 'steer' } : {} }, context);
     },
     async abort() {
       // Pi's current run only: queued inputs are withdrawn; agents' background deliveries keep going.

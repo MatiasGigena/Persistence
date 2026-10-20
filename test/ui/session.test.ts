@@ -192,6 +192,25 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     assert.equal(fired, count, 'polling alone fires nothing when nothing changed');
   });
 
+  test('a steering send joins the running work after its tool round, not as a follow-up run', async (t) => {
+    let release = (): void => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const asked: string[] = [];
+    const { session } = await open(t, [
+      async () => { await gate; return fauxAssistantMessage(fauxToolCall('date', { id: 0 }, { id: 'call-d' }), { stopReason: 'toolUse' }); },
+      context => { asked.push(lastUserText(context)); return fauxAssistantMessage('noted, in UTC'); },
+    ]);
+    await session.send('what day is it?');
+    await until(() => session.status().busy, 'busy');
+    await session.send('in UTC, please', 'steer-1', true);
+    release();
+    await idle(session);
+    await until(() => find(session.chat, 'assistant', item => item.text === 'noted, in UTC'), 'the answer', session.chat);
+    assert.equal(asked.length, 1, 'one more step, no follow-up run');
+    assert.match(asked[0] ?? '', /date: .*\n[^]*new message:\n\nin UTC, please$/, 'the step after the date round saw the steer last');
+    assert.deepEqual(session.chat.items().map(item => item.kind), ['user', 'tool', 'user', 'assistant']);
+  });
+
   test('the memory view after a few turns, and zoom', async (t) => {
     const { session } = await open(t, [fauxAssistantMessage('A1'), fauxAssistantMessage('A2')]);
     assert.deepEqual(await session.memoryView(), []);
