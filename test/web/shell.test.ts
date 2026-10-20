@@ -46,3 +46,19 @@ test('the service worker shell lists every app file and runtime import', async (
   const extra = [...shell].filter(url => !needed.has(url));
   assert.deepEqual(extra, [], 'the shell names only real files');
 });
+
+test('the installed app and offline page share the Pi Cloud dark theme', async () => {
+  const css = await readFile(join(WEB, 'styles.css'), 'utf8');
+  assert.match(css, /color-scheme: dark;/);
+  assert.match(css, /--bg: #000000;/);
+  assert.match(css, /--mono: ui-monospace/);
+  assert.ok(!css.includes('prefers-color-scheme: dark'), 'the theme does not depend on the OS setting');
+  for (const file of ['index.html', 'offline.html']) {
+    const html = await readFile(join(WEB, file), 'utf8');
+    assert.match(html, /<meta name="color-scheme" content="dark">/);
+    assert.match(html, /<meta name="theme-color" content="#000000">/);
+  }
+  const manifest = await readFile(join(WEB, 'manifest.webmanifest'), 'utf8');
+  assert.match(manifest, /"theme_color": "#000000"/);
+  assert.match(manifest, /"background_color": "#000000"/);
+});

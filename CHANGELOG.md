@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The existing right-hand web menu uses a rounded monochrome glass panel with a
+  labelled header, close button and viewport-bounded scrolling; all actions stay the same.
+
+- The web app matches Pi Cloud's dark monochrome palette, monospace type, glass
+  surfaces and rounded composer; installed-app and offline colours match too.
+
+- Web app and home-screen icons use Pi Cloud's block mark and Lucide controls.
+
 - Coding tools are on by default for a local launch; `--no-tools` turns them off (`--allow-tools` is kept as a
   no-op). `serve` still starts with them off. ADR 0009 amended.
 
