@@ -33,3 +33,10 @@ launch, for Pi and for every agent. Memory and agent tools touch only the chat.
 - The decision stands: the choice is never saved, and every launch still starts with the tools off unless it passes
   `--allow-tools`. Pi's instructions are reconfigured with the tools, and name `/tools` and `--allow-tools` as the only
   ways to turn them on.
+
+## Amended 2026-10-20
+
+- Local launches now start with the coding tools **on**; `--no-tools` turns them off for that launch, and
+  `--allow-tools` is kept as a no-op for scripts (giving both is an error). The choice is still never saved.
+- `serve` and the admin commands are unchanged: the server starts with the tools off and refuses `--allow-tools`
+  (ADR 0019); remote confirmation and the idle switch-off still apply.

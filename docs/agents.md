@@ -192,8 +192,8 @@ await root.configure(agent, context);                 // this launch's choices f
 await syncAgents(harness, context, { childAgent });   // re-derive every agent from Pi
 ```
 
-So an agent follows the current launch: `--model`, `--thinking`, `--cwd` and `--allow-tools`. An agent spawned under
-`--allow-tools` loses the coding tools on the next launch without it. The terminal UI's `/model` and `/tools` take the
+So an agent follows the current launch: `--model`, `--thinking`, `--cwd` and `--no-tools`. An agent spawned with
+coding tools loses them on the next launch with `--no-tools`. The terminal UI's `/model` and `/tools` take the
 same two steps mid-launch (`Instance.setModel`, `Instance.setTools`), so agents follow them from their next request.
 
 After copying, `deriveAgent` applies the role offer (subs lose `spawn_agent` and `stop_agent`), then the host's
@@ -205,7 +205,7 @@ const childAgent = { extensions: { remove: [Unii] } };
 
 This removes the `uniichat` extension, with its `zoom` and `date` tools, its system section and its request rewrite.
 An agent sees its own conversation, not a view. Its tools are the five agent tools (three for a sub), plus `read`,
-`write`, `edit` and `bash` when the launch has `--allow-tools`. See [ADR 0003](decisions/0003-memory-only-for-pi.md).
+`write`, `edit` and `bash` unless the launch has `--no-tools`. See [ADR 0003](decisions/0003-memory-only-for-pi.md).
 
 ## Reading an agent's chat
 

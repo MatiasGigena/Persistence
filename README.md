@@ -33,8 +33,8 @@ busy, memory, agents) above the editor. On exit the transcript stays in your
 scrollback. `--plain` keeps the simple line-based chat.
 
 ```sh
-pi-durable                                  # interactive chat; tools OFF
-pi-durable --allow-tools                    # read, write, edit, bash with your user permissions
+pi-durable                                  # interactive chat; read, write, edit, bash ON with your user permissions
+pi-durable --no-tools                       # same, with the coding tools off
 pi-durable --plain                          # line-based chat instead of the full-screen UI
 pi-durable --print 'Explain this approach'  # one answer, then exit (also: -p, or a positional prompt)
 echo 'Summarize this' | pi-durable          # piped stdin is one prompt (max 4 MiB)
@@ -63,7 +63,7 @@ pi-durable --local    # never attach; with a server running this exits 75, as an
 
 Only interactive full-screen chat attaches. `-p`, piped stdin, `--status`, `--history`, `--resume` and `--plain`
 open the chat locally, so with a server running they exit 75 with
-"A server runs this chat; run `pi-durable` to attach." Launch settings (`--allow-tools`, `--model`, `--thinking`,
+"A server runs this chat; run `pi-durable` to attach." Launch settings (`--no-tools`, `--model`, `--thinking`,
 `--cwd`, `--auth-file`) are refused when a server answers, since the server's apply.
 
 `--request-id` deduplicates a one-shot prompt, also after a restart. The same ID
@@ -131,9 +131,9 @@ after `-p`, run `pi-durable --resume` to let them finish. Details: [docs/agents.
 
 ## Safety
 
-Coding tools (read, write, edit, bash) are off on every launch unless you pass
-`--allow-tools`, or turn them on in the chat with `/tools on` and confirm with `y`.
-Either way they last for this launch only. When on, they act with your user permissions. There is no sandbox
+Coding tools (read, write, edit, bash) are on for every local launch unless you pass
+`--no-tools`; `/tools off` and `/tools on` switch them in the chat, for this launch only.
+A server (`pi-durable serve`) still starts with them off. When on, they act with your user permissions. There is no sandbox
 and no per-command approval. A tool call saved by an earlier launch cannot restore
 permission on a later launch without the flag. The host does not load ordinary Pi
 extensions, guards, skills, MCP servers, or project instruction files.

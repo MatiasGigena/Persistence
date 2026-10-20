@@ -364,8 +364,8 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     await session.setTools(true);
     assert.equal(session.status().toolsEnabled, true);
     assert.deepEqual([coding(await pi()), coding(await bob.agent(instance.context))], [CODING, CODING]);
-    assert.match((await pi()).instructions ?? '', /turned on the read, write, edit, and bash tools/);
-    assert.match((await bob.agent(instance.context)).instructions ?? '', /turned on the read, write, edit, and bash tools/);
+    assert.match((await pi()).instructions ?? '', /read, write, edit, and bash tools are on for this launch/);
+    assert.match((await bob.agent(instance.context)).instructions ?? '', /read, write, edit, and bash tools are on for this launch/);
 
     await session.setTools(false);
     assert.equal(session.status().toolsEnabled, false);

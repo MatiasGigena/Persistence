@@ -194,7 +194,7 @@ async function main(): Promise<void> {
   }
   if (process.stdout.isTTY && !config.plain) return chatTui();
   console.log(`Pi · one chat that never ends · ${config.model.provider}/${config.model.modelId} (${SOURCE[config.modelSource]})\nDatabase: ${config.databasePath}\nMemory: ${config.memoryDir}`);
-  console.log(`Tools: ${config.allowTools ? 'ENABLED — full user permissions; no approval guards' : 'OFF (use --allow-tools to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
+  console.log(`Tools: ${config.allowTools ? 'ENABLED — full user permissions; no approval guards' : 'OFF (--no-tools was given; relaunch without it to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
   await printHistory(6);
   watcher = await watchReplies();
   reader = createInterface({ input: process.stdin, output: process.stdout });
@@ -213,7 +213,7 @@ async function main(): Promise<void> {
     catch (error) { if (stopping) break; throw error; }
     if (!line) continue;
     if (line === '/exit' || line === '/quit') break;
-    if (line === '/help') console.log('/history — saved messages\n/agents — spawned agents and whether they are busy\n/status — storage, memory and pending work\n/exit — close without discarding unfinished work\nAgents work in the background; their reports and Pi\'s replies print as they arrive.\nHere, tools and the model change only by relaunching (--allow-tools, --model); the terminal UI has /tools and /model.');
+    if (line === '/help') console.log('/history — saved messages\n/agents — spawned agents and whether they are busy\n/status — storage, memory and pending work\n/exit — close without discarding unfinished work\nAgents work in the background; their reports and Pi\'s replies print as they arrive.\nHere, tools and the model change only by relaunching (--no-tools, --model); the terminal UI has /tools and /model.');
     else if (line === '/history') await printHistory();
     else if (line === '/agents') await printAgents();
     else if (line === '/status') await printStatus();

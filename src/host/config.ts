@@ -34,7 +34,9 @@ A prompt whose first word is serve or backup needs -p.
                          the last /model choice (settings.json beside the
                          database), else openai-codex/gpt-6.1-sol
   --thinking LEVEL       off|minimal|low|medium|high|xhigh|max (default: high)
-  --allow-tools          Enable read/write/edit/bash with your user privileges
+  --no-tools             Turn read/write/edit/bash off for this launch (they are
+                         on by default, with your user privileges)
+  --allow-tools          Tools on (the default for a local launch; kept for scripts)
   --plain                Line-by-line chat instead of the full-screen terminal UI
   --local                Never attach to a server; open the chat here
   --attach               Attach to the running server, or fail
@@ -56,7 +58,7 @@ Chat commands: /help, /model, /tools, /agents, /mem, /status, /exit (--plain:
 /help, /history, /agents, /status, /exit). Ctrl+D or /exit closes the host, and
 so does Ctrl+C (twice in the terminal UI); unfinished work resumes next launch.
 Attached, they detach and the server keeps working.
-Tools are OFF unless --allow-tools is supplied on this launch; /tools turns them
+Tools are ON for a local launch unless --no-tools is supplied; /tools turns them
 on or off until the host exits, never for later launches. A server always starts
 with them off; a client may turn them on after a confirmation, and they turn
 off again after PI_DURABLE_TOOLS_IDLE_MIN idle minutes.
@@ -76,11 +78,11 @@ Server environment:
                              off (default): only that Pi or an agent finished
 `;
 
-type Flag = 'help' | 'version' | 'allowTools' | 'resume' | 'history' | 'status' | 'plain' | 'local' | 'attach';
+type Flag = 'help' | 'version' | 'allowTools' | 'noTools' | 'resume' | 'history' | 'status' | 'plain' | 'local' | 'attach';
 type Value = 'database' | 'dataDir' | 'cwd' | 'modelSpec' | 'thinkingLevel' | 'authFile' | 'requestId' | 'prompt'
   | 'portSpec' | 'revoke' | 'out';
 const FLAGS = new Map<string, Flag>([['--help', 'help'], ['-h', 'help'], ['--version', 'version'], ['-v', 'version'],
-  ['--allow-tools', 'allowTools'], ['--resume', 'resume'], ['--history', 'history'], ['--status', 'status'], ['--plain', 'plain'],
+  ['--allow-tools', 'allowTools'], ['--no-tools', 'noTools'], ['--resume', 'resume'], ['--history', 'history'], ['--status', 'status'], ['--plain', 'plain'],
   ['--local', 'local'], ['--attach', 'attach']]);
 const VALUES = new Map<string, Value>([
   ['--database', 'database'], ['--data-dir', 'dataDir'],
@@ -99,7 +101,7 @@ type Key = Flag | Value;
 const LOCATION: readonly Key[] = ['help', 'version', 'database', 'dataDir'];
 /** The options each command takes; any other is an error. A prompt is the `prompt` key. */
 const ALLOWED: Readonly<Record<Command, ReadonlySet<Key>>> = {
-  chat: new Set<Key>([...LOCATION, 'allowTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'cwd',
+  chat: new Set<Key>([...LOCATION, 'allowTools', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'cwd',
     'modelSpec', 'thinkingLevel', 'authFile', 'requestId', 'prompt']),
   serve: new Set<Key>([...LOCATION, 'cwd', 'portSpec', 'modelSpec', 'thinkingLevel', 'authFile']),
   'serve-pair': new Set<Key>(LOCATION),
@@ -107,7 +109,7 @@ const ALLOWED: Readonly<Record<Command, ReadonlySet<Key>>> = {
   backup: new Set<Key>([...LOCATION, 'out']),
 };
 /** Options that set up a local launch, so an attached chat (which uses the server's) refuses them. */
-const LAUNCH_ONLY: readonly Key[] = ['allowTools', 'cwd', 'modelSpec', 'thinkingLevel', 'authFile', 'plain'];
+const LAUNCH_ONLY: readonly Key[] = ['allowTools', 'noTools', 'cwd', 'modelSpec', 'thinkingLevel', 'authFile', 'plain'];
 const COMMAND_NAMES: Readonly<Record<Command, string>> = {
   chat: 'chat', serve: 'serve', 'serve-pair': 'serve pair', 'serve-devices': 'serve devices', backup: 'backup',
 };
@@ -123,7 +125,10 @@ export interface Options {
   command: Command;
   help?: boolean;
   version?: boolean;
+  /** Coding tools for this launch: on for a local chat unless --no-tools; always off for serve and admin commands. */
   allowTools: boolean;
+  /** --no-tools was given. */
+  noTools?: boolean;
   resume?: boolean;
   history?: boolean;
   status?: boolean;
@@ -238,7 +243,7 @@ export function parsePort(spec: string, what: string): number {
 }
 
 export function parseArgs(args: readonly string[]): Options {
-  const options: Options = { command: 'chat', thinkingLevel: 'high', allowTools: false };
+  const options: Options = { command: 'chat', thinkingLevel: 'high', allowTools: true };
   const words: string[] = [], literal: string[] = [];
   const given = new Map<Key, string>();
   let thinking: string = options.thinkingLevel;
@@ -265,11 +270,14 @@ export function parseArgs(args: readonly string[]): Options {
     if (prompts.length) {
       throw new Error(`Unknown ${name} argument: ${prompts[0] ?? ''}${chosen === 'serve' ? ' (to send a prompt starting with "serve", use -p)' : ''}`);
     }
-    if (chosen === 'serve' && options.allowTools) {
+    if (chosen === 'serve' && given.has('allowTools')) {
       throw new Error('serve always starts with coding tools off; a client turns them on with /tools on, after a confirmation');
     }
     for (const [key, spelling] of given) if (!ALLOWED[chosen].has(key)) throw new Error(`${spelling} does not apply to ${name}`);
+    options.allowTools = false;
   } else {
+    if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
+    options.allowTools = !options.noTools;
     for (const key of ['portSpec', 'revoke', 'out'] as const) {
       const spelling = given.get(key);
       if (spelling) throw new Error(`${spelling} applies only to ${key === 'portSpec' ? 'serve' : key === 'revoke' ? 'serve devices' : 'backup'}`);
@@ -414,7 +422,7 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
 const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'settingsPath', 'serveDir', 'authFile'] as const satisfies readonly (keyof Config)[];
 const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out', 'launchOption'] as const satisfies readonly (keyof Config)[];
 const BOOLEANS = ['allowTools', 'exists', 'inspectOnly'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_BOOLEANS = ['help', 'version', 'resume', 'history', 'status', 'plain', 'local', 'attach'] as const satisfies readonly (keyof Config)[];
+const OPTIONAL_BOOLEANS = ['help', 'version', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach'] as const satisfies readonly (keyof Config)[];
 const isPort = (x: unknown): boolean => typeof x === 'number' && Number.isInteger(x) && x >= 1 && x <= 65535;
 
 function isServeSettings(x: unknown): x is ServeSettings {

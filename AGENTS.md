@@ -40,9 +40,9 @@ A change is done when both pass and the docs below still match the code.
 - **Exactly-once delivery.** Agent messages and reports travel in `agents.deliver`
   tasks keyed by task ID, and memory appends are keyed by `src`. Keep every replay
   path idempotent.
-- **Tools off by default.** Every launch starts with coding tools off unless
-  `--allow-tools` is passed. `/tools on` enables them for the current launch only,
-  after a confirmation; never persist that choice. Launch config and the toggle share
+- **Tools on for local launches.** A local launch starts with coding tools on unless
+  `--no-tools` is passed; `serve` always starts with them off (ADR 0019). `/tools on|off`
+  switches them for the current launch only; never persist that choice. Launch config and the toggle share
   one tool list (`piTools`), and both reconfigure Pi and its agents.
 - **No unauthenticated listener.** The server listens on loopback TCP (behind `tailscale serve`, with login,
   device and origin checks) or a 0600 Unix socket only; never on a public address. See

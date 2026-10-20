@@ -22,7 +22,7 @@ agents, and each agent is another conversation in the same database.
                     ▼                                                   ▼                      ▼
              CodingTools                                  uniichat (src/memory)         agents (src/agents)
              read/write/edit/bash                         beforeRequest builds view     spawn_agent, list_agents,
-             (enabled only with --allow-tools)            logs every message            send_message, last_message,
+             (on unless --no-tools)                       logs every message            send_message, last_message,
                                                           zoom, date                    stop_agent; Deliver tasks
                                                                 │
                                                                 ▼
@@ -109,7 +109,7 @@ host only through `src/ui/types.ts`.
    tool call as `tool` right before its result as `echo`; a call left without a result
    is logged alone by the next request. Every log line has a `src` key, so a replay
    never logs it twice.
-5. Tool calls run as tool tasks. Coding tools are present only with `--allow-tools`, or after `/tools on`.
+5. Tool calls run as tool tasks. Coding tools are present unless the launch has `--no-tools` or `/tools off` was used.
 6. The final answer is committed as a `pi.assistant` entry. The host's reply watcher
    subscribes to the root's view and prints each new `pi.assistant` and
    `agents.report` entry, including replies to agent reports that no prompt waited for.
@@ -133,7 +133,7 @@ declines every compaction of the root ([ADR 0015](decisions/0015-agent-compactio
   `spawn_agent` and `stop_agent`.
 - `syncAgents` re-derives every agent's config on each work launch, right after Pi
   is configured, and again after `/model` or `/tools` reconfigures Pi. So
-  `--allow-tools`, `--model` and those switches apply to agents too.
+  `--no-tools`, `--model` and those switches apply to agents too.
 - A new agent's first message starts with Pi's current memory view, then
   `[from Spawner] task`. The spawn first waits up to 8 s for the view's pending
   summaries, since an agent cannot zoom a placeholder.

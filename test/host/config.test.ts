@@ -12,12 +12,16 @@ import { openInstance } from '../../src/runtime/runtime.ts';
 const exec = promisify(execFile);
 const launcher = resolve('bin/pi-durable');
 
-test('parse prompt, explicit tool opt-in, and namespaced model IDs', () => {
+test('parse prompt, tools on by default (--no-tools opts out), and namespaced model IDs', () => {
   const options = parseArgs(['--allow-tools', '--model', 'openrouter/vendor/model', '-p', 'hello']);
   assert.equal(options.allowTools, true);
   assert.deepEqual(options.model, { provider: 'openrouter', modelId: 'vendor/model' });
   assert.equal(options.prompt, 'hello');
-  assert.equal(parseArgs([]).allowTools, false);
+  assert.equal(parseArgs([]).allowTools, true);
+  assert.equal(parseArgs(['--no-tools']).allowTools, false);
+  assert.equal(parseArgs(['--no-tools', '-p', 'x']).allowTools, false);
+  assert.throws(() => parseArgs(['--allow-tools', '--no-tools']), /Choose either --allow-tools or --no-tools/);
+  assert.equal(parseArgs(['backup']).allowTools, false);
   assert.equal(parseArgs(['hello', 'world']).prompt, 'hello world');
   assert.equal(parseArgs(['--', '--literal']).prompt, '--literal');
 });
@@ -61,8 +65,8 @@ test('reject malformed and conflicting CLI inputs', () => {
 
 test('help works without loading runtime/authentication', async () => {
   const { stdout } = await exec(launcher, ['--help']);
-  assert.match(stdout, /Tools are OFF/);
-  assert.match(stdout, /--allow-tools/);
+  assert.match(stdout, /Tools are ON/);
+  assert.match(stdout, /--no-tools/);
 });
 
 test('inspection of absent state creates no directory', async t => {
@@ -154,7 +158,7 @@ test('--local and --attach: one or the other, and --attach takes no launch setti
   assert.equal(parseArgs(['--local', '--allow-tools', '-p', 'x']).allowTools, true);
   assert.equal(parseArgs(['--attach']).attach, true);
   assert.throws(() => parseArgs(['--local', '--attach']), /Choose either --local or --attach/);
-  for (const flag of [['--allow-tools'], ['--model', 'a/b'], ['--thinking', 'low'], ['--cwd', '/'], ['--auth-file', '/a'], ['--plain']]) {
+  for (const flag of [['--allow-tools'], ['--no-tools'], ['--model', 'a/b'], ['--thinking', 'low'], ['--cwd', '/'], ['--auth-file', '/a'], ['--plain']]) {
     assert.throws(() => parseArgs(['--attach', ...flag]), new RegExp(`${flag[0] ?? ''} does not apply to --attach`));
   }
   for (const mode of [['-p', 'x'], ['hello'], ['--status'], ['--history'], ['--resume']]) {

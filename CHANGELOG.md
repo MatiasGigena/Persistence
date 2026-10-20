@@ -5,6 +5,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Coding tools are on by default for a local launch; `--no-tools` turns them off (`--allow-tools` is kept as a
+  no-op). `serve` still starts with them off. ADR 0009 amended.
+
 ### Added
 
 - Server mode (phase 2, ADRs 0016 and 0022 accepted): `pi-durable serve [--cwd D] [--port N]` runs the chat

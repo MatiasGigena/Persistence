@@ -46,7 +46,7 @@ npm exec -- pi
 # In Pi: /login, then exit
 
 cd /path/to/project
-~/pi-durable-instance/bin/pi-durable --allow-tools
+~/pi-durable-instance/bin/pi-durable
 ```
 
 Sign in separately on the VPS rather than copying your local OAuth tokens. If you
@@ -58,7 +58,7 @@ To keep it running after SSH disconnects, use tmux:
 ```sh
 tmux new -s pi-durable
 cd /path/to/project
-~/pi-durable-instance/bin/pi-durable --allow-tools
+~/pi-durable-instance/bin/pi-durable
 # Detach: Ctrl+B, then D
 # Reconnect later:
 tmux attach -t pi-durable
@@ -440,7 +440,7 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `Node.js >=22.19.0 is required` | Install a newer Node, or set `PI_DURABLE_NODE` to one. |
 | An `ExperimentalWarning` about SQLite | Expected on Node 22. Harmless. |
 | You want to see what is pending | `pi-durable --status` prints the database, conversation ID, memory dir, scheduler state, and pending tasks and submissions. Each agent keeps one `agents.anchor` task, so the count is not zero while agents exist. |
-| Work was interrupted | `pi-durable --resume` finishes it, waits for agents, and prints the history. Add `--allow-tools` if the work needs coding tools. |
+| Work was interrupted | `pi-durable --resume` finishes it, waits for agents, and prints the history. Coding tools are on unless you add `--no-tools`. |
 | Agents did not finish after `-p` | Agents run only while a host is open. Run `pi-durable --resume`, or open the chat and let them report. |
 | `unii: compaction … failed` | The compaction model call failed. The line shows a placeholder and is retried at the next message or after 10 s. `/status` shows `failed` and `lastError`. |
 | `unii: log … is not contiguous` | The memory log has a gap. Restore `chat.unii/` from a backup. |
