@@ -98,6 +98,31 @@ test('a pending send shows until its user item arrives', () => {
   assert.deepEqual(ids(store), ['u1', 'u2']);
 });
 
+test('a steering send is marked as one, through admission, until it settles or drops', () => {
+  const store = connected([user('u1', 'go')]);
+  store.addPending('r1', 'not that one', true);
+  store.addPending('r2', 'and then this');
+  assert.deepEqual(store.rootView().slice(-2), [
+    { kind: 'pending', id: 'r1', text: 'not that one', state: 'sending', steer: true },
+    { kind: 'pending', id: 'r2', text: 'and then this', state: 'sending' },
+  ], 'a plain send has no steer key at all');
+  const plain = store.rootView().at(-1) ?? assert.fail('no pending item');
+  assert.equal('steer' in plain, false);
+
+  store.admitPending('r1');
+  store.admitPending('r2');
+  store.handle({ t: 'status', status: { ...STATUS, busy: true, queued: 2 } });
+  assert.deepEqual(store.rootView().slice(-2), [
+    { kind: 'pending', id: 'r1', text: 'not that one', state: 'queued', steer: true },
+    { kind: 'pending', id: 'r2', text: 'and then this', state: 'queued' },
+  ], 'queued keeps the flag');
+
+  store.handle({ t: 'items', feed: 'root', ops: [{ op: 'put', item: user('u2', 'not that one') }] });
+  assert.deepEqual(ids(store), ['u1', 'u2', 'r2'], 'the steer settled into its user item');
+  store.dropPending('r2');
+  assert.deepEqual(ids(store), ['u1', 'u2']);
+});
+
 test('agent feeds: open, sync, end, and survive a reconnect by name', () => {
   const store = connected();
   store.openAgent('f1', 'Scout');
@@ -147,7 +172,7 @@ test('turnEnds splits a turn at a pending message, a steer mid-run included', ()
   // Deliberate: a steer is the user's message, so the answer before it ends its own stretch, as a user item would.
   const items: ViewItem[] = [
     user('u1', 'hi'), reply('a1', 'first', false),
-    { kind: 'pending', id: 'p1', text: 'also this', state: 'queued' },
+    { kind: 'pending', id: 'p1', text: 'also this', state: 'queued', steer: true },
     reply('a2', 'second', false),
   ];
   assert.deepEqual([...turnEnds(items)], ['a1', 'a2']);

@@ -346,10 +346,17 @@ button.status-part {
   flex: none; width: 38px; height: 38px; display: grid; place-items: center;
   border: 0; border-radius: 50%;
 }
-.round-send { background: var(--ink); color: var(--bg); }
+.round-button:active:not(:disabled) { transform: scale(0.88); }
+.round-send { background: var(--ink); color: var(--bg); transition: transform 130ms ease-out, background 130ms ease-out; }
 .round-send:disabled { background: var(--line); color: var(--faint); }
-.round-stop { background: var(--danger-soft); color: var(--danger); }
-.round-stop svg { fill: none; stroke: currentColor; }
+.round-send svg { width: 16px; height: 16px; }
+/* The same button steers Pi while it works, and stops it while the box is empty: only the mode's icon shows. */
+.round-send svg:not(.icon-send), .round-send[data-mode="steer"] .icon-send, .round-send[data-mode="stop"] .icon-send { display: none; }
+.round-send[data-mode="steer"] .icon-steer { display: block; }
+.round-send[data-mode="stop"] .icon-stop { display: block; fill: currentColor; stroke: none; width: 14px; height: 14px; }
+@media (any-pointer: coarse) {
+  .round-button { width: var(--tap); height: var(--tap); }
+}
 
 /* ------------------------------------------------------------------ dialogs */
 

@@ -217,7 +217,7 @@ function update(li: HTMLLIElement, item: ViewItem, was: ViewItem | undefined): v
       break;
     case 'pending':
       setText(li, '.bubble', item.text);
-      setText(li, '.meta', item.state === 'sending' ? 'Sending…' : 'Queued');
+      setText(li, '.meta', item.state === 'sending' ? 'Sending…' : item.steer ? 'Steering' : 'Queued');
       break;
     case 'assistant': {
       const prose = li.querySelector('.prose');

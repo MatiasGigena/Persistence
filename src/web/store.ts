@@ -11,6 +11,8 @@ export interface PendingItem {
   readonly id: string;
   readonly text: string;
   readonly state: 'sending' | 'queued';
+  /** Sent to steer Pi's running work rather than to follow it up. */
+  readonly steer?: boolean;
 }
 
 /** What a chat view draws: the feed's items, local notices among them, and pending sends at the end. */
@@ -194,9 +196,10 @@ export class Store {
   }
 
   /** Adds a message being sent, shown at the end of the chat until it is in the feed. */
-  addPending(id: string, text: string): void {
+  addPending(id: string, text: string, steer = false): void {
     const baseline = new Set(this.root.items.filter(item => item.kind === 'user').map(item => item.id));
-    this.pending.push({ item: { kind: 'pending', id, text, state: 'sending' }, baseline });
+    const item: PendingItem = { kind: 'pending', id, text, state: 'sending' };
+    this.pending.push({ item: steer ? { ...item, steer } : item, baseline });
     this.changed();
   }
 
