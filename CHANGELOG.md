@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `claude-cli`: a call to one of Pi's tools by its bare name (`spawn_agent` instead of `mcp__pi__spawn_agent`) runs
+  as Pi's tool; it failed with "Claude called spawn_agent, which is not one of Pi's tools" (and, before that fix,
+  ended the turn in silence).
+
 - Web app: after the phone slept, it could stay on "Reconnecting…" for good: an attempt started around the sleep
   (the `/api/me` check or the WebSocket) could hang without failing, and coming back to the app did nothing while
   one was in flight. Attempts now give up after 10 s; coming back to the front pings a link that looks open

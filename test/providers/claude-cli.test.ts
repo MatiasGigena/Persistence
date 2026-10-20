@@ -197,6 +197,18 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.deepEqual(mixed.content.map(b => b.type === 'toolCall' ? b.name : b.type), ['read']);
   });
 
+  test('a call to one of Pi\'s tools by its bare name (no mcp__pi__) is still Pi\'s call', async (t) => {
+    const bare = (index: number, id: string, name: string, input: Json) => [
+      ev({ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name, input: {} } }),
+      ev({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) } }),
+      ev({ type: 'content_block_stop', index }),
+    ];
+    const cli = await fakeCli(t, [{ lines: [init, start, ...bare(0, 'toolu_b', 'read', { path: 'a.txt' }), ...end('tool_use')] }]);
+    const { message } = await collect(cli.models.streamSimple(cli.model, { tools, messages: [user('x')] }));
+    assert.equal(message.stopReason, 'toolUse');
+    assert.deepEqual(message.content, [{ type: 'toolCall', id: 'toolu_b', name: 'read', arguments: { path: 'a.txt' } }]);
+  });
+
   test('a CLI that prints nothing for idleTimeoutMs fails as timed out, so the Harness retries', async (t) => {
     const cli = await fakeCli(t, [{ lines: [init, start, ...text(0, 'partial')] }], { idleTimeoutMs: 300 });
     const { message } = await collect(cli.models.streamSimple(cli.model, { messages: [user('x')] }));

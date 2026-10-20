@@ -227,8 +227,12 @@ type Ending = { stopReason: Done } | { error: string } | { aborted: true };
 type BlockEvent = Exclude<AssistantMessageEvent, { type: 'start' | 'done' | 'error' }>;
 type WithoutPartial<T> = T extends unknown ? Omit<T, 'partial'> : never;
 
-/** Translates the CLI's stream-json lines into pi-ai events on `stream`; `finish` ends the request once. */
-function createParser(stream: AssistantMessageEventStream, output: AssistantMessage, finish: (ending: Ending) => void) {
+/**
+ * Translates the CLI's stream-json lines into pi-ai events on `stream`; `finish` ends the request once. `piTools` are
+ * the names of the tools this request offered.
+ */
+function createParser(stream: AssistantMessageEventStream, output: AssistantMessage, finish: (ending: Ending) => void,
+  piTools: ReadonlySet<string>) {
   let blocks = new Map<number, { index: number; json: string }>(); // API block index -> output block, current API message
   let toolUse = false;
   const foreign: string[] = []; // tool_use blocks naming a tool that is not Pi's
@@ -266,9 +270,12 @@ function createParser(stream: AssistantMessageEventStream, output: AssistantMess
         output.content.push({ type: 'thinking', thinking: '', ...(b.type === 'redacted_thinking' ? { redacted: true } : {}) });
         push({ type: 'thinking_start', contentIndex: index });
       } else if (b?.type === 'tool_use') {
-        if (!b.name.startsWith(PREFIX)) { foreign.push(b.name); return; } // not one of Pi's tools: nothing here can run it
+        // Pi's tools are offered as mcp__pi__<name>, but Claude sometimes calls one by its bare name, as the transcript
+        // writes it: that is still Pi's tool. Any other name is not: nothing here can run it.
+        const name = b.name.startsWith(PREFIX) ? b.name.slice(PREFIX.length) : piTools.has(b.name) ? b.name : undefined;
+        if (name === undefined) { foreign.push(b.name); return; }
         toolUse = true;
-        output.content.push({ type: 'toolCall', id: b.id, name: b.name.slice(PREFIX.length), arguments: {} });
+        output.content.push({ type: 'toolCall', id: b.id, name, arguments: {} });
         push({ type: 'toolcall_start', contentIndex: index });
       } else return;
       blocks.set(e.index, { index, json: '' });
@@ -402,7 +409,7 @@ function streamClaude(model: Model<Api>, context: TranscriptContext, options: Si
       const proc: Child = spawn(bin, claudeArgs(model, { systemFile, toolsFile, reasoning: options.reasoning }),
         { cwd: dir, env: childEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
       child = proc;
-      const parse = createParser(stream, output, finish);
+      const parse = createParser(stream, output, finish, new Set(tools.map(tool => tool.name)));
       let buffer = '';
       watch();
       proc.stdout.setEncoding('utf8').on('data', (chunk: string) => {

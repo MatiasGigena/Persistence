@@ -175,8 +175,9 @@ claude -p --output-format stream-json --verbose --include-partial-messages --no-
 - **Stalls.** A CLI that prints nothing for 10 minutes is killed, and the request ends with "no output from claude
   for 600 s (timed out)", which the Harness retries. Every stream line counts, the CLI's own `api_retry` lines
   included, so a CLI that is retrying an overloaded API is not cut off.
-- **Calls to tools Pi does not have.** A turn whose only `tool_use` names a tool outside `mcp__pi__…` ends with an
-  error naming it, instead of an empty answer.
+- **Calls to tools Pi does not have.** Claude sometimes calls one of Pi's tools by its bare name (`spawn_agent`, as
+  the transcript writes it) instead of `mcp__pi__spawn_agent`; such a call is still Pi's. A turn whose only
+  `tool_use` names a tool Pi does not offer ends with an error naming it, instead of an empty answer.
 - **Abort.** The request's signal kills the CLI and ends the stream as `aborted`.
 - **Auth check.** `claude auth status --json` (10 s timeout, no prompt) must report `loggedIn`; requests carry no
   auth of the host's own.
