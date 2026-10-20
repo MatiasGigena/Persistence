@@ -42,5 +42,6 @@ protected directly instead.
 - The protection is against mistakes and prompt injection by the model, not against the user: anything outside the
   list keeps the user's permissions, network included. A path that does not exist at launch is refused to read,
   write and edit, but bash can create it.
-- bubblewrap is a new runtime requirement for bash (Linux only). It needs unprivileged user namespaces.
+- bubblewrap is a new runtime requirement for bash (Linux only). It needs unprivileged user namespaces, not root:
+  its binary works from `~/.local/bin`, which the host checks before PATH.
 - Protocol 2: an older web page or attached TUI is refused with 4000 and reloads (web) or asks for an update.

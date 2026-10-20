@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
-import { GuardedEnv, protection } from '../../src/runtime/guard.ts';
+import { bwrapBinary, GuardedEnv, protection } from '../../src/runtime/guard.ts';
 import type { Protection } from '../../src/runtime/guard.ts';
 import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
@@ -98,12 +98,21 @@ test('bash runs in bubblewrap: hidden folders empty, files unreadable, read-only
   assert.equal(out, `hellomade\n${work}\n`);
 });
 
+test('bwrapBinary(): PI_DURABLE_BWRAP, else ~/.local/bin/bwrap when present, else bwrap on PATH', async t => {
+  const { home } = await world(t);
+  assert.equal(bwrapBinary({}, home), 'bwrap');
+  await mkdir(join(home, '.local', 'bin'), { recursive: true });
+  await writeFile(join(home, '.local', 'bin', 'bwrap'), '');
+  assert.equal(bwrapBinary({}, home), join(home, '.local', 'bin', 'bwrap'));
+  assert.equal(bwrapBinary({ PI_DURABLE_BWRAP: '/x/bwrap' }, home), '/x/bwrap');
+});
+
 test('without a working bubblewrap, bash refuses and says how to fix it', async t => {
   const { work } = await world(t);
   const env = new GuardedEnv({ cwd: work, protection: { hidden: [], readOnly: [] }, bwrap: join(work, 'no-bwrap') });
   const result = await env.exec('echo hi', undefined, context);
   assert.equal(result.ok, false);
-  assert.match(String(!result.ok && result.error.message), /bash is off: .*not installed\. Install bubblewrap \(sudo apt install bubblewrap\)/);
+  assert.match(String(!result.ok && result.error.message), /bash is off: .*not installed\. Install bubblewrap \(sudo apt install bubblewrap, or without root/);
 });
 
 test('through the Harness: Pi\'s own read and bash tools are held to the protection', { skip: !hasBwrap && 'bwrap is not installed' }, async t => {

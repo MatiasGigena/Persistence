@@ -3,7 +3,7 @@
 // real path (symlinks followed); every bash command runs in bubblewrap, where hidden folders are empty and system
 // folders are mounted read-only, so the shell is held to the same rules.
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { access, lstat, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -33,6 +33,15 @@ export interface StateFiles {
 /** Credentials under the home directory, relative to it. */
 const CREDENTIALS = ['.ssh', '.gnupg', '.claude', '.claude.json', '.pi/agent/auth.json', '.config/gh', '.aws', '.azure',
   '.config/gcloud', '.kube', '.docker/config.json', '.netrc', '.git-credentials', '.npmrc', '.pypirc'];
+/**
+ * The bubblewrap binary: PI_DURABLE_BWRAP, else `~/.local/bin/bwrap` when there (installed without root, from the
+ * package's .deb), else `bwrap` on PATH.
+ */
+export function bwrapBinary(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  const local = join(home, '.local', 'bin', 'bwrap');
+  return env.PI_DURABLE_BWRAP || (existsSync(local) ? local : 'bwrap');
+}
+
 const SYSTEM = ['/etc', '/usr', '/boot', '/opt', '/bin', '/sbin', '/lib', '/lib32', '/lib64', '/libx32', '/srv', '/var/lib'];
 
 const expand = (path: string, home: string): string => (path === '~' ? home : path.startsWith('~/') ? join(home, path.slice(2)) : path);
@@ -102,7 +111,8 @@ function probe(args: readonly string[]): Promise<string | undefined> {
     found = new Promise(done => execFile(bin, [...rest, '/bin/sh', '-c', 'true'], { timeout: 10_000 }, (error, _out, stderr) => {
       if (!error) return done(undefined);
       const missing = 'code' in error && error.code === 'ENOENT';
-      done(missing ? `${bin} is not installed. Install bubblewrap (sudo apt install bubblewrap) and restart Pi Durable.`
+      done(missing ? `${bin} is not installed. Install bubblewrap (sudo apt install bubblewrap, or without root its .deb's`
+        + ' usr/bin/bwrap into ~/.local/bin) and restart Pi Durable.'
         : `bubblewrap cannot run here: ${stderr.trim().split('\n').at(-1) ?? error.message}`);
     }));
     probes.set(key, found);
@@ -111,7 +121,7 @@ function probe(args: readonly string[]): Promise<string | undefined> {
 }
 
 /** Why bash cannot run under `guarded` on this machine, or undefined when it can: checked at launch, so it is said early. */
-export async function sandboxProblem(guarded: Protection, bwrap = process.env.PI_DURABLE_BWRAP || 'bwrap'): Promise<string | undefined> {
+export async function sandboxProblem(guarded: Protection, bwrap = bwrapBinary()): Promise<string | undefined> {
   const canonical = { hidden: await Promise.all(guarded.hidden.map(real)), readOnly: await Promise.all(guarded.readOnly.map(real)) };
   return probe(await sandboxArgs(bwrap, canonical));
 }
@@ -119,7 +129,7 @@ export async function sandboxProblem(guarded: Protection, bwrap = process.env.PI
 export interface GuardedEnvOptions {
   readonly cwd: string;
   readonly protection: Protection;
-  /** The bubblewrap binary; default `bwrap` on PATH, or PI_DURABLE_BWRAP. */
+  /** The bubblewrap binary; default bwrapBinary(). */
   readonly bwrap?: string;
 }
 
@@ -134,7 +144,7 @@ export class GuardedEnv extends NodeExecutionEnv {
   private roots: Promise<Protection> | undefined;
   private shell: Promise<string> | undefined;
 
-  constructor({ cwd, protection: guarded, bwrap = process.env.PI_DURABLE_BWRAP || 'bwrap' }: GuardedEnvOptions) {
+  constructor({ cwd, protection: guarded, bwrap = bwrapBinary() }: GuardedEnvOptions) {
     super({ cwd });
     this.guarded = guarded;
     this.bin = bwrap;

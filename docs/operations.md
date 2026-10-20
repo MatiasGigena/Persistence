@@ -7,7 +7,14 @@ How to install, run, back up, move, and remove a Persistence host.
 - Linux, Bash, and `flock` (usually from util-linux).
 - bubblewrap (`sudo apt install bubblewrap`), for the coding tools' bash: every command runs in it, so protected
   folders stay protected. Without it bash is off (read, write and edit still work). It needs unprivileged user
-  namespaces, the default on Debian and Ubuntu.
+  namespaces, the default on Debian and Ubuntu. Without root, put the package's binary in `~/.local/bin`, which
+  the host checks before PATH (`PI_DURABLE_BWRAP` names another):
+
+  ```sh
+  mkdir -p ~/.local/bin && cd "$(mktemp -d)" && apt-get download bubblewrap \
+    && dpkg-deb -x bubblewrap_*.deb x && cp x/usr/bin/bwrap ~/.local/bin/ \
+    && ~/.local/bin/bwrap --dev-bind / / -- true && echo ok
+  ```
 - Node.js 22.19 or newer. The launcher uses `PI_DURABLE_NODE` if set, else `node`
   on PATH. If that `node` is older than 22.19, it falls back to Pi's private Node at
   `~/.local/share/pi-node/current/bin/node` when present.
@@ -458,7 +465,7 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 |---|---|
 | Exit status 75, "already open in another pi-durable process" | Another host holds the lock on this database (perhaps in tmux, or through a symlink alias). Close it first. |
 | `pi-durable requires flock` | Install util-linux. |
-| "Coding tools: bash is off. bwrap is not installed" | `sudo apt install bubblewrap`, then restart. |
+| "Coding tools: bash is off. bwrap is not installed" | `sudo apt install bubblewrap`, or without root the `~/.local/bin` recipe in [Requirements](#requirements); then restart. |
 | "bash is off: bubblewrap cannot run here: … Operation not permitted" | Unprivileged user namespaces are off (`sysctl kernel.unprivileged_userns_clone`, or AppArmor's `kernel.apparmor_restrict_unprivileged_userns` on Ubuntu 24.04). Allow them for bwrap, or run without bash. |
 | A tool says "… is protected" | The path is a [protected folder](#protected-folders). Set `PI_DURABLE_UNPROTECT` if the tools should use it. |
 | `No credentials for PROVIDER` | Run `npm exec -- pi` in the install dir, then `/login`; or set the provider's API-key variable; or pass `--auth-file`. The message names the auth file it read. |
