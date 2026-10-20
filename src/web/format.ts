@@ -66,6 +66,11 @@ export function prettyArgs(args: string): string {
   }
 }
 
+/** A bash call's command as written, newlines kept, for its copyable block; undefined for any other tool. */
+export function toolCommand(name: string, args: string): string | undefined {
+  return name === 'bash' ? field(args, 'command') : undefined;
+}
+
 export const size = (bytes: number): string => bytes < 1024 ? `${bytes} B`
   : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 

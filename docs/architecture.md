@@ -247,7 +247,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/web/main.ts` | Boots the app: pairing screen, connection banner, header, composer, menus |
 | `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |
 | `src/web/store.ts` | Mirrors feeds with `applyOps`, status, notices, pending sends (resent with their requestId) |
-| `src/web/chat-view.ts`, `markdown.ts`, `format.ts` | Keyed DOM chat, sanitized Markdown, TUI-parity text helpers |
+| `src/web/chat-view.ts`, `markdown.ts`, `format.ts`, `copy.ts` | Keyed DOM chat, sanitized Markdown, TUI-parity text helpers; copy buttons on turns and code blocks |
 | `src/web/panels/*` | Sheets: agents, memory zoom, model picker, reasoning effort picker, tools (confirm dialog), settings |
 | `src/web/push.ts`, `sw.ts` | Push subscribe on a tap; service worker: network-first shell, offline page, push and click handlers |
 | `src/server/transport-ws.ts` | `startWebListener`: HTTP on 127.0.0.1, `/api/me`, `/api/pair`, the app, and `/ws` WebSockets handed to the hub as `PeerLink`s |

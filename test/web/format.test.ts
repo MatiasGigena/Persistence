@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { SessionStatus } from '../../src/protocol/messages.ts';
 import {
-  base64UrlBytes, guessDeviceName, normalizeCode, parseMessage, parseZoom, sortModels, statusParts, statusText, toolSummary,
+  base64UrlBytes, guessDeviceName, normalizeCode, parseMessage, parseZoom, sortModels, statusParts, statusText, toolCommand, toolSummary,
 } from '../../src/web/format.ts';
 import { parseMessage as tuiParseMessage, parseZoom as tuiParseZoom } from '../../src/ui/tui/panels/memory.ts';
 import { toolSummary as tuiToolSummary } from '../../src/ui/tui/chat.ts';
@@ -24,6 +24,12 @@ test('toolSummary matches the terminal on every kind of call', () => {
     ['mystery', JSON.stringify({ text: 'x'.repeat(200) })], ['bash', '{"command":"a\\tb\\u001b[31mred"}'],
   ];
   for (const [name, args] of cases) assert.equal(toolSummary(name, args), tuiToolSummary(name, args), `${name} ${args}`);
+});
+
+test('toolCommand is a bash call\'s command with its lines, even while its arguments stream in', () => {
+  assert.equal(toolCommand('bash', '{"command":"cd src &&\\n  ls -la"}'), 'cd src &&\n  ls -la');
+  assert.equal(toolCommand('bash', '{"command":"git sta'), 'git sta');
+  assert.equal(toolCommand('read', '{"path":"a.ts"}'), undefined);
 });
 
 test('the full status and the memory parsers match the terminal', () => {

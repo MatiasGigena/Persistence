@@ -244,9 +244,37 @@ button.status-part {
 .prose table { display: block; overflow-x: auto; border-collapse: collapse; font: 0.875rem/1.4 var(--sans); }
 .prose th, .prose td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
 .prose hr { border: 0; border-top: 1px solid var(--line); margin: 1.2em 0; }
-.item-assistant.is-streaming .prose > :last-child::after {
+/* Not after a code block: its wrapper would put the dot on a line of its own. */
+.item-assistant.is-streaming .prose > :last-child:not(.code-block)::after {
   content: ""; display: inline-block; width: 0.5em; height: 0.5em; margin-left: 4px; border-radius: 50%;
   background: var(--lamp); vertical-align: 0.05em;
+}
+
+/* Copy buttons, as Pi Cloud's: quiet icons, a check once copied. */
+.copy {
+  display: grid; place-items: center; flex: none; width: var(--tap); height: var(--tap);
+  border: 0; border-radius: var(--r-xs); background: transparent; color: var(--faint);
+}
+.copy svg { width: 16px; height: 16px; }
+.copy[data-state="check"] { color: var(--lamp); }
+.copy[data-state="alert"] { color: var(--danger); }
+.turn-actions { display: flex; gap: 2px; margin: -6px 0 4px -12px; }
+.code-block { position: relative; }
+.code-block > pre { padding-right: 44px; }
+.copy-code {
+  position: absolute; top: 2px; right: 2px; width: 36px; height: 36px;
+  background: var(--code); color: var(--faint);
+}
+.prose .code-block { margin: 0 0 0.8em; }
+.prose .code-block > pre { margin: 0; }
+/* A finger gets the full tap target, in the block's corner, and the code keeps clear of it. */
+@media (any-pointer: coarse) {
+  .copy-code { width: var(--tap); height: var(--tap); top: 0; right: 0; }
+  .code-block > pre { padding-right: 48px; }
+}
+@media (hover: hover) and (pointer: fine) {
+  .copy:hover { color: var(--ink); background: var(--glass); }
+  .copy-code:hover { background: var(--raised); }
 }
 
 /* Thinking and tool calls: one quiet line each, open for the detail. */
@@ -272,12 +300,13 @@ button.status-part {
 .item-tool[data-status="error"] .tool-mark, .item-tool[data-status="error"] .tool-name { color: var(--danger); }
 .tool-name { flex: none; font-weight: 600; color: var(--ink); }
 .tool-arg { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 0.8125rem/1.4 var(--mono); color: var(--faint); }
-.tool-args, .tool-output {
+.tool-args, .tool-output, .tool-command {
   margin: 0 0 6px; padding: 10px 12px; border-radius: 10px; background: var(--code);
   font-size: 0.75rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 50vh; overflow-y: auto;
 }
 .tool-args { color: var(--muted); }
+.tool-command { color: var(--ink); }
 .tool-output.is-error { color: var(--danger); }
 @keyframes blink { 50% { opacity: 0.3; } }
 
