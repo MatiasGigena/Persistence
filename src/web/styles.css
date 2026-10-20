@@ -137,26 +137,12 @@ code, pre { font-family: var(--mono); }
   background: var(--bg);
 }
 
-.tools-bar {
-  display: flex; align-items: center; gap: 10px;
-  padding: calc(6px + env(safe-area-inset-top)) var(--gutter) 6px;
-  background: var(--danger); color: var(--danger-ink);
-  font-size: 0.875rem;
-}
-.tools-bar-label { letter-spacing: 0.06em; font-weight: 700; white-space: nowrap; }
-.tools-bar-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.92; }
-.tools-bar-button {
-  min-height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid rgb(255 255 255 / 0.6);
-  background: transparent; color: inherit; font-weight: 600; white-space: nowrap;
-}
-
 .top {
   position: relative;
   padding: calc(4px + env(safe-area-inset-top)) var(--gutter) 6px;
   background: var(--chrome);
   backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
 }
-.tools-on .top { padding-top: 4px; }
 .top-row, .status { max-width: var(--column); margin: 0 auto; }
 .top-row { display: flex; align-items: center; gap: 8px; min-height: var(--nav-h); }
 .brand { font: 600 14px/1 var(--mono); margin: 0 4px 0 0; letter-spacing: -0.01em; }

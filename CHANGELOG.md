@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Web app: no "TOOLS ON" bar over the header. The tools are on by default and held to protected folders
+  (ADR 0025); their state and switch are in the menu, under Coding tools.
+
 - Coding tools are on by default for `pi-durable serve` too, and no longer turn off after 30 idle minutes
   (`PI_DURABLE_TOOLS_IDLE_MIN=N` brings that back). Instead, for every launch, protected folders: the chat's own
   state and your credentials (`~/.ssh`, `~/.claude`, `~/.config/gh`, `~/.aws`, …) are hidden from the tools, and

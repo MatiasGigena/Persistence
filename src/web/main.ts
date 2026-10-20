@@ -12,7 +12,7 @@ import { modelView } from './panels/model.ts';
 import { settingsView } from './panels/settings.ts';
 import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
-import { setTools, toolsView } from './panels/tools.ts';
+import { toolsView } from './panels/tools.ts';
 import { syncPush } from './push.ts';
 import { Store } from './store.ts';
 import type { Effect } from './store.ts';
@@ -160,7 +160,6 @@ function start(): void {
   const modelName = byId('model-name', HTMLSpanElement);
   const effortChip = byId('effort-chip', HTMLButtonElement);
   const effortName = byId('effort-name', HTMLSpanElement);
-  const toolsBar = byId('tools-bar', HTMLDivElement);
   const menu = byId('menu', HTMLDialogElement);
 
   const view = new ChatView(byId('feed', HTMLOListElement), byId('scroller', HTMLDivElement), {
@@ -248,7 +247,6 @@ function start(): void {
 
   modelChip.addEventListener('click', () => sheet.open(modelView(ctx)));
   effortChip.addEventListener('click', () => sheet.open(effortView(ctx)));
-  byId('tools-off', HTMLButtonElement).addEventListener('click', () => void setTools(ctx, false));
   byId('menu-button', HTMLButtonElement).addEventListener('click', () => menu.showModal());
   menu.addEventListener('click', event => { if (event.target === menu) menu.close(); });
   const panels = { agents: agentsView, memory: memoryView, model: modelView, effort: effortView, tools: toolsView, settings: settingsView } as const;
@@ -268,8 +266,6 @@ function start(): void {
     modelChip.setAttribute('aria-label', `Model ${status.model}. Change model`);
     effortName.textContent = status.thinkingLevel;
     effortChip.setAttribute('aria-label', `Reasoning effort ${status.thinkingLevel}. Change effort`);
-    toolsBar.hidden = !status.toolsEnabled;
-    document.documentElement.classList.toggle('tools-on', status.toolsEnabled);
     stopButton.hidden = !status.busy;
     pulse.classList.toggle('is-busy', status.busy || status.agents.some(a => a.busy));
     statusLine.replaceChildren(...statusParts(status).map(part => {
