@@ -9,7 +9,7 @@ import { describe, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Context } from '@earendil-works/chord';
-import { createModels, Type } from '@earendil-works/pi-ai';
+import { createModels, getSupportedThinkingLevels, Type } from '@earendil-works/pi-ai';
 import type { AssistantMessage, AssistantMessageEventStream, AuthCheck, AuthResult, Credential, Models, ThinkingLevel, Tool,
   ToolResultMessage, Usage, UserMessage } from '@earendil-works/pi-ai';
 import type { Conversation } from '@earendil-works/pi-durable';
@@ -78,7 +78,8 @@ function parseCall(line: string): Call {
 }
 
 /** A provider whose `claude` is the fake CLI playing `script`; `calls()` reads what each call received. */
-async function fakeCli(t: TestContext, script: FakeClaudeStep[] = [], { auth, env: extra = {} }: { auth?: Json; env?: NodeJS.ProcessEnv } = {}) {
+async function fakeCli(t: TestContext, script: FakeClaudeStep[] = [],
+  { auth, env: extra = {}, idleTimeoutMs }: { auth?: Json; env?: NodeJS.ProcessEnv; idleTimeoutMs?: number } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'pi-durable-fake-claude-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const bin = join(dir, 'claude');
@@ -90,7 +91,7 @@ async function fakeCli(t: TestContext, script: FakeClaudeStep[] = [], { auth, en
     CLAUDE_CODE_SESSION_ID: 'parent-session', ANTHROPIC_API_KEY: 'sk-ant-api03-user-choice',
     ...(auth ? { FAKE_CLAUDE_AUTH: JSON.stringify(auth) } : {}), ...extra };
   const models = createModels();
-  models.setProvider(claudeCliProvider({ env, bin }));
+  models.setProvider(claudeCliProvider({ env, bin, ...idleTimeoutMs === undefined ? {} : { idleTimeoutMs } }));
   const calls = async () => (await readFile(log, 'utf8')).split('\n').filter(Boolean).map(parseCall);
   const model = models.getModel('claude-cli', 'haiku');
   assert.ok(model);
@@ -144,6 +145,7 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.equal(value('--model'), 'haiku');
     assert.equal(value('--max-turns'), '1');
     assert.equal(value('--effort'), 'high');
+    assert.equal(value('--thinking-display'), 'summarized');
     assert.ok(!call.argv.some(arg => ['--resume', '--session-id', '--continue', '--bare'].includes(arg)));
     assert.equal(call.system, `You are Pi.\n\n${CONVENTION}`);
     assert.ok(call.cwd.startsWith(tmpdir()) && call.cwd !== process.cwd());
@@ -179,6 +181,29 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     const { message } = await collect(cli.models.streamSimple(cli.model, { tools, messages: [user('both')] }));
     assert.equal(message.stopReason, 'toolUse');
     assert.deepEqual(message.content.map(b => b.type === 'toolCall' ? [b.id, b.name, b.arguments] : b.type), [['toolu_a', 'read', { path: 'a' }], ['toolu_b', 'date', { id: 3 }]]);
+  });
+
+  test('a turn that only calls tools Pi does not have is an error, not an empty answer', async (t) => {
+    const foreign = ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_x', name: 'ToolSearch', input: {} } });
+    const cli = await fakeCli(t, [
+      { lines: [init, start, foreign, ev({ type: 'content_block_stop', index: 0 }), ...end('tool_use')] },
+      { lines: [init, start, foreign, ev({ type: 'content_block_stop', index: 0 }), ...toolUse(1, 'toolu_1', 'read', { path: 'a' }), ...end('tool_use')] },
+    ]);
+    const lone = (await collect(cli.models.streamSimple(cli.model, { tools, messages: [user('x')] }))).message;
+    assert.equal(lone.stopReason, 'error');
+    assert.equal(lone.errorMessage, 'claude-cli: Claude called ToolSearch, which is not one of Pi\'s tools');
+    const mixed = (await collect(cli.models.streamSimple(cli.model, { tools, messages: [user('x')] }))).message;
+    assert.equal(mixed.stopReason, 'toolUse', "Pi's own calls still run");
+    assert.deepEqual(mixed.content.map(b => b.type === 'toolCall' ? b.name : b.type), ['read']);
+  });
+
+  test('a CLI that prints nothing for idleTimeoutMs fails as timed out, so the Harness retries', async (t) => {
+    const cli = await fakeCli(t, [{ lines: [init, start, ...text(0, 'partial')] }], { idleTimeoutMs: 300 });
+    const { message } = await collect(cli.models.streamSimple(cli.model, { messages: [user('x')] }));
+    assert.equal(message.stopReason, 'error');
+    assert.equal(message.errorMessage, 'claude-cli: no output from claude for 300 ms (timed out)');
+    assert.ok(isRetryableAssistantError(message));
+    assert.ok(await until(async () => (await cli.calls()).some(c => c.killed)), 'the CLI was killed');
   });
 
   test('history is folded into one tagged prompt, tool results included', async (t) => {
@@ -222,6 +247,7 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     const levels: (ThinkingLevel | undefined)[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', undefined];
     assert.deepEqual(levels.map(effort),
       ['low', 'low', 'medium', 'high', 'xhigh', 'max', undefined]);
+    assert.deepEqual(getSupportedThinkingLevels(opus), ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'every effort can be picked');
     assert.deepEqual(MODELS.map(m => m.id), ['opus', 'sonnet', 'haiku', 'fable']);
   });
 

@@ -367,6 +367,11 @@ export class Hub implements PeerHub {
         return null;
       },
       'tools.set': ({ enabled, confirm }, connection) => this.setTools(connection, enabled, confirm),
+      'thinking.levels': async () => ({ levels: await this.need().thinkingLevels() }),
+      'thinking.set': async ({ level }) => {
+        try { await this.need().setThinkingLevel(level); } catch (error) { throw failed(error); }
+        return null;
+      },
       'push.subscribe': async ({ subscription }, connection) => {
         let url: URL | undefined;
         try { url = new URL(subscription.endpoint); } catch { url = undefined; }

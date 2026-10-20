@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
-import { mkdtemp, mkdir, rm, symlink, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { DEFAULT_PORT, isRecord, parseArgs, parseConfig, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, writeSettings } from '../../src/host/config.ts';
+import { DEFAULT_PORT, isRecord, parseArgs, parseConfig, readSettings, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, updateSettings,
+  writeSettings } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 
 const exec = promisify(execFile);
@@ -48,6 +49,25 @@ test('the model: --model, else PI_DURABLE_MODEL, else settings.json, else the de
     await assert.rejects(launch([]), /settings\.json/, bad);
   }
   assert.deepEqual(await launch(['--model', 'claude-cli/haiku']), ['claude-cli/haiku', 'flag'], 'a flag skips the file');
+});
+
+test('the thinking level: --thinking, else settings.json, else high; updateSettings keeps the other field', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-settings-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const settingsPath = join(folder, 'settings.json');
+  const launch = async (args: string[]) => (await resolveOptions(parseArgs(['--database', join(folder, 'chat.sqlite'), '--cwd', folder, ...args]), {})).thinkingLevel;
+  assert.equal(await launch([]), 'high');
+  await updateSettings(settingsPath, { model: { provider: 'claude-cli', modelId: 'opus' } });
+  await updateSettings(settingsPath, { thinkingLevel: 'xhigh' });
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { model: 'claude-cli/opus', thinkingLevel: 'xhigh' });
+  assert.equal(await launch([]), 'xhigh');
+  assert.equal(await launch(['--model', 'claude-cli/sonnet']), 'xhigh', '--model alone keeps the saved level');
+  assert.equal(await launch(['--thinking', 'low']), 'low');
+  await updateSettings(settingsPath, { model: { provider: 'claude-cli', modelId: 'haiku' } });
+  assert.deepEqual(await readSettings(settingsPath), { model: { provider: 'claude-cli', modelId: 'haiku' }, thinkingLevel: 'xhigh' });
+  await writeFile(settingsPath, '{"thinkingLevel":"huge"}');
+  await assert.rejects(launch([]), /settings\.json/);
+  assert.equal(await launch(['--model', 'claude-cli/haiku']), 'high', 'with --model a broken file is skipped');
 });
 
 test('--plain selects the line chat', () => {

@@ -125,7 +125,8 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
   [models.md](models.md).
 - Model: `--model PROVIDER/ID`, else `PI_DURABLE_MODEL=PROVIDER/ID`, else the model last
   chosen with `/model` in the terminal UI (saved in `settings.json`), else
-  `openai-codex/gpt-6.1-sol`. Thinking defaults to `high`. `--status` shows the model
+  `openai-codex/gpt-6.1-sol`. Thinking (reasoning effort): `--thinking`, else the level last chosen with `/effort`
+  (also in `settings.json`), else `high`. `--status` shows the model
   and where it came from (`modelSource`). See [models.md](models.md#switching-models).
   `--thinking` takes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 - Models must exist in the pinned Pi 1.3.0 catalog, or be one of the `claude-cli`

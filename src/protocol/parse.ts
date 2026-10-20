@@ -167,6 +167,8 @@ const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
   'model.set': (id, p) => ({ t: 'req', id, op: 'model.set', params: { provider: str(p, 'provider'), id: str(p, 'id') } }),
   'tools.set': (id, p) => ({ t: 'req', id, op: 'tools.set', params: withOptional({ enabled: bool(p, 'enabled') }, 'confirm',
     p.confirm === undefined ? undefined : oneOf(p, 'confirm', CONFIRMS)) }),
+  'thinking.levels': id => ({ t: 'req', id, op: 'thinking.levels', params: {} }),
+  'thinking.set': (id, p) => ({ t: 'req', id, op: 'thinking.set', params: { level: str(p, 'level') } }),
   'push.subscribe': (id, p) => ({ t: 'req', id, op: 'push.subscribe', params: { subscription: subscription(p.subscription) } }),
   'push.unsubscribe': (id, p) => ({ t: 'req', id, op: 'push.unsubscribe', params: { endpoint: str(p, 'endpoint') } }),
   'admin.backup': (id, p) => ({ t: 'req', id, op: 'admin.backup', params: withOptional({}, 'out', optStr(p, 'out')) }),
@@ -188,6 +190,8 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   models: (id, r) => ({ t: 'res', id, op: 'models', ok: true, result: { models: list(obj(r, 'result'), 'models', modelChoice) } }),
   'model.set': id => ({ t: 'res', id, op: 'model.set', ok: true, result: null }),
   'tools.set': id => ({ t: 'res', id, op: 'tools.set', ok: true, result: null }),
+  'thinking.levels': (id, r) => ({ t: 'res', id, op: 'thinking.levels', ok: true, result: { levels: list(obj(r, 'result'), 'levels', name) } }),
+  'thinking.set': id => ({ t: 'res', id, op: 'thinking.set', ok: true, result: null }),
   'push.subscribe': id => ({ t: 'res', id, op: 'push.subscribe', ok: true, result: null }),
   'push.unsubscribe': id => ({ t: 'res', id, op: 'push.unsubscribe', ok: true, result: null }),
   'admin.backup': (id, r) => {
@@ -202,6 +206,7 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   'admin.revoke': id => ({ t: 'res', id, op: 'admin.revoke', ok: true, result: null }),
 };
 
+/** A string list item: an agent's name or a thinking level. */
 function name(x: unknown): string {
   if (typeof x !== 'string') throw new Bad('names must be strings');
   return x;

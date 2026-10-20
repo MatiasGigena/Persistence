@@ -33,7 +33,9 @@ A prompt whose first word is serve or backup needs -p.
   --model PROVIDER/ID    Model for this launch. Without it: PI_DURABLE_MODEL, else
                          the last /model choice (settings.json beside the
                          database), else openai-codex/gpt-6.1-sol
-  --thinking LEVEL       off|minimal|low|medium|high|xhigh|max (default: high)
+  --thinking LEVEL       Reasoning effort: off|minimal|low|medium|high|xhigh|max.
+                         Without it: the last /effort choice (settings.json),
+                         else high
   --no-tools             Turn read/write/edit/bash off for this launch (they are
                          on by default, with your user privileges)
   --allow-tools          Tools on (the default for a local launch; kept for scripts)
@@ -54,7 +56,7 @@ CLI signed in with claude auth login); anthropic/claude-sonnet-5-5 and other
 anthropic/... models with an API key in ANTHROPIC_API_KEY (never a subscription
 login). See docs/models.md.
 
-Chat commands: /help, /model, /tools, /agents, /mem, /status, /exit (--plain:
+Chat commands: /help, /model, /effort, /tools, /agents, /mem, /status, /exit (--plain:
 /help, /history, /agents, /status, /exit). Ctrl+D or /exit closes the host, and
 so does Ctrl+C (twice in the terminal UI); unfinished work resumes next launch.
 Attached, they detach and the server keeps working.
@@ -113,8 +115,10 @@ const LAUNCH_ONLY: readonly Key[] = ['allowTools', 'noTools', 'cwd', 'modelSpec'
 const COMMAND_NAMES: Readonly<Record<Command, string>> = {
   chat: 'chat', serve: 'serve', 'serve-pair': 'serve pair', 'serve-devices': 'serve devices', backup: 'backup',
 };
-const THINKING: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
-const isThinkingLevel = (x: unknown): x is ModelThinkingLevel => THINKING.some(level => level === x);
+/** Every reasoning effort (thinking level), lowest first. */
+export const THINKING: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+export const isThinkingLevel = (x: unknown): x is ModelThinkingLevel => THINKING.some(level => level === x);
+const DEFAULT_THINKING: ModelThinkingLevel = 'high';
 
 /** Where the launch's model came from, highest precedence first. */
 export type ModelSource = 'flag' | 'env' | 'settings' | 'default';
@@ -144,7 +148,10 @@ export interface Options {
   dataDir?: string;
   cwd?: string;
   modelSpec?: string;
+  /** --thinking's level, else the default until resolveOptions() applies settings.json. */
   thinkingLevel: ModelThinkingLevel;
+  /** --thinking was given. */
+  thinkingFlag?: boolean;
   authFile?: string;
   requestId?: string;
   prompt?: string;
@@ -217,9 +224,10 @@ export interface Config extends Options {
   modelSource: ModelSource;
 }
 
-/** What settings.json holds: the default model for launches without --model or PI_DURABLE_MODEL. */
+/** What settings.json holds: the defaults for launches without --model (or PI_DURABLE_MODEL) and --thinking. */
 export interface Settings {
   model?: ModelRef;
+  thinkingLevel?: ModelThinkingLevel;
 }
 
 export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -243,7 +251,7 @@ export function parsePort(spec: string, what: string): number {
 }
 
 export function parseArgs(args: readonly string[]): Options {
-  const options: Options = { command: 'chat', thinkingLevel: 'high', allowTools: true };
+  const options: Options = { command: 'chat', thinkingLevel: DEFAULT_THINKING, allowTools: true };
   const words: string[] = [], literal: string[] = [];
   const given = new Map<Key, string>();
   let thinking: string = options.thinkingLevel;
@@ -256,7 +264,7 @@ export function parseArgs(args: readonly string[]): Options {
       const value = args[++i];
       if (value === undefined || value.startsWith('--')) throw new Error(`${arg} requires a value`);
       given.set(key, arg);
-      if (key === 'thinkingLevel') thinking = value;
+      if (key === 'thinkingLevel') { thinking = value; options.thinkingFlag = true; }
       else options[key] = value;
     } else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
     else words.push(arg);
@@ -318,23 +326,39 @@ export async function readSettings(path: string): Promise<Settings> {
   }
   let value: unknown;
   try { value = JSON.parse(text); } catch (error) { throw new Error(`${path} is not valid JSON (${errorMessage(error)}); fix or delete it`); }
-  if (!isRecord(value) || (value.model !== undefined && typeof value.model !== 'string')) {
-    throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID"}; fix or delete it`);
+  if (!isRecord(value) || (value.model !== undefined && typeof value.model !== 'string')
+    || (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel))) {
+    throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
   }
-  return value.model === undefined ? {} : { model: parseModel(value.model, `"model" in ${path}`) };
+  return { ...value.model === undefined ? {} : { model: parseModel(value.model, `"model" in ${path}`) },
+    ...isThinkingLevel(value.thinkingLevel) ? { thinkingLevel: value.thinkingLevel } : {} };
 }
 
 /** Replace settings.json atomically (mode 600). Only work launches write it, under the database's flock. */
-export function writeSettings(path: string, { model }: Settings): void {
-  atomicWrite(path, `${JSON.stringify(model ? { model: `${model.provider}/${model.modelId}` } : {}, null, 2)}\n`);
+export function writeSettings(path: string, { model, thinkingLevel }: Settings): void {
+  const json = { ...model ? { model: `${model.provider}/${model.modelId}` } : {}, ...thinkingLevel ? { thinkingLevel } : {} };
+  atomicWrite(path, `${JSON.stringify(json, null, 2)}\n`);
 }
 
-/** The launch's model: --model, else PI_DURABLE_MODEL, else settings.json, else the built-in default. */
-async function resolveModel(options: Options, env: NodeJS.ProcessEnv, settingsPath: string): Promise<{ model: ModelRef; modelSource: ModelSource }> {
-  if (options.model) return { model: options.model, modelSource: 'flag' };
-  if (env.PI_DURABLE_MODEL) return { model: parseModel(env.PI_DURABLE_MODEL, 'PI_DURABLE_MODEL'), modelSource: 'env' };
-  const { model } = await readSettings(settingsPath);
-  return model ? { model, modelSource: 'settings' } : { model: parseModel(DEFAULT_MODEL, 'the default model'), modelSource: 'default' };
+/** Change some of settings.json, keeping the rest. */
+export async function updateSettings(path: string, change: Settings): Promise<void> {
+  writeSettings(path, { ...await readSettings(path), ...change });
+}
+
+/**
+ * The launch's model: --model, else PI_DURABLE_MODEL, else settings.json, else the built-in default. Its thinking
+ * level: --thinking, else settings.json, else high.
+ */
+async function resolveModel(options: Options, env: NodeJS.ProcessEnv, settingsPath: string):
+  Promise<{ model: ModelRef; modelSource: ModelSource; thinkingLevel: ModelThinkingLevel }> {
+  // With --model, a broken settings.json must not stop the launch: it then only loses the saved thinking level.
+  const saved: Settings = options.model ? options.thinkingFlag ? {} : await readSettings(settingsPath).catch(() => ({}))
+    : await readSettings(settingsPath);
+  const thinkingLevel = options.thinkingFlag ? options.thinkingLevel : saved.thinkingLevel ?? DEFAULT_THINKING;
+  if (options.model) return { model: options.model, modelSource: 'flag', thinkingLevel };
+  if (env.PI_DURABLE_MODEL) return { model: parseModel(env.PI_DURABLE_MODEL, 'PI_DURABLE_MODEL'), modelSource: 'env', thinkingLevel };
+  return saved.model ? { model: saved.model, modelSource: 'settings', thinkingLevel }
+    : { model: parseModel(DEFAULT_MODEL, 'the default model'), modelSource: 'default', thinkingLevel };
 }
 
 /** Longest Unix socket path: sun_path is 108 bytes on Linux, its NUL included. */
@@ -422,7 +446,7 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
 const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'settingsPath', 'serveDir', 'authFile'] as const satisfies readonly (keyof Config)[];
 const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out', 'launchOption'] as const satisfies readonly (keyof Config)[];
 const BOOLEANS = ['allowTools', 'exists', 'inspectOnly'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_BOOLEANS = ['help', 'version', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach'] as const satisfies readonly (keyof Config)[];
+const OPTIONAL_BOOLEANS = ['help', 'version', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'thinkingFlag'] as const satisfies readonly (keyof Config)[];
 const isPort = (x: unknown): boolean => typeof x === 'number' && Number.isInteger(x) && x >= 1 && x <= 65535;
 
 function isServeSettings(x: unknown): x is ServeSettings {

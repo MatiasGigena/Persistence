@@ -71,10 +71,11 @@ returns its original answer. Use a new ID for a new task, and never reuse an ID
 with a different prompt.
 
 Other flags: `--database PATH`, `--data-dir PATH`, `--cwd PATH`, `--auth-file PATH`,
-`-v`/`--version`. The default model is `openai-codex/gpt-6.1-sol` with thinking `high`.
+`-v`/`--version`. The default model is `openai-codex/gpt-6.1-sol` with thinking (reasoning effort) `high`.
 
 Chat commands: `/help`, `/model` (pick a model; type to filter, Enter switches),
-`/model provider/id` (switch directly), `/tools` (show), `/tools on` (asks first:
+`/model provider/id` (switch directly), `/effort` (pick the reasoning effort: `low` to `max`,
+as the model takes; `/effort xhigh` sets it directly; saved as the default), `/tools` (show), `/tools on` (asks first:
 `y` enables read, write, edit and bash for this launch), `/tools off`, `/agents` (list
 agents, open any agent's live chat), `/mem` (browse the memory view and zoom down to
 any message), `/status`, `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
@@ -83,7 +84,7 @@ Keys: Enter sends, Shift+Enter or Alt+Enter adds a line, Esc interrupts Pi, Ctrl
 picks a model, Ctrl+O expands tool output, Ctrl+T expands thinking, Ctrl+C twice or
 Ctrl+D exits (asking first while Pi or an agent is working). On a phone, see
 [Phone access](docs/operations.md#phone-access-sshmosh).
-`--plain` mode has `/history` instead of `/agents`, `/mem`, `/model` and `/tools`.
+`--plain` mode has `/history` instead of `/agents`, `/mem`, `/model`, `/effort` and `/tools`.
 Closing never discards unfinished work; the next launch resumes it.
 
 ## Models

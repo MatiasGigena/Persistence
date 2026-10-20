@@ -129,6 +129,13 @@ export interface UiSession {
   setModel(provider: string, id: string): Promise<void>;
   /** Turns coding tools (read, write, edit, bash) on or off for Pi and its agents, for this launch only. */
   setTools(enabled: boolean): Promise<void>;
+  /** The reasoning efforts (thinking levels) the current model takes, lowest first. */
+  thinkingLevels(): Promise<readonly string[]>;
+  /**
+   * Sets Pi's and its agents' reasoning effort from their next request, and saves it as the default for later
+   * launches that pass no --thinking. Rejects with a readable message for a level the current model does not take.
+   */
+  setThinkingLevel(level: string): Promise<void>;
   /**
    * Host notices that are not chat items: warnings the host logs while a client shows the chat, tool switches made
    * by another client, and so on. Each listener gets each notice once; clients show them in the chat.

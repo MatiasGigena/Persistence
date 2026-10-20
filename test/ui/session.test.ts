@@ -125,6 +125,15 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     assert.equal(tools.status().toolsEnabled, true);
   });
 
+  test('an answer with nothing to show ends with a notice, not in silence', async (t) => {
+    const { session } = await open(t, [fauxAssistantMessage([fauxThinking('nothing to add')])]);
+    await session.send('anything?');
+    const notice = await until(() => find(session.chat, 'notice'), 'the notice', session.chat);
+    assert.equal(notice.text, 'The model ended its turn without a reply.');
+    assert.equal(notice.level, 'warn');
+    assert.deepEqual(session.chat.items().map(item => item.kind), ['user', 'thinking', 'notice']);
+  });
+
   test('an agents.report input is a report item from its agent', async (t) => {
     const { instance, session } = await open(t, [fauxAssistantMessage('thanks, Bob')]);
     await instance.root.submit({ type: 'input', content: '[Bob] built it',
@@ -241,9 +250,10 @@ const coding = (agent: Agent | undefined): string[] => (agent?.tools ?? []).map(
  */
 async function openRoutes(t: TestContext, { inspect = false } = {}) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-switch-'));
-  const seen: string[] = [];
-  const respond = (context: TranscriptContext, _options: unknown, _state: unknown, model: Model<string>) => {
+  const seen: string[] = [], efforts: (string | undefined)[] = [];
+  const respond = (context: TranscriptContext, options: { reasoning?: string } | undefined, _state: unknown, model: Model<string>) => {
     seen.push(`${model.provider}/${model.id}`);
+    efforts.push(options?.reasoning);
     if (model.id === 'haiku') return fauxAssistantMessage('a short summary');
     const said = lastUserText(context);
     if (context.messages.at(-1)?.role === 'toolResult') return fauxAssistantMessage('Bob is on it.');
@@ -254,7 +264,7 @@ async function openRoutes(t: TestContext, { inspect = false } = {}) {
     }
     return fauxAssistantMessage('ok');
   };
-  const pi = fauxProvider({ models: [{ id: 'one' }, { id: 'two' }] });
+  const pi = fauxProvider({ models: [{ id: 'one' }, { id: 'two', reasoning: true }] });
   const cli = fauxProvider({ api: 'faux-cli', provider: 'claude-cli', models: [{ id: 'sonnet', name: 'Claude Sonnet (CLI)' }, { id: 'haiku' }] });
   const api = fauxProvider({ api: 'faux-anthropic', provider: 'anthropic', models: [{ id: 'claude-sonnet-5-5' }] });
   for (const handle of [pi, cli]) handle.setResponses(Array.from({ length: 40 }, () => respond));
@@ -271,7 +281,7 @@ async function openRoutes(t: TestContext, { inspect = false } = {}) {
     await instance.close();
     await rm(cwd, { recursive: true, force: true });
   });
-  return { instance, session, seen, cwd, databasePath, settingsPath };
+  return { instance, session, seen, efforts, cwd, databasePath, settingsPath };
 }
 
 const answers = (session: UiSessionHandle) => session.chat.items().filter(item => item.kind === 'assistant' && !item.streaming).length;
@@ -375,10 +385,35 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
       ['date', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
   });
 
+  test('setThinkingLevel: Pi and its agents take it from the next request, and later launches default to it', async (t) => {
+    const { instance, session, efforts, cwd, databasePath, settingsPath } = await openRoutes(t);
+    const bob = await spawnBob(instance, session);
+    assert.deepEqual(await session.thinkingLevels(), ['off'], 'faux/one does not reason');
+    await session.setModel('faux', 'two');
+    assert.deepEqual(await session.thinkingLevels(), ['off', 'minimal', 'low', 'medium', 'high']);
+    await session.setThinkingLevel('low');
+    assert.equal(session.status().thinkingLevel, 'low');
+    assert.equal((await instance.root.agent(instance.context)).thinkingLevel, 'low');
+    assert.equal((await bob.agent(instance.context)).thinkingLevel, 'low');
+    const before = efforts.length;
+    const answered = answers(session);
+    await session.send('next');
+    await until(() => answers(session) === answered + 1, 'the answer', session.chat);
+    assert.deepEqual(efforts.slice(before), ['low']);
+    assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { model: 'faux/two', thinkingLevel: 'low' });
+    const next = await resolveOptions(parseArgs(['--database', databasePath, '--cwd', cwd]), {});
+    assert.equal(next.thinkingLevel, 'low');
+
+    await assert.rejects(session.setThinkingLevel('max'), /faux\/two takes off, minimal, low, medium, high; not max\./);
+    await assert.rejects(session.setThinkingLevel('huge'), /not huge/);
+    assert.equal(session.status().thinkingLevel, 'low');
+  });
+
   test('an inspection switches nothing and writes no settings', async (t) => {
     const { session, settingsPath } = await openRoutes(t, { inspect: true });
     await assert.rejects(session.setModel('faux', 'two'), /inspection cannot change/);
     await assert.rejects(session.setTools(true), /inspection cannot change/);
+    await assert.rejects(session.setThinkingLevel('off'), /inspection cannot change/);
     await assert.rejects(stat(settingsPath), { code: 'ENOENT' });
   });
 });

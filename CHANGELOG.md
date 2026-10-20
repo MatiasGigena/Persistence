@@ -10,8 +10,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Coding tools are on by default for a local launch; `--no-tools` turns them off (`--allow-tools` is kept as a
   no-op). `serve` still starts with them off. ADR 0009 amended.
 
+### Fixed
+
+- `claude-cli`: Opus's thinking streams as a summary (`--thinking-display summarized`); before, it arrived empty,
+  so a long think left the chat silent for minutes.
+- `claude-cli`: a request whose CLI prints nothing for 10 minutes fails as timed out, and the Harness retries it,
+  instead of waiting forever. A turn that only calls tools Pi does not have is an error, not an empty answer.
+- The chat shows "The model ended its turn without a reply." when an answer has nothing to show, and says when a
+  reply was cut off at the output limit, instead of ending the turn in silence.
+
 ### Added
 
+- `/effort` picks the reasoning effort (thinking level) for Pi and its agents from the levels the current model
+  takes; `/effort LEVEL` sets it directly. It is saved in `settings.json` with the model, and `--thinking`
+  overrides it (ADR 0023). `claude-cli` models now list `xhigh` and `max`. Protocol ops `thinking.levels` and
+  `thinking.set`.
 - The terminal UI footer shows the running tool call next to the spinner while Pi works (for example
   `⠋ working · bash npm test`), so a long turn is never silent. It is cut to 60 columns, or 24 on a phone.
 

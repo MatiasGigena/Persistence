@@ -51,6 +51,8 @@ export interface Instance {
   setModel(model: ModelRef): Promise<void>;
   /** Turn the coding tools on or off for Pi and every agent, with Pi's instructions to match. Rejects on an inspection. */
   setTools(enabled: boolean): Promise<void>;
+  /** Set Pi's and every agent's reasoning effort from their next request. Checks nothing. Rejects on an inspection. */
+  setThinkingLevel(level: ModelThinkingLevel): Promise<void>;
   /**
    * Runs `step` with the raw SQLite connection as one operation of the database's queue, after any open transaction:
    * no commit lands during it and, since it is synchronous, no memory write either. For online backups (ADR 0022).
@@ -200,6 +202,7 @@ export async function openInstance({
         memory?.setSummarizer(createPiAiSummarizer({ models, model: compactionModel }), jobs);
       },
       setTools: enabled => reconfigure({ tools: piTools([Unii, Agents], enabled), instructions: piInstructions(cwd, enabled) }),
+      setThinkingLevel: level => reconfigure({ thinkingLevel: level }),
       exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
         try { await harness.close(context); } finally { await memory?.close(); }

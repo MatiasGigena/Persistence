@@ -64,6 +64,11 @@ class FakeSession implements UiSession {
     this.update({ toolsEnabled: enabled });
     return Promise.resolve();
   }
+  thinkingLevels(): Promise<readonly string[]> { return Promise.resolve(['low', 'medium', 'high', 'xhigh', 'max']); }
+  setThinkingLevel(level: string): Promise<void> {
+    this.update({ thinkingLevel: level });
+    return Promise.resolve();
+  }
 }
 
 /** A terminal that records what is written and lets the test type. */

@@ -65,6 +65,13 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
       return provider === 'faux' ? Promise.resolve() : Promise.reject(new Error(`Unknown model ${provider}/${id}`));
     },
     setTools(enabled) { calls.push(`tools ${enabled}`); set({ toolsEnabled: enabled }); return Promise.resolve(); },
+    thinkingLevels: () => Promise.resolve(['low', 'medium', 'high']),
+    setThinkingLevel(level) {
+      if (level === 'max') return Promise.reject(new Error('faux/faux-1 takes low, medium, high; not max.'));
+      calls.push(`thinking ${level}`);
+      set({ thinkingLevel: level });
+      return Promise.resolve();
+    },
     onNotice(listener) { noticeListeners.add(listener); return () => { noticeListeners.delete(listener); }; },
   };
 }

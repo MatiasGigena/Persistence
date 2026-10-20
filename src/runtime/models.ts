@@ -1,7 +1,9 @@
 // The models Pi can switch to and whether each can be used now: the catalog cut to the routes of docs/models.md,
 // each provider's credentials checked (and the anthropic subscription refused) the same way at launch and in session.
-import type { Models } from '@earendil-works/pi-ai';
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
+import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
+import { THINKING } from '../host/config.ts';
 import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
 
@@ -89,6 +91,12 @@ function note(provider: string, access: Access): string | undefined {
   if (access.reason === 'timeout') return 'credential check timed out';
   if (provider === 'anthropic') return access.reason === 'subscription' ? 'subscription login refused; use claude-cli' : 'needs ANTHROPIC_API_KEY';
   return provider === 'openai-codex' ? 'needs a Pi login (/login in pi)' : 'no credentials';
+}
+
+/** The reasoning efforts `model` takes, lowest first; every level for a model not in the catalog. */
+export function thinkingLevels(models: Pick<Models, 'getModel'>, model: ModelRef): ModelThinkingLevel[] {
+  const found = models.getModel(model.provider, model.modelId);
+  return found ? getSupportedThinkingLevels(found) : [...THINKING];
 }
 
 /** Lists and checks models; each provider's credentials are checked at most once per `ttlMs`. */

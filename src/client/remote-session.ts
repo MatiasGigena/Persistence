@@ -198,6 +198,10 @@ export class RemoteSession implements UiSession {
     await this.request('tools.set', enabled ? { enabled, confirm: ENABLE_TOOLS } : { enabled });
   }
 
+  async thinkingLevels(): Promise<readonly string[]> { return (await this.request('thinking.levels', {})).levels; }
+
+  async setThinkingLevel(level: string): Promise<void> { await this.request('thinking.set', { level }); }
+
   // ---------------------------------------------------------------------------------------------- requests
 
   /**

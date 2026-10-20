@@ -120,6 +120,10 @@ export interface Ops {
   readonly 'model.set': { readonly params: { readonly provider: string; readonly id: string }; readonly result: null };
   /** Coding tools on or off for this server run. Enabling needs `confirm: 'enable-tools'`. */
   readonly 'tools.set': { readonly params: { readonly enabled: boolean; readonly confirm?: 'enable-tools' }; readonly result: null };
+  /** The reasoning efforts the current model takes, lowest first. */
+  readonly 'thinking.levels': { readonly params: NoParams; readonly result: { readonly levels: readonly string[] } };
+  /** Sets Pi's and its agents' reasoning effort, and saves it as the default. `failed` with a readable message. */
+  readonly 'thinking.set': { readonly params: { readonly level: string }; readonly result: null };
   /** Web only: Web Push to this subscription while no client is visible. */
   readonly 'push.subscribe': { readonly params: { readonly subscription: PushSubscriptionJson }; readonly result: null };
   /** Web only: no more pushes to this endpoint. */
@@ -140,7 +144,7 @@ export type Result<O extends Op> = Ops[O]['result'];
 /** Every op, in the order of `Ops`. */
 export const OPS: readonly Op[] = [
   'send', 'abort', 'stopAgents', 'feed.open', 'feed.close', 'feed.resync', 'memory.view', 'memory.zoom', 'models',
-  'model.set', 'tools.set', 'push.subscribe', 'push.unsubscribe', 'admin.backup', 'admin.pair', 'admin.devices',
+  'model.set', 'tools.set', 'thinking.levels', 'thinking.set', 'push.subscribe', 'push.unsubscribe', 'admin.backup', 'admin.pair', 'admin.devices',
   'admin.revoke',
 ];
 /** Ops only socket peers may call; web peers get `forbidden`. */

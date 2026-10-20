@@ -144,6 +144,11 @@ test('requests: send with requestId, errors, unknown ops, malformed messages, pi
   assert.equal(zoom?.t === 'res' && !zoom.ok && zoom.error.code, 'not_found');
   const model = await request(link, 'model.set', { provider: 'nope', id: 'x' });
   assert.deepEqual(model?.t === 'res' && !model.ok && model.error, { code: 'failed', message: 'Unknown model nope/x' });
+  assert.deepEqual(await request(link, 'thinking.levels'), { t: 'res', id: 9, op: 'thinking.levels', ok: true, result: { levels: ['low', 'medium', 'high'] } });
+  assert.deepEqual(await request(link, 'thinking.set', { level: 'low' }), { t: 'res', id: 10, op: 'thinking.set', ok: true, result: null });
+  assert.equal(session.status().thinkingLevel, 'low');
+  const effort = await request(link, 'thinking.set', { level: 'max' });
+  assert.deepEqual(effort?.t === 'res' && !effort.ok && effort.error, { code: 'failed', message: 'faux/faux-1 takes low, medium, high; not max.' });
   link.deliver({ t: 'ping', n: 7 });
   assert.deepEqual(last(link), { t: 'pong', n: 7 });
 });

@@ -179,6 +179,8 @@ reads as `undefined`, and `memory` may also be `null`.
 | `models` | — | `{models: ModelChoice[]}` | both | |
 | `model.set` | `provider`, `id` | `null` | both | `failed` |
 | `tools.set` | `enabled`, `confirm?: 'enable-tools'` | `null` | both | `forbidden`, `failed` |
+| `thinking.levels` | — | `{levels: string[]}` | both | |
+| `thinking.set` | `level` | `null` | both | `failed` |
 | `push.subscribe` | `subscription: {endpoint, expirationTime?, keys: {p256dh, auth}}` | `null` | web | `forbidden`, `unavailable` |
 | `push.unsubscribe` | `endpoint` | `null` | web | `forbidden`, `unavailable` |
 | `admin.backup` | `out?` | `{path, bytes}` | socket | `forbidden`, `failed` |
@@ -206,6 +208,9 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   `not_found` for a line that does not exist, with the zoom tool's message (it names the tree's roots).
 - **`model.set`** is `UiSession.setModel`; `failed` carries the readable reason (unknown model, no credentials,
   or saved but not written as the default).
+- **`thinking.levels`** and **`thinking.set`** are `UiSession.thinkingLevels` and `setThinkingLevel`: the reasoning
+  efforts the current model takes, lowest first, and setting one for Pi and its agents, saved as the default.
+  `failed` carries the readable reason (a level the model does not take, or saved but not written).
 - **`tools.set`** is `UiSession.setTools`, with the remote tools policy:
   - Turning tools on needs `confirm: 'enable-tools'` (the client asked its user first); without it,
     `bad_request`. Turning them off needs nothing.

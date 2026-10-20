@@ -2,10 +2,10 @@
 import type { AgentEvent, AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { listAgents, stopAgents } from '../agents/index.ts';
-import { errorMessage, writeSettings } from '../host/config.ts';
+import { errorMessage, isThinkingLevel, updateSettings } from '../host/config.ts';
 import type { Config } from '../host/config.ts';
 import { start } from '../memory/view.ts';
-import { modelChooser } from '../runtime/models.ts';
+import { modelChooser, thinkingLevels } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
 import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from './types.ts';
@@ -35,7 +35,7 @@ const REFRESHING: ReadonlySet<AgentEvent['type']> = new Set(['message_end', 'too
 
 /**
  * Open the UI's view of `instance`: a live feed of Pi's conversation, its status, and the memory view. Agents' feeds
- * open on demand. Nothing here writes except `send()`, `abort()`, `setModel()` and `setTools()`.
+ * open on demand. Nothing here writes except `send()`, `abort()`, `setModel()`, `setTools()` and `setThinkingLevel()`.
  */
 export async function createUiSession(
   instance: Instance, config: UiSessionConfig, { refreshMs = 1500 }: UiSessionOptions = {},
@@ -50,6 +50,7 @@ export async function createUiSession(
   // This session's switches, shown before Pi's stored agent reports them.
   let chosenModel: ModelRef | undefined;
   let chosenTools: boolean | undefined;
+  let chosenThinking: string | undefined;
   // One switch at a time: each configures Pi, then re-derives the agents.
   let switching: Promise<unknown> = Promise.resolve();
   const serially = (change: () => Promise<void>): Promise<void> => {
@@ -67,7 +68,7 @@ export async function createUiSession(
     const model = currentModel();
     return {
       model: `${model.provider}/${model.modelId}`,
-      thinkingLevel: agent.thinkingLevel ?? config.thinkingLevel,
+      thinkingLevel: chosenThinking ?? agent.thinkingLevel ?? config.thinkingLevel,
       toolsEnabled: chosenTools ?? toolsEnabled(agent, config.allowTools),
       busy,
       queued,
@@ -154,7 +155,7 @@ export async function createUiSession(
         chosenModel = model;
         refresh();
         if (!config.settingsPath) return;
-        try { writeSettings(config.settingsPath, { model }); } catch (error) {
+        try { await updateSettings(config.settingsPath, { model }); } catch (error) {
           throw new Error(`Switched to ${provider}/${id}, but saving it as the default failed: ${errorMessage(error)}`);
         }
       });
@@ -164,6 +165,23 @@ export async function createUiSession(
         await instance.setTools(enabled);
         chosenTools = enabled;
         refresh();
+      });
+    },
+    thinkingLevels: () => Promise.resolve(thinkingLevels(instance.models, currentModel())),
+    setThinkingLevel(level) {
+      return serially(async () => {
+        const model = currentModel();
+        const levels = thinkingLevels(instance.models, model);
+        if (!isThinkingLevel(level) || !levels.includes(level)) {
+          throw new Error(`${model.provider}/${model.modelId} takes ${levels.join(', ')}; not ${level}.`);
+        }
+        await instance.setThinkingLevel(level);
+        chosenThinking = level;
+        refresh();
+        if (!config.settingsPath) return;
+        try { await updateSettings(config.settingsPath, { thinkingLevel: level }); } catch (error) {
+          throw new Error(`Effort set to ${level}, but saving it as the default failed: ${errorMessage(error)}`);
+        }
       });
     },
     onNotice(listener) {

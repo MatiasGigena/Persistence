@@ -65,6 +65,8 @@ class FakeSession implements UiSession {
   models(): Promise<readonly ModelChoice[]> { return Promise.resolve([]); }
   setModel(provider: string, id: string): Promise<void> { this.update({ model: `${provider}/${id}` }); return Promise.resolve(); }
   setTools(enabled: boolean): Promise<void> { this.update({ toolsEnabled: enabled }); return Promise.resolve(); }
+  thinkingLevels(): Promise<readonly string[]> { return Promise.resolve(['low', 'medium', 'high']); }
+  setThinkingLevel(level: string): Promise<void> { this.update({ thinkingLevel: level }); return Promise.resolve(); }
 }
 
 /** A terminal that records what is written and lets the test type. */
@@ -257,6 +259,24 @@ test('slash commands dispatch, and Ctrl+C twice exits', async () => {
   assert.equal(terminal.stopped, true);
 });
 
+test('/effort NAME sets the effort; /effort alone opens the picker, and Enter takes the highlighted level', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  // Polls, so a loaded machine only makes the test slower.
+  const until = async (check: () => boolean, what: string) => {
+    for (const end = Date.now() + 5_000; !check(); await delay(20)) if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
+  };
+  terminal.type('/effort low', '\r');
+  await until(() => /Effort: low \(from the next request; saved as default\)/.test(terminal.text()), 'the notice');
+  assert.equal(session.status().thinkingLevel, 'low');
+  terminal.type('/effort', '\r');
+  await until(() => /✓ low/.test(terminal.text()) && /balanced/.test(terminal.text()), 'the picker');
+  terminal.type('\x1b[B', '\r'); // down to medium, then Enter
+  await until(() => session.status().thinkingLevel === 'medium', 'medium');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
 test('the header and footer follow status changes, and tools on is in the warning color', async () => {
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
@@ -375,7 +395,7 @@ test('/help is one column below 72 columns, and two from there', () => {
   for (const width of WIDTHS) {
     const lines = helpText(width).split('\n');
     fits(lines.slice(0, -1), Math.min(width, 72));
-    assert.ok(lines.some(line => (width < 72 ? /^\/stop {4}stop Pi \(esc\) · all · Name$/ : /^\/status  model, work, memory +\/stop {4}stop Pi \(esc\) · all · Name$/).test(line)), lines.join('\n'));
+    assert.ok(lines.some(line => (width < 72 ? /^\/stop {4}stop Pi \(esc\) · all · Name$/ : /^\/stop {4}stop Pi \(esc\) · all · Name +\/exit {4}close/).test(line)), lines.join('\n'));
     const view = new ChatView(new FakeFeed(), theme);
     view.notice(helpText(width));
     fits(view.render(width), width);

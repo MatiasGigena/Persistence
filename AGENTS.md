@@ -13,7 +13,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks.
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
-- `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents and /mem). The TUI never imports pi-durable.
+- `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents, /mem, /model and /effort). The TUI never imports pi-durable.
 - `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`.
 - `src/server/`: `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
 - `src/client/`: the attached TUI: `attach.ts` (probe and routing), `remote-session.ts` (a `UiSession` over the protocol), `unix-link.ts` (the reconnecting socket link).

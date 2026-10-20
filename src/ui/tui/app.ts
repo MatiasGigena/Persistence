@@ -12,6 +12,7 @@ import { Footer, spinnerInterval } from './footer.ts';
 import { openAgentsPanel } from './panels/agents.ts';
 import { confirm } from './panels/frame.ts';
 import { openMemoryPanel } from './panels/memory.ts';
+import { openEffortPanel } from './panels/effort.ts';
 import { modelRef, openModelPanel } from './panels/model.ts';
 import { NARROW, theme } from './theme.ts';
 
@@ -57,6 +58,7 @@ export function commands(attached = false): SlashCommand[] {
 export const COMMANDS: readonly SlashCommand[] = [
   { name: 'help', description: 'Commands and keys' },
   { name: 'model', description: 'Pick a model (ctrl+l), or set provider/id', argumentHint: '[provider/id]' },
+  { name: 'effort', description: 'Reasoning effort: pick one, or name it', argumentHint: '[low|medium|high|xhigh|max]' },
   { name: 'tools', description: 'Coding tools for this launch: on or off', argumentHint: '[on|off]' },
   { name: 'agents', description: 'Agents and their conversations' },
   { name: 'mem', description: "Pi's memory view" },
@@ -68,7 +70,7 @@ export const COMMANDS: readonly SlashCommand[] = [
 type HelpPair = readonly [name: string, description: string];
 
 const HELP_COMMANDS: readonly HelpPair[] = [
-  ['/model', 'pick a model (ctrl+l)'], ['/tools', 'coding tools: on, off'],
+  ['/model', 'pick a model (ctrl+l)'], ['/effort', 'reasoning effort'], ['/tools', 'coding tools: on, off'],
   ['/agents', 'agents and their chats'], ['/mem', 'the memory view'],
   ['/status', 'model, work, memory'], ['/stop', 'stop Pi (esc) · all · Name'],
   ['/exit', 'close (ctrl+d when empty)'],
@@ -241,8 +243,18 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       .map(m => ({ value: modelRef(m), label: modelRef(m), description: m.name }));
     return items.length ? items : null;
   };
-  editor.setAutocompleteProvider(new CombinedAutocompleteProvider(
-    commands(attached !== undefined).map(c => (c.name === 'model' ? { ...c, getArgumentCompletions: completeModel } : c)), info.cwd));
+  // `/effort ` completes the current model's levels.
+  const completeEffort = async (prefix: string): Promise<AutocompleteItem[] | null> => {
+    const needle = prefix.trim().toLowerCase();
+    const items = (await session.thinkingLevels().catch(() => []))
+      .filter(level => level.startsWith(needle)).map(level => ({ value: level, label: level }));
+    return items.length ? items : null;
+  };
+  const completions: Readonly<Record<string, (prefix: string) => Promise<AutocompleteItem[] | null>>> = { model: completeModel, effort: completeEffort };
+  editor.setAutocompleteProvider(new CombinedAutocompleteProvider(commands(attached !== undefined).map(c => {
+    const complete = completions[c.name];
+    return complete ? { ...c, getArgumentCompletions: complete } : c;
+  }), info.cwd));
   // Hidden on a phone: the footer already shows the model and tools.
   const header = new Line(() => {
     const { model, toolsEnabled } = session.status();
@@ -342,6 +354,17 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (slash <= 0 || slash === arg.length - 1) show('Usage: /model provider/id, or /model alone to pick one.', 'warn');
     else switchModel(arg.slice(0, slash), arg.slice(slash + 1));
   };
+  const setEffort = (level: string): void => {
+    session.setThinkingLevel(level).then(
+      () => show(`Effort: ${level} (from the next request; saved as default)`),
+      (error: unknown) => show(`Effort not changed: ${message(error)}`, 'error'));
+  };
+  const effort = (arg: string): void => {
+    if (arg) { setEffort(arg); return; }
+    openEffortPanel(tui, session, theme).then(
+      level => { if (level) setEffort(level); },
+      (error: unknown) => show(`Panel failed: ${message(error)}`, 'error'));
+  };
   const setTools = (enabled: boolean): void => {
     session.setTools(enabled).then(
       () => show(enabled ? 'Coding tools on for this launch' : 'Coding tools off', enabled ? 'warn' : 'info'),
@@ -365,6 +388,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (name === 'help') show(helpText(terminal.columns, attached !== undefined));
     else if (name === 'stop') stop(arg);
     else if (name === 'model') model(arg);
+    else if (name === 'effort' || name === 'thinking') effort(arg);
     else if (name === 'tools') tools(arg);
     else if (name === 'status') show(statusText(session.status()));
     else if (name === 'agents') panel(openAgentsPanel);

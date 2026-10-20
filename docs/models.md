@@ -59,7 +59,22 @@ In the terminal UI, `/model` switches Pi's model without a relaunch (`src/ui/ses
 
   A launch takes `--model`, else `PI_DURABLE_MODEL`, else `settings.json`, else `openai-codex/gpt-6.1-sol`.
   `--status` prints the model and its source (`modelSource`: `flag`, `env`, `settings` or `default`); so does the
-  `--plain` banner. Only `/model` writes the file; the thinking level is not saved. `--plain` chat has no `/model`.
+  `--plain` banner. Only `/model` and `/effort` write the file. `--plain` chat has neither.
+
+## Reasoning effort
+
+`/effort` picks Pi's reasoning effort (pi-ai's thinking level) from the levels the current model takes;
+`/effort LEVEL` sets it directly. Like a model switch it applies to Pi and every agent from their next request, and
+is saved as `"thinkingLevel"` in `settings.json` ([ADR 0023](decisions/0023-saved-effort.md)). A launch takes
+`--thinking`, else the saved level, else `high`.
+
+| Model | Levels |
+|---|---|
+| `claude-cli/…` | `minimal` (sent as `low`), `low`, `medium`, `high`, `xhigh`, `max` |
+| others | what pi-ai declares for the model; `off` only where reasoning can be turned off |
+
+For `claude-cli/opus`, `high` suits most turns; `xhigh` and `max` think longer on hard tasks and use more of the
+plan's limits.
 
 `/tools on` and `/tools off` switch the coding tools the same way, for Pi and every agent, but never persist: every
 launch starts with them off unless it passes `--allow-tools` ([ADR 0009](decisions/0009-tools-opt-in.md)).
@@ -110,7 +125,8 @@ CLI process:
 claude -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence
        --tools '' --strict-mcp-config [--mcp-config '{"mcpServers":{"pi":…}}'] --disable-slash-commands
        --setting-sources '' --settings '{"autoMemoryEnabled":false,"disableAllHooks":true}'
-       --model haiku --max-turns 1 --system-prompt-file <dir>/system.md [--effort high]
+       --model haiku --max-turns 1 --system-prompt-file <dir>/system.md --thinking-display summarized
+       [--effort high]
        < prompt on stdin
 ```
 
@@ -142,6 +158,9 @@ claude -p --output-format stream-json --verbose --include-partial-messages --no-
   `[image: <type>, not shown]`; the models declare text input only.
 - **Effort.** pi-ai's reasoning level becomes `--effort`: minimal and low → `low`, then `medium`, `high`, `xhigh`,
   `max`. Thinking cannot be turned off; without a level the CLI uses its default.
+- **Thinking display.** Opus omits its thinking from the stream by default: the blocks arrive empty, so a long
+  think shows nothing at all. `--thinking-display summarized` streams a summary instead, shown (collapsed, Ctrl+T)
+  while Claude thinks. It is still not replayed.
 - **Compaction.** The compactor sends `toolChoice: "none"`; such a request gets no MCP server at all. Its
   `maxTokens` is not passed (the CLI sets its own); the compactor's 512-byte cut bounds the result anyway.
 - **Usage.** Input, output, cache read and cache write tokens come from the stream's `message_start` and
@@ -152,6 +171,11 @@ claude -p --output-format stream-json --verbose --include-partial-messages --no-
   is `rejected` ends it with "Claude usage limit reached (five_hour quota exceeded) · resets …"; the words "quota
   exceeded" keep pi-ai from retrying a limit that lasts hours. Overload and timeout texts stay retryable. The CLI also
   retries API errors itself (up to 10 times, with backoff) before it reports one.
+- **Stalls.** A CLI that prints nothing for 10 minutes is killed, and the request ends with "no output from claude
+  for 600 s (timed out)", which the Harness retries. Every stream line counts, the CLI's own `api_retry` lines
+  included, so a CLI that is retrying an overloaded API is not cut off.
+- **Calls to tools Pi does not have.** A turn whose only `tool_use` names a tool outside `mcp__pi__…` ends with an
+  error naming it, instead of an empty answer.
 - **Abort.** The request's signal kills the CLI and ends the stream as `aborted`.
 - **Auth check.** `claude auth status --json` (10 s timeout, no prompt) must report `loggedIn`; requests carry no
   auth of the host's own.
@@ -209,5 +233,8 @@ host's environment makes the CLI bill that key instead of your plan.
 | A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run (signed out, for example). Pass `--model`, sign in again, or delete the file. |
 | `…/settings.json is not valid JSON` or `must be an object like {"model":…}` | Fix the file or delete it; `--model` still works meanwhile. |
 | `claude-cli: API error 529: …` | Anthropic is overloaded; the Harness retries. |
+| `claude-cli: no output from claude for 600 s (timed out)` | The CLI stalled; the Harness retries. If it keeps happening, check the network and `claude` itself. |
+| "The model ended its turn without a reply." | The model answered with nothing to show (only thinking, for example). Ask it to continue or to report. |
+| `claude-cli: … error: unknown option '--thinking-display'` | Claude Code is too old; update it (`claude update`). |
 
 See [ADR 0010](decisions/0010-claude-via-cli.md) for the decision.

@@ -88,6 +88,8 @@ class FakeSession implements UiSession {
   models(): Promise<readonly ModelChoice[]> { return Promise.resolve([]); }
   setModel(): Promise<void> { return Promise.resolve(); }
   setTools(): Promise<void> { return Promise.resolve(); }
+  thinkingLevels(): Promise<readonly string[]> { return Promise.resolve(['off']); }
+  setThinkingLevel(): Promise<void> { return Promise.resolve(); }
 }
 
 const agent = (name: string, busy: boolean, role: AgentStatus['role'] = 'main', parent = 'Pi'): AgentStatus =>

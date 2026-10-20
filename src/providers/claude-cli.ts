@@ -20,6 +20,8 @@ const API = 'claude-cli';
 const PREFIX = 'mcp__pi__';
 const STUB = fileURLToPath(new URL('./claude-cli-mcp.ts', import.meta.url));
 const EFFORT: Record<ThinkingLevel, string> = { minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' };
+// A request whose CLI prints nothing for this long is stuck: it is stopped with a retryable error.
+const IDLE_TIMEOUT_MS = 10 * 60_000;
 type Done = Extract<AssistantMessageEvent, { type: 'done' }>['reason'];
 const STOP: Partial<Record<string, Done>> = { end_turn: 'stop', stop_sequence: 'stop', refusal: 'stop', tool_use: 'toolUse',
   max_tokens: 'length', model_context_window_exceeded: 'length' };
@@ -39,7 +41,7 @@ export const CONVENTION = [
 export type ClaudeCliModel = Model<typeof API>;
 const MODEL: Omit<ClaudeCliModel, 'id' | 'name'> = { api: API, provider: CLAUDE_CLI, baseUrl: 'local:claude', reasoning: true,
   input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 64_000,
-  thinkingLevelMap: { off: null, minimal: 'low' } };
+  thinkingLevelMap: { off: null, minimal: 'low', xhigh: 'xhigh', max: 'max' } };
 /** The CLI's own aliases, so each one follows the CLI to the latest model of its family. */
 export const MODELS: readonly ClaudeCliModel[] = [
   { id: 'opus', name: 'Claude Opus 5.5 (Claude Code)' },
@@ -203,7 +205,9 @@ export function claudeArgs(model: Pick<Model<Api>, 'id'>, { systemFile, toolsFil
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--no-session-persistence', '--tools', '', '--strict-mcp-config', '--disable-slash-commands',
     '--setting-sources', '', '--settings', SETTINGS, '--model', model.id, '--max-turns', '1',
-    '--system-prompt-file', systemFile];
+    '--system-prompt-file', systemFile,
+    // Opus omits its thinking by default, which leaves minutes of silence on screen; summaries stream instead.
+    '--thinking-display', 'summarized'];
   if (toolsFile) {
     args.push('--mcp-config', JSON.stringify({ mcpServers: { pi: { type: 'stdio', command: process.execPath, args: [STUB, toolsFile] } } }));
   }
@@ -227,6 +231,7 @@ type WithoutPartial<T> = T extends unknown ? Omit<T, 'partial'> : never;
 function createParser(stream: AssistantMessageEventStream, output: AssistantMessage, finish: (ending: Ending) => void) {
   let blocks = new Map<number, { index: number; json: string }>(); // API block index -> output block, current API message
   let toolUse = false;
+  const foreign: string[] = []; // tool_use blocks naming a tool that is not Pi's
   const usage = (u: ApiUsage | undefined) => {
     if (!u) return;
     const o = output.usage;
@@ -238,6 +243,13 @@ function createParser(stream: AssistantMessageEventStream, output: AssistantMess
   };
   const push = (event: WithoutPartial<BlockEvent>) => stream.push({ ...event, partial: output });
   const stopOf = (raw: string | undefined): Done => toolUse ? 'toolUse' : (raw === undefined ? undefined : STOP[raw]) ?? 'stop';
+  /**
+   * The end of a complete message. A turn that only called tools Pi does not have would end as an empty answer, with
+   * nothing on screen; it is an error instead.
+   */
+  const end = (raw: string | undefined) => !toolUse && foreign.length
+    ? finish({ error: `claude-cli: Claude called ${foreign.join(', ')}, which ${foreign.length > 1 ? 'are' : 'is'} not one of Pi's tools` })
+    : finish({ stopReason: stopOf(raw) });
 
   function onStreamEvent(e: ApiStreamEvent) {
     if (e.type === 'message_start') {
@@ -254,8 +266,8 @@ function createParser(stream: AssistantMessageEventStream, output: AssistantMess
         output.content.push({ type: 'thinking', thinking: '', ...(b.type === 'redacted_thinking' ? { redacted: true } : {}) });
         push({ type: 'thinking_start', contentIndex: index });
       } else if (b?.type === 'tool_use') {
+        if (!b.name.startsWith(PREFIX)) { foreign.push(b.name); return; } // not one of Pi's tools: nothing here can run it
         toolUse = true;
-        if (!b.name.startsWith(PREFIX)) return; // not one of Pi's tools: nothing here can run it
         output.content.push({ type: 'toolCall', id: b.id, name: b.name.slice(PREFIX.length), arguments: {} });
         push({ type: 'toolcall_start', contentIndex: index });
       } else return;
@@ -300,7 +312,7 @@ function createParser(stream: AssistantMessageEventStream, output: AssistantMess
     } else {
       // message_stop: the message is complete. Stopping here keeps the CLI from acting on it (denying the tool calls,
       // continuing after max_tokens); --max-turns 1 is the backstop.
-      finish({ stopReason: stopOf(output.rawStopReason) });
+      end(output.rawStopReason);
     }
   }
 
@@ -320,26 +332,35 @@ function createParser(stream: AssistantMessageEventStream, output: AssistantMess
       } else {
         usage(event.usage);
         if (!output.content.length && event.result) output.content.push({ type: 'text', text: event.result });
-        finish({ stopReason: stopOf(event.stop_reason) });
+        end(event.stop_reason);
       }
     }
   };
 }
 
 type Child = ChildProcessByStdio<Writable, Readable, Readable>;
-interface Cli { bin: string; env: NodeJS.ProcessEnv }
+interface Cli { bin: string; env: NodeJS.ProcessEnv; idleTimeoutMs: number }
 
-function streamClaude(model: Model<Api>, context: TranscriptContext, options: SimpleStreamOptions = {}, { bin, env }: Cli) {
+function streamClaude(model: Model<Api>, context: TranscriptContext, options: SimpleStreamOptions = {}, { bin, env, idleTimeoutMs }: Cli) {
   const stream = createAssistantMessageEventStream();
   const output: AssistantMessage = { role: 'assistant', content: [], api: model.api, provider: model.provider, model: model.id,
     usage: zeroUsage(), stopReason: 'pending', timestamp: Date.now() };
   let child: Child | undefined, dir: string | undefined, done = false, stderr = '', timer: NodeJS.Timeout | undefined;
+  let idle: NodeJS.Timeout | undefined;
+  // "timed out" keeps the error retryable: the Harness tries again, and shows that it does.
+  const watch = () => {
+    clearTimeout(idle);
+    if (done) return; // a CLI being stopped may still print; no timer may outlive the request
+    const span = idleTimeoutMs < 1000 ? `${idleTimeoutMs} ms` : `${Math.round(idleTimeoutMs / 1000)} s`;
+    idle = setTimeout(() => finish({ error: `claude-cli: no output from claude for ${span} (timed out)` }), idleTimeoutMs);
+  };
   const signal = options.signal;
 
   const finish = (ending: Ending) => {
     if (done) return;
     done = true;
     clearTimeout(timer);
+    clearTimeout(idle);
     signal?.removeEventListener('abort', onAbort);
     const running = child;
     if (running && running.exitCode === null && running.signalCode === null) {
@@ -383,7 +404,9 @@ function streamClaude(model: Model<Api>, context: TranscriptContext, options: Si
       child = proc;
       const parse = createParser(stream, output, finish);
       let buffer = '';
+      watch();
       proc.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+        watch();
         buffer += chunk;
         let nl;
         while (!done && (nl = buffer.indexOf('\n')) >= 0) {
@@ -437,6 +460,8 @@ export interface ClaudeCliProviderOptions {
   bin?: string;
   /** How long `claude auth status` may take; defaults to 10 s. */
   statusTimeoutMs?: number;
+  /** How long a request may go without output from the CLI before it fails as timed out; defaults to 10 minutes. */
+  idleTimeoutMs?: number;
 }
 
 /**
@@ -444,7 +469,8 @@ export interface ClaudeCliProviderOptions {
  * passes through (an ANTHROPIC_API_KEY there makes the CLI bill that key instead of the plan), minus the markers of
  * a parent Claude Code session.
  */
-export function claudeCliProvider({ env = process.env, bin = env.PI_DURABLE_CLAUDE_BIN || 'claude', statusTimeoutMs }: ClaudeCliProviderOptions = {}): Provider<typeof API> {
+export function claudeCliProvider({ env = process.env, bin = env.PI_DURABLE_CLAUDE_BIN || 'claude', statusTimeoutMs,
+  idleTimeoutMs = IDLE_TIMEOUT_MS }: ClaudeCliProviderOptions = {}): Provider<typeof API> {
   let status: Promise<ClaudeAuthStatus | undefined> | undefined; // one `claude auth status` serves the checks of one moment (ModelRuntime runs several at once)
   const check = async (): Promise<AuthCheck | undefined> => {
     status ??= claudeAuthStatus({ bin, env, timeoutMs: statusTimeoutMs })
@@ -452,7 +478,7 @@ export function claudeCliProvider({ env = process.env, bin = env.PI_DURABLE_CLAU
     const result = await status;
     return result?.loggedIn ? { type: 'api_key', source: `claude CLI (${result.authMethod ?? 'signed in'})` } : undefined;
   };
-  const stream = (model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions) => streamClaude(model, context, options, { bin, env });
+  const stream = (model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions) => streamClaude(model, context, options, { bin, env, idleTimeoutMs });
   return createProvider({
     id: CLAUDE_CLI,
     name: 'Claude Code CLI',

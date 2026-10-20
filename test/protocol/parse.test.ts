@@ -36,6 +36,8 @@ const REQUESTS: { readonly [O in Op]: RequestOf<O> } = {
   models: { t: 'req', id: 9, op: 'models', params: {} },
   'model.set': { t: 'req', id: 10, op: 'model.set', params: { provider: 'openrouter', id: 'vendor/model' } },
   'tools.set': { t: 'req', id: 11, op: 'tools.set', params: { enabled: true, confirm: 'enable-tools' } },
+  'thinking.levels': { t: 'req', id: 18, op: 'thinking.levels', params: {} },
+  'thinking.set': { t: 'req', id: 19, op: 'thinking.set', params: { level: 'xhigh' } },
   'push.subscribe': { t: 'req', id: 12, op: 'push.subscribe', params: {
     subscription: { endpoint: 'https://push.example/x', expirationTime: null, keys: { p256dh: 'BPk', auth: 'au' } },
   } },
@@ -62,6 +64,8 @@ const RESPONSES: { readonly [O in Op]: ResponseOf<O> } = {
   ] } },
   'model.set': { t: 'res', id: 10, op: 'model.set', ok: true, result: null },
   'tools.set': { t: 'res', id: 11, op: 'tools.set', ok: true, result: null },
+  'thinking.levels': { t: 'res', id: 18, op: 'thinking.levels', ok: true, result: { levels: ['low', 'medium', 'high', 'xhigh', 'max'] } },
+  'thinking.set': { t: 'res', id: 19, op: 'thinking.set', ok: true, result: null },
   'push.subscribe': { t: 'res', id: 12, op: 'push.subscribe', ok: true, result: null },
   'push.unsubscribe': { t: 'res', id: 13, op: 'push.unsubscribe', ok: true, result: null },
   'admin.backup': { t: 'res', id: 14, op: 'admin.backup', ok: true, result: { path: '/backups/2026-10-19', bytes: 1234 } },

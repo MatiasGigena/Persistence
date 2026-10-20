@@ -212,6 +212,13 @@ export class ConversationFeed implements ChatFeed {
         for (const item of this.blockItems(key, message.content.map(liveBlock), false)) this.push(item);
         if (message.stopReason === 'error') {
           this.push({ kind: 'notice', id: `${key}.error`, text: message.errorMessage ?? 'The model failed.', level: 'error' });
+        } else if (message.stopReason !== 'aborted') {
+          // An answer with nothing to show would otherwise end the turn in silence.
+          const replied = message.content.some(block => (block.type === 'text' && block.text.trim()) || block.type === 'toolCall');
+          if (!replied) this.push({ kind: 'notice', id: `${key}.empty`, text: 'The model ended its turn without a reply.', level: 'warn' });
+          else if (message.stopReason === 'length') {
+            this.push({ kind: 'notice', id: `${key}.length`, text: 'The reply hit the model\'s output limit and was cut off.', level: 'warn' });
+          }
         }
         this.dirty = true;
       }
