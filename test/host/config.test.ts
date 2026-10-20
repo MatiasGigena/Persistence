@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
+import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
 import { DEFAULT_PORT, isRecord, parseArgs, parseConfig, readSettings, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, updateSettings,
   writeSettings } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
@@ -68,6 +69,80 @@ test('the thinking level: --thinking, else settings.json, else high; updateSetti
   await writeFile(settingsPath, '{"thinkingLevel":"huge"}');
   await assert.rejects(launch([]), /settings\.json/);
   assert.equal(await launch(['--model', 'claude-cli/haiku']), 'high', 'with --model a broken file is skipped');
+});
+
+test('the standing agents: settings.json\'s "agents", else the built-in roster; an invalid entry is a launch error', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-roster-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const settingsPath = join(folder, 'settings.json');
+  const launch = async (args: string[] = []) => (await resolveOptions(parseArgs(['--database', join(folder, 'chat.sqlite'), '--cwd', folder, ...args]), {})).roster;
+  assert.deepEqual(await launch(), DEFAULT_ROSTER, 'no settings.json');
+  assert.deepEqual(Object.keys(DEFAULT_ROSTER), ['Coder', 'Reviewer', 'Researcher']);
+  assert.deepEqual(DEFAULT_ROSTER.Coder, { model: { provider: 'claude-cli', modelId: 'opus' }, thinkingLevel: 'medium', tools: ['coding'] });
+  assert.deepEqual(DEFAULT_ROSTER.Reviewer?.tools, ['read', 'browser']);
+  assert.deepEqual(DEFAULT_ROSTER.Researcher?.tools, ['web_fetch']);
+  await writeFile(settingsPath, '{"model":"claude-cli/sonnet"}');
+  assert.deepEqual(await launch(), DEFAULT_ROSTER, 'no "agents" key');
+
+  const agents = {
+    Coder: { model: 'claude-cli/opus', tools: ['coding', 'coding'], instructions: 'Use tabs.', subModel: 'claude-cli/sonnet', subThinkingLevel: 'low' },
+    web_1: { model: 'openrouter/vendor/model', thinkingLevel: 'xhigh', tools: [] },
+  };
+  await writeFile(settingsPath, JSON.stringify({ thinkingLevel: 'low', agents }));
+  const expected = {
+    Coder: { model: { provider: 'claude-cli', modelId: 'opus' }, thinkingLevel: 'high', tools: ['coding'], instructions: 'Use tabs.',
+      subModel: { provider: 'claude-cli', modelId: 'sonnet' }, subThinkingLevel: 'low' },
+    web_1: { model: { provider: 'openrouter', modelId: 'vendor/model' }, thinkingLevel: 'xhigh', tools: [] },
+  };
+  assert.deepEqual(await launch(), expected, 'thinkingLevel defaults to high, kits deduplicated');
+  assert.deepEqual((await readSettings(settingsPath)).agents, expected);
+  await writeFile(settingsPath, '{"agents":{}}');
+  assert.deepEqual(await launch(), {}, 'an empty roster: no standing agents');
+
+  const bad: [unknown, RegExp][] = [
+    [[], /"agents" in .*settings\.json must be an object/],
+    [{ '9lives': { model: 'a/b', tools: [] } }, /"9lives".*name must be a letter/],
+    [{ Pi: { model: 'a/b', tools: [] } }, /"Pi".*not "Pi"/],
+    [{ Coder: { model: 'a/b', tools: [] }, coder: { model: 'a/b', tools: [] } }, /"coder".*same name/],
+    [{ Coder: 'claude-cli/opus' }, /"Coder".*must be an object/],
+    [{ Coder: { tools: ['coding'] } }, /"Coder".*"model" is required/],
+    [{ Coder: { model: 'opus', tools: ['coding'] } }, /"Coder".*PROVIDER\/MODEL_ID/],
+    [{ Coder: { model: 7, tools: ['coding'] } }, /"Coder".*"model" must be/],
+    [{ Coder: { model: 'a/b' } }, /"Coder".*"tools" is required/],
+    [{ Coder: { model: 'a/b', tools: 'coding' } }, /"Coder".*"tools" is required/],
+    [{ Coder: { model: 'a/b', tools: ['laser'] } }, /"Coder".*coding, read, browser, web_fetch/],
+    [{ Coder: { model: 'a/b', tools: [], thinkingLevel: 'huge' } }, /"Coder".*"thinkingLevel" must be one of/],
+    [{ Coder: { model: 'a/b', tools: [], subThinkingLevel: 'huge' } }, /"Coder".*"subThinkingLevel"/],
+    [{ Coder: { model: 'a/b', tools: [], subModel: 'sonnet' } }, /"Coder".*"subModel"/],
+    [{ Coder: { model: 'a/b', tools: [], instructions: 7 } }, /"Coder".*"instructions" must be a string/],
+    [{ Coder: { model: 'a/b', tools: [], thinking: 'high' } }, /"Coder".*unknown field "thinking"/],
+  ];
+  for (const [value, pattern] of bad) {
+    await writeFile(settingsPath, JSON.stringify({ agents: value }));
+    await assert.rejects(launch(), pattern, JSON.stringify(value));
+    await assert.rejects(launch(['--model', 'a/b']), pattern, 'with --model too');
+    await assert.rejects(launch(['--status']), pattern, 'an inspection too');
+  }
+  await writeFile(settingsPath, '{"thinkingLevel":"huge"}');
+  assert.deepEqual(await launch(['--model', 'a/b']), DEFAULT_ROSTER, '--model skips a file broken elsewhere');
+});
+
+test('/model and /effort keep "agents" as the user wrote it', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-roster-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const settingsPath = join(folder, 'settings.json');
+  const agents = { Coder: { model: 'claude-cli/opus', tools: ['coding'], instructions: 'Use tabs.' }, Lone: { tools: ['read'], model: 'a/b' } };
+  await writeFile(settingsPath, JSON.stringify({ agents, model: 'claude-cli/haiku' }));
+  await updateSettings(settingsPath, { model: { provider: 'claude-cli', modelId: 'sonnet' } });
+  await updateSettings(settingsPath, { thinkingLevel: 'max' });
+  const saved: unknown = JSON.parse(await readFile(settingsPath, 'utf8'));
+  assert.deepEqual(saved, { agents, model: 'claude-cli/sonnet', thinkingLevel: 'max' });
+  assert.ok(isRecord(saved));
+  assert.deepEqual(Object.keys(saved), ['agents', 'model', 'thinkingLevel'], 'keys keep their places');
+  writeSettings(settingsPath, { thinkingLevel: 'low' });
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { thinkingLevel: 'low' }, 'a bare write is the given settings only');
+  await writeFile(settingsPath, JSON.stringify({ agents: { Coder: { tools: [] } } }));
+  await assert.rejects(updateSettings(settingsPath, { thinkingLevel: 'low' }), /"Coder"/, 'an invalid file is not rewritten');
 });
 
 test('--plain selects the line chat', () => {
@@ -231,6 +306,9 @@ test('resolved serve and admin configs survive the trip to the host; admin comma
   assert.deepEqual(parseConfig(JSON.stringify(config)), JSON.parse(JSON.stringify(config)));
   assert.throws(() => parseConfig(JSON.stringify({ ...config, command: 'daemon' })), /invalid host configuration/);
   assert.throws(() => parseConfig(JSON.stringify({ ...config, serve: { ...config.serve, remoteTools: 'on' } })), /invalid host configuration/);
+  assert.deepEqual(config.roster, DEFAULT_ROSTER);
+  assert.throws(() => parseConfig(JSON.stringify({ ...config, roster: undefined })), /invalid host configuration/);
+  assert.throws(() => parseConfig(JSON.stringify({ ...config, roster: { Coder: { ...DEFAULT_ROSTER.Coder, tools: ['laser'] } } })), /invalid host configuration/);
   const chat = await resolveOptions(parseArgs(['--data-dir', join(folder, 'state'), '--cwd', folder]), { PI_DURABLE_PORT: 'junk' });
   assert.equal(chat.serve, undefined, 'only serve reads the server environment');
   for (const args of [['serve', 'pair'], ['serve', 'devices'], ['backup']]) {

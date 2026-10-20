@@ -10,7 +10,8 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { agentTranscript, createAgentsExtension, listAgents, syncAgents } from '../agents/index.ts';
+import { agentTranscript, createAgentsExtension, listAgents, missingKits, syncAgents } from '../agents/index.ts';
+import type { AgentsSetup, Roster, ToolKits } from '../agents/index.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
@@ -38,6 +39,15 @@ export interface InstanceOptions {
   readonly configureAgent?: boolean;
   readonly models: Models;
   readonly onReport?: (error: unknown) => void;
+  /** The standing agents (ADR 0027); default none. The host passes settings.json's roster, or the built-in one. */
+  readonly roster?: Roster;
+  /**
+   * Tool kits besides the built-in `coding` and `read` (`browser`, `web_fetch`), by kit; a kit's extension is
+   * installed in the registry on every launch. A standing agent's kit that no one supplies gives it none of its tools.
+   */
+  readonly kits?: ToolKits;
+  /** A launch warning, such as standing agents' missing kits; at most one per launch. */
+  readonly onWarning?: (message: string) => void;
 }
 
 /** The opened root; `memory` is undefined when inspecting. */
@@ -49,13 +59,17 @@ export interface Instance {
   /** The catalog and credentials the Harness runs models with. */
   readonly models: Models;
   /**
-   * Switch Pi, every agent, and the memory's compaction model (its provider's cheap one) to `model`, from their next
-   * request. Checks nothing: callers validate first. Rejects on an inspection.
+   * Switch Pi, its ad-hoc agents, and the memory's compaction model (its provider's cheap one) to `model`, from their
+   * next request; standing agents and their subs keep the roster's. Checks nothing: callers validate first. Rejects on
+   * an inspection.
    */
   setModel(model: ModelRef): Promise<void>;
-  /** Turn the coding tools on or off for Pi and every agent, with Pi's instructions to match. Rejects on an inspection. */
+  /**
+   * Turn the coding tools on or off for Pi and every agent, with Pi's instructions to match; for standing agents, the
+   * `coding` and `read` kits. Rejects on an inspection.
+   */
   setTools(enabled: boolean): Promise<void>;
-  /** Set Pi's and every agent's reasoning effort from their next request. Checks nothing. Rejects on an inspection. */
+  /** Set Pi's and its ad-hoc agents' reasoning effort from their next request. Checks nothing. Rejects on an inspection. */
   setThinkingLevel(level: ModelThinkingLevel): Promise<void>;
   /**
    * Runs `step` with the raw SQLite connection as one operation of the database's queue, after any open transaction:
@@ -109,6 +123,12 @@ export function piInstructions(cwd: string, allowTools: boolean): string {
   ].join('\n');
 }
 
+/** The built-in kits: `coding` (read, write, edit, bash) and `read`, both from pi-durable's CodingTools. */
+export function builtinKits(): ToolKits {
+  const tools = CodingTools.tools ?? [];
+  return { coding: { extension: CodingTools, tools }, read: { extension: CodingTools, tools: tools.filter(tool => tool.name === 'read') } };
+}
+
 /** The memory's compaction for a turn model: its provider's cheap model; a claude-cli one runs fewer calls at once. */
 function compactionFor(model: ModelRef | undefined, models: Models): { compactionModel: ModelRef | undefined; jobs: number } {
   const compactionModel = defaultCompactionModel(model, models);
@@ -130,6 +150,9 @@ export async function openInstance({
   configureAgent = true,
   models,
   onReport,
+  roster = {},
+  kits: extraKits = {},
+  onWarning,
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
@@ -143,9 +166,11 @@ export async function openInstance({
     // Upstream's "Agents at work now", read from the agents' runs so it never drifts from them.
     atWork: async () => opened ? (await listAgents(opened, context)).filter(agent => agent.busy).map(agent => agent.name) : [],
   });
-  // Spawned agents copy Pi's choices; the chat's memory is Pi's alone.
+  // Spawned agents copy Pi's choices, then standing ones their roster entry's; the chat's memory is Pi's alone.
   const childAgent: AgentChange = { extensions: { remove: [Unii] } };
-  const Agents = createAgentsExtension({ childAgent, initialContext: async (_agent, _api, spawn) => {
+  const kits: ToolKits = { ...builtinKits(), ...extraKits };
+  const setup: AgentsSetup = { childAgent, roster, kits };
+  const Agents = createAgentsExtension({ ...setup, initialContext: async (_agent, _api, spawn) => {
     if (!memory) return undefined;
     await memory.settle(AGENT_VIEW_SETTLE_MS, spawn.abortSignal);
     return memory.render();
@@ -156,6 +181,7 @@ export async function openInstance({
   registry.install(CodingTools);
   registry.install(Unii);
   registry.install(Agents);
+  for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== CodingTools) registry.install(kit.extension);
   const agent: AgentChange = {
     cwd,
     model,
@@ -187,14 +213,16 @@ export async function openInstance({
     // Inspection deliberately leaves the persisted agent untouched.
     if (configureAgent) {
       await root.configure(agent, context);
-      // Agents spawned under an earlier launch must not keep its tool choices.
-      await syncAgents(harness, context, { childAgent });
+      // Agents spawned under an earlier launch must not keep its tool choices; the roster's standing agents exist.
+      await syncAgents(harness, context, setup);
+      const missing = missingKits(roster, kits);
+      if (missing.length) onWarning?.(`Standing agents run without tool kits this host lacks: ${missing.join('; ')}.`);
     }
     /** Apply `change` to Pi, then re-derive every agent from Pi: the launch's path, so the same rules apply. */
     const reconfigure = async (change: AgentChange): Promise<void> => {
       if (!configureAgent) throw new Error('An inspection cannot change Pi\'s model or tools.');
       await root.configure(change, context);
-      await syncAgents(harness, context, { childAgent });
+      await syncAgents(harness, context, setup);
     };
     return {
       harness,

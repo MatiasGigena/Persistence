@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
+import { DEFAULT_ROSTER, isAgentName, isKit, KITS } from '../agents/roster.ts';
+import type { Kit, Roster, StandingAgent } from '../agents/roster.ts';
 import { atomicWrite } from '../memory/util.ts';
 
 export const VERSION = '0.1.0';
@@ -225,12 +227,18 @@ export interface Config extends Options {
   authFile: string;
   model: ModelRef;
   modelSource: ModelSource;
+  /** The standing agents: settings.json's `agents`, else the built-in roster (ADR 0027). */
+  roster: Roster;
 }
 
-/** What settings.json holds: the defaults for launches without --model (or PI_DURABLE_MODEL) and --thinking. */
+/**
+ * What settings.json holds: the defaults for launches without --model (or PI_DURABLE_MODEL) and --thinking, and the
+ * standing agents' roster (`agents`), which only the user edits.
+ */
 export interface Settings {
   model?: ModelRef;
   thinkingLevel?: ModelThinkingLevel;
+  agents?: Roster;
 }
 
 export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -319,32 +327,104 @@ export function parseModel(spec: string, what: string): ModelRef {
   return { provider: spec.slice(0, slash), modelId: spec.slice(slash + 1) };
 }
 
-/** settings.json, or {} when there is none. Rejects on a file that is not valid settings. */
-export async function readSettings(path: string): Promise<Settings> {
+/** settings.json's JSON object, or undefined when there is none. Rejects on a file that is not JSON or not an object. */
+async function readSettingsJson(path: string): Promise<Record<string, unknown> | undefined> {
   let text: string;
   try { text = await readFile(path, 'utf8'); } catch (error) {
-    if (errorCode(error) === 'ENOENT') return {};
+    if (errorCode(error) === 'ENOENT') return undefined;
     throw error;
   }
   let value: unknown;
   try { value = JSON.parse(text); } catch (error) { throw new Error(`${path} is not valid JSON (${errorMessage(error)}); fix or delete it`); }
-  if (!isRecord(value) || (value.model !== undefined && typeof value.model !== 'string')
+  if (!isRecord(value)) throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
+  return value;
+}
+
+const ROSTER_FIELDS = new Set(['model', 'thinkingLevel', 'tools', 'instructions', 'subModel', 'subThinkingLevel']);
+
+/**
+ * settings.json's `agents` (ADR 0027) as a roster: keyed by agent name; `model` and `tools` required, `thinkingLevel`
+ * defaults to high; `instructions`, `subModel` and `subThinkingLevel` optional. Rejects with the entry's name.
+ */
+export function parseRoster(value: unknown, path: string): Roster {
+  if (!isRecord(value)) throw new Error(`"agents" in ${path} must be an object keyed by agent name; fix or delete it`);
+  const roster: Record<string, StandingAgent> = {};
+  const seen = new Set<string>();
+  for (const [name, entry] of Object.entries(value)) {
+    const fail = (problem: string): never => { throw new Error(`Standing agent "${name}" in ${path}: ${problem}`); };
+    if (!isAgentName(name)) fail('the name must be a letter, then up to 31 letters, digits, _ or -, and not "Pi"');
+    if (seen.has(name.toLowerCase())) fail('another standing agent has the same name (names ignore case)');
+    seen.add(name.toLowerCase());
+    if (!isRecord(entry)) fail('must be an object like {"model":"PROVIDER/MODEL_ID","tools":["coding"]}');
+    const fields = isRecord(entry) ? entry : {};
+    const unknown = Object.keys(fields).find(key => !ROSTER_FIELDS.has(key));
+    if (unknown !== undefined) fail(`unknown field "${unknown}" (use ${[...ROSTER_FIELDS].join(', ')})`);
+    const model = (key: 'model' | 'subModel'): ModelRef | undefined => {
+      const spec = fields[key];
+      if (spec === undefined) return key === 'model' ? fail('"model" is required') : undefined;
+      if (typeof spec !== 'string') return fail(`"${key}" must be "PROVIDER/MODEL_ID"`);
+      try { return parseModel(spec, `"${key}"`); } catch (error) { return fail(errorMessage(error)); }
+    };
+    const level = (key: 'thinkingLevel' | 'subThinkingLevel'): ModelThinkingLevel | undefined => {
+      const given = fields[key];
+      if (given === undefined || isThinkingLevel(given)) return given;
+      return fail(`"${key}" must be one of ${THINKING.join(', ')}`);
+    };
+    const tools = fields.tools;
+    if (!Array.isArray(tools) || !tools.every(isKit)) fail(`"tools" is required: a list of tool kits from ${KITS.join(', ')}`);
+    const kits: Kit[] = Array.isArray(tools) ? [...new Set(tools.filter(isKit))] : [];
+    if (fields.instructions !== undefined && typeof fields.instructions !== 'string') fail('"instructions" must be a string');
+    const subModel = model('subModel'), subThinkingLevel = level('subThinkingLevel');
+    roster[name] = {
+      model: model('model') ?? fail('"model" is required'), thinkingLevel: level('thinkingLevel') ?? DEFAULT_THINKING, tools: kits,
+      ...typeof fields.instructions === 'string' && fields.instructions.trim() ? { instructions: fields.instructions } : {},
+      ...subModel ? { subModel } : {}, ...subThinkingLevel ? { subThinkingLevel } : {},
+    };
+  }
+  return roster;
+}
+
+/** settings.json, or {} when there is none. Rejects on a file that is not valid settings; an invalid agent by name. */
+export async function readSettings(path: string): Promise<Settings> {
+  const value = await readSettingsJson(path);
+  if (!value) return {};
+  if ((value.model !== undefined && typeof value.model !== 'string')
     || (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel))) {
     throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
   }
   return { ...value.model === undefined ? {} : { model: parseModel(value.model, `"model" in ${path}`) },
-    ...isThinkingLevel(value.thinkingLevel) ? { thinkingLevel: value.thinkingLevel } : {} };
+    ...isThinkingLevel(value.thinkingLevel) ? { thinkingLevel: value.thinkingLevel } : {},
+    ...value.agents === undefined ? {} : { agents: parseRoster(value.agents, path) } };
 }
 
-/** Replace settings.json atomically (mode 600). Only work launches write it, under the database's flock. */
-export function writeSettings(path: string, { model, thinkingLevel }: Settings): void {
-  const json = { ...model ? { model: `${model.provider}/${model.modelId}` } : {}, ...thinkingLevel ? { thinkingLevel } : {} };
+/**
+ * The launch's roster: settings.json's `agents`, else the built-in one. `lenient` (a launch with --model, which skips
+ * a broken file) falls back to the built-in roster when the file is not a JSON object; an invalid `agents` always rejects.
+ */
+export async function readRoster(path: string, { lenient = false }: { lenient?: boolean } = {}): Promise<Roster> {
+  let value: Record<string, unknown> | undefined;
+  try { value = await readSettingsJson(path); } catch (error) {
+    if (lenient) return DEFAULT_ROSTER;
+    throw error;
+  }
+  return value?.agents === undefined ? DEFAULT_ROSTER : parseRoster(value.agents, path);
+}
+
+/**
+ * Replace settings.json atomically (mode 600) with `model` and `thinkingLevel`, after the other keys of `kept` (the
+ * file's JSON as read, so `agents` stays as the user wrote it). Only work launches write it, under the database's flock.
+ */
+export function writeSettings(path: string, { model, thinkingLevel }: Pick<Settings, 'model' | 'thinkingLevel'>,
+  kept: Readonly<Record<string, unknown>> = {}): void {
+  const json = { ...kept, ...model ? { model: `${model.provider}/${model.modelId}` } : {}, ...thinkingLevel ? { thinkingLevel } : {} };
   atomicWrite(path, `${JSON.stringify(json, null, 2)}\n`);
 }
 
-/** Change some of settings.json, keeping the rest. */
-export async function updateSettings(path: string, change: Settings): Promise<void> {
-  writeSettings(path, { ...await readSettings(path), ...change });
+/** Change the model or thinking level in settings.json, keeping the rest, `agents` included, as it is. */
+export async function updateSettings(path: string, change: Pick<Settings, 'model' | 'thinkingLevel'>): Promise<void> {
+  const saved = await readSettings(path);
+  writeSettings(path, { model: change.model ?? saved.model, thinkingLevel: change.thinkingLevel ?? saved.thinkingLevel },
+    await readSettingsJson(path) ?? {});
 }
 
 /**
@@ -442,7 +522,10 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
   const agentDir = env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent');
   const paths = statePaths(databasePath, env);
   const serve = options.command === 'serve' ? { serve: serveSettings(options, env) } : {};
-  return { ...options, ...await resolveModel(options, env, paths.settings), cwd, dataDir, databasePath,
+  // The admin commands run no agents; the others read the roster, which an invalid entry makes a launch error.
+  const roster = options.command === 'chat' || options.command === 'serve'
+    ? await readRoster(paths.settings, { lenient: options.model !== undefined }) : DEFAULT_ROSTER;
+  return { ...options, ...await resolveModel(options, env, paths.settings), roster, cwd, dataDir, databasePath,
     memoryDir: paths.memoryDir, settingsPath: paths.settings, ...paths.socket ? { socketPath: paths.socket } : {},
     serveDir: paths.serveDir, ...serve, exists, inspectOnly, authFile: resolve(options.authFile ?? join(agentDir, 'auth.json')) };
 }
@@ -461,10 +544,21 @@ function isServeSettings(x: unknown): x is ServeSettings {
     && typeof x.pushPreview === 'boolean';
 }
 export const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+const isModelRef = (x: unknown): x is ModelRef => isRecord(x) && typeof x.provider === 'string' && typeof x.modelId === 'string';
+
+/** A resolved roster, as `JSON.stringify(config)` carries it. */
+function isRoster(x: unknown): x is Roster {
+  return isRecord(x) && Object.entries(x).every(([name, agent]) => isAgentName(name) && isRecord(agent)
+    && isModelRef(agent.model) && isThinkingLevel(agent.thinkingLevel) && Array.isArray(agent.tools) && agent.tools.every(isKit)
+    && (agent.instructions === undefined || typeof agent.instructions === 'string')
+    && (agent.subModel === undefined || isModelRef(agent.subModel))
+    && (agent.subThinkingLevel === undefined || isThinkingLevel(agent.subThinkingLevel)));
+}
 
 function isConfig(x: unknown): x is Config {
   if (!isRecord(x) || !isRecord(x.model)) return false;
   return typeof x.model.provider === 'string' && typeof x.model.modelId === 'string' && isThinkingLevel(x.thinkingLevel)
+    && isRoster(x.roster)
     && MODEL_SOURCES.some(source => source === x.modelSource) && COMMANDS.some(command => command === x.command)
     && (x.port === undefined || isPort(x.port)) && (x.serve === undefined || isServeSettings(x.serve))
     && STRINGS.every(key => typeof x[key] === 'string') && BOOLEANS.every(key => typeof x[key] === 'boolean')

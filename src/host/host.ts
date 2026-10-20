@@ -176,6 +176,7 @@ async function main(): Promise<void> {
     if (problem) console.error(`Coding tools: bash is off. ${problem}`);
   }
   instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly, protection: protection(config),
+    onWarning: message => console.error(`Pi Durable: ${message}`),
     onReport: report => console.error(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   if (stopping) return;
   if (config.status) return printStatus();
