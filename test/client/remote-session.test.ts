@@ -214,6 +214,20 @@ test('a send whose answer a drop lost is resent with its requestId and admitted 
   await session.close();
 });
 
+test('a steering send carries steer: true; a plain one has no steer key', async () => {
+  const { server, session, requests } = await attach();
+  await session.send('count the boats', 'r-1');
+  await session.send('only the red ones', 'r-2', true);
+  await session.send('thanks', undefined, false);
+  const sent = requests('send');
+  assert.deepEqual(sent.slice(0, 2), [{ text: 'count the boats', requestId: 'r-1' }, { text: 'only the red ones', requestId: 'r-2', steer: true }]);
+  assert.equal(sent.length, 3);
+  assert.equal('steer' in (sent[2] ?? assert.fail('no third send')), false);
+  assert.equal(typeof sent[2]?.requestId, 'string', 'a generated requestId still goes with it');
+  assert.deepEqual(server.sends.map(each => each.text), ['count the boats', 'only the red ones', 'thanks']);
+  await session.close();
+});
+
 test('bye 4000 closes for good with a notice; pending requests reject', async () => {
   const { server, wire, session, notices } = await attach();
   server.hold('models');

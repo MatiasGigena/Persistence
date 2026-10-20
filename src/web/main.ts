@@ -6,13 +6,10 @@ import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
 import { agentsView } from './panels/agents.ts';
+import { chatSettingsView } from './panels/chat-settings.ts';
 import { memoryView } from './panels/memory.ts';
-import { effortView } from './panels/effort.ts';
-import { modelView } from './panels/model.ts';
-import { settingsView } from './panels/settings.ts';
 import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
-import { toolsView } from './panels/tools.ts';
 import { syncPush } from './push.ts';
 import { Store } from './store.ts';
 import type { Effect } from './store.ts';
@@ -24,6 +21,8 @@ const DRAFT_KEY = 'pd.draft';
 const RELOAD_KEY = 'pd.reloaded';
 /** How long the link may be reconnecting before the banner says so. */
 const RECONNECT_BANNER_MS = 2_000;
+/** How long after a send the button cannot become stop, so a double tap does not abort what it just sent. */
+const SEND_HUSH_MS = 600;
 
 // ------------------------------------------------------------------------------------------------ storage
 
@@ -38,6 +37,12 @@ function save(storage: () => Storage, key: string, value: string): void {
 }
 const local = (): Storage => localStorage;
 const session = (): Storage => sessionStorage;
+
+/** A short tap of haptic feedback, where the browser has it. */
+function buzz(): void {
+  if (!('vibrate' in navigator)) return;
+  try { navigator.vibrate(8); } catch { /* feedback only */ }
+}
 
 // ------------------------------------------------------------------------------------------------ screens
 
@@ -148,7 +153,6 @@ function start(): void {
   const input = byId('input', HTMLTextAreaElement);
   const composer = byId('composer', HTMLFormElement);
   const sendButton = byId('send', HTMLButtonElement);
-  const stopButton = byId('stop', HTMLButtonElement);
   const banner = byId('banner', HTMLDivElement);
   const bannerText = byId('banner-text', HTMLSpanElement);
   const retry = byId('banner-retry', HTMLButtonElement);
@@ -156,11 +160,7 @@ function start(): void {
   const live = byId('live', HTMLDivElement);
   const pulse = byId('pulse', HTMLDivElement);
   const statusLine = byId('status', HTMLDivElement);
-  const modelChip = byId('model-chip', HTMLButtonElement);
   const modelName = byId('model-name', HTMLSpanElement);
-  const effortChip = byId('effort-chip', HTMLButtonElement);
-  const effortName = byId('effort-name', HTMLSpanElement);
-  const menu = byId('menu', HTMLDialogElement);
 
   const view = new ChatView(byId('feed', HTMLOListElement), byId('scroller', HTMLDivElement), {
     empty: 'This is your one conversation with Pi. It never resets, and Pi remembers it. Write something to begin.',
@@ -171,6 +171,8 @@ function start(): void {
   const notice = (text: string, level: NoticeLevel = 'info'): void => store.notice(text, level);
   let reopen: string[] = [];
   let wasReady = false;
+  /** The link is ready: only then is store.status.busy current. */
+  let linkReady = false;
 
   const link = new Link({
     connect: socket,
@@ -186,40 +188,80 @@ function start(): void {
   // -------------------------------------------------------------- sending
 
   /** Sends not yet admitted, by request id: resent with the same id after a reconnect, so Pi gets each once. */
-  const outbox = new Map<string, string>();
+  const outbox = new Map<string, { readonly text: string; readonly steer: boolean }>();
   const prefix = `web-${Math.random().toString(36).slice(2, 10)}`;
   let counter = 0;
-  const deliver = (id: string, text: string): void => {
-    link.request('send', { text, requestId: id }).then(
-      () => { outbox.delete(id); store.admitPending(id); },
+  const deliver = (id: string, text: string, steer: boolean): void => {
+    link.request('send', steer ? { text, requestId: id, steer } : { text, requestId: id }).then(
+      () => { outbox.delete(id); store.admitPending(id); drawSend(); },
       (error: unknown) => {
         if (error instanceof RequestError && error.code === 'lost') return;
         outbox.delete(id);
+        drawSend();
         store.dropPending(id);
         if (!input.value) { input.value = text; autosize(); saveDraft(); }
         notice(`Not sent: ${errorText(error)}`, 'error');
       },
     );
   };
+  /** Pi is working: a message steers it, and the button stops it while the box is empty (as in Pi Cloud). */
+  const busy = (): boolean => store.status?.busy ?? false;
+  /** An abort is in flight: the stop button is disabled until it settles or Pi goes idle, so it is sent once. */
+  let stopping = false;
+  /** Set for SEND_HUSH_MS after a send: a second tap then must not land on stop and withdraw what was just sent. */
+  let hush: ReturnType<typeof setTimeout> | undefined;
+  const abort = (): void => {
+    stopping = true;
+    buzz();
+    drawSend();
+    link.request('abort', {})
+      .catch((error: unknown) => notice(`Interrupt failed: ${errorText(error)}`, 'error'))
+      .finally(() => { stopping = false; drawSend(); });
+  };
   const submit = (): void => {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text) {
+      if (sendButton.dataset.mode === 'stop' && !sendButton.disabled) abort();
+      return;
+    }
+    buzz();
+    clearTimeout(hush);
+    hush = setTimeout(() => { hush = undefined; drawSend(); }, SEND_HUSH_MS);
     const id = `${prefix}-${++counter}`;
-    outbox.set(id, text);
-    store.addPending(id, text);
+    const steer = busy();
+    outbox.set(id, { text, steer });
+    store.addPending(id, text, steer);
     input.value = '';
     autosize();
     saveDraft();
     view.toBottom();
-    deliver(id, text);
+    deliver(id, text, steer);
   };
 
   // -------------------------------------------------------------- composer
 
+  /**
+   * One button, as Pi Cloud's: send, steer while Pi works, and stop while Pi works and the box is empty. Stop never
+   * shows while a send is unadmitted or just after one, and status.busy counts only while the link is ready (it is
+   * stale otherwise); in those cases the button is a disabled send.
+   */
+  const drawSend = (): void => {
+    if (!busy()) stopping = false;
+    const typed = Boolean(input.value.trim());
+    const working = linkReady && busy();
+    const held = outbox.size > 0 || hush !== undefined;
+    const mode = typed ? (working ? 'steer' : 'send') : working && !held ? 'stop' : 'send';
+    sendButton.dataset.mode = mode;
+    sendButton.disabled = mode === 'stop' ? stopping : !typed;
+    const label = mode === 'stop' ? 'Stop Pi' : mode === 'steer' ? 'Steer Pi' : 'Send';
+    sendButton.setAttribute('aria-label', label);
+    sendButton.title = label;
+    input.placeholder = busy() ? 'Steer Pi…' : 'Message Pi';
+  };
   const autosize = (): void => {
     input.style.height = 'auto';
     input.style.height = `${input.scrollHeight}px`;
-    sendButton.disabled = !input.value.trim();
+    drawSend();
   };
   const saveDraft = (): void => save(local, DRAFT_KEY, input.value);
   input.value = load(local, DRAFT_KEY);
@@ -229,44 +271,26 @@ function start(): void {
   input.addEventListener('keydown', event => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing || !finePointer.matches) return;
     event.preventDefault();
-    submit();
+    // Enter only sends: stopping Pi takes the button (or Esc in the terminal), never a stray keypress.
+    if (input.value.trim()) submit();
   });
-  composer.addEventListener('submit', event => { event.preventDefault(); submit(); input.focus(); });
+  composer.addEventListener('submit', event => {
+    event.preventDefault();
+    const stopTap = sendButton.dataset.mode === 'stop';
+    submit();
+    // A tap on stop must not raise the keyboard.
+    if (!stopTap) input.focus();
+  });
 
-  const abort = (): void => { link.request('abort', {}).catch((error: unknown) => notice(`Interrupt failed: ${errorText(error)}`, 'error')); };
-  const stopAll = (): void => {
-    abort();
-    link.request('stopAgents', {}).then(
-      ({ names }) => notice(names.length ? `Stopped ${names.join(', ')}.` : 'No agents to stop.'),
-      (error: unknown) => notice(`Stop failed: ${errorText(error)}`, 'error'),
-    );
-  };
-  stopButton.addEventListener('click', abort);
+  // -------------------------------------------------------------- header
 
-  // -------------------------------------------------------------- header and menu
-
-  modelChip.addEventListener('click', () => sheet.open(modelView(ctx)));
-  effortChip.addEventListener('click', () => sheet.open(effortView(ctx)));
-  byId('menu-button', HTMLButtonElement).addEventListener('click', () => menu.showModal());
-  menu.addEventListener('click', event => { if (event.target === menu) menu.close(); });
-  const panels = { agents: agentsView, memory: memoryView, model: modelView, effort: effortView, tools: toolsView, settings: settingsView } as const;
-  for (const button of menu.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
-    button.addEventListener('click', () => {
-      menu.close();
-      const action = button.dataset.action ?? '';
-      if (action === 'stop-all') stopAll();
-      for (const [name, open] of Object.entries(panels)) if (name === action) sheet.open(open(ctx));
-    });
-  }
+  byId('settings-button', HTMLButtonElement).addEventListener('click', () => sheet.open(chatSettingsView(ctx)));
 
   const drawStatus = (): void => {
     const status = store.status;
     if (!status) return;
-    modelName.textContent = shortModel(status.model);
-    modelChip.setAttribute('aria-label', `Model ${status.model}. Change model`);
-    effortName.textContent = status.thinkingLevel;
-    effortChip.setAttribute('aria-label', `Reasoning effort ${status.thinkingLevel}. Change effort`);
-    stopButton.hidden = !status.busy;
+    modelName.textContent = `${shortModel(status.model)} · ${status.thinkingLevel}`;
+    drawSend();
     pulse.classList.toggle('is-busy', status.busy || status.agents.some(a => a.busy));
     statusLine.replaceChildren(...statusParts(status).map(part => {
       const opens = part.key === 'agents' ? agentsView : part.key === 'memory' || part.key === 'failed' ? memoryView : undefined;
@@ -298,6 +322,8 @@ function start(): void {
   retry.addEventListener('click', () => link.poke());
 
   function onState(state: LinkState): void {
+    linkReady = state === 'ready';
+    drawSend();
     if (state === 'ready') {
       wasReady = true;
       setBanner('', false);
@@ -325,7 +351,7 @@ function start(): void {
         return;
       case 'reload':
         // Messages not yet admitted would be lost with the page: they go back into the draft.
-        if (outbox.size) save(local, DRAFT_KEY, [...outbox.values(), input.value].filter(Boolean).join('\n\n'));
+        if (outbox.size) save(local, DRAFT_KEY, [...[...outbox.values()].map(sent => sent.text), input.value].filter(Boolean).join('\n\n'));
         await reloadOnce(`assets:${store.welcome?.assets ?? ''}`);
         return;
       case 'reply': {
@@ -340,7 +366,7 @@ function start(): void {
       case 'ready': {
         save(session, RELOAD_KEY, '');
         show('chat');
-        for (const [id, text] of outbox) deliver(id, text);
+        for (const [id, { text, steer }] of outbox) deliver(id, text, steer);
         const names = reopen;
         reopen = [];
         for (const name of names) {

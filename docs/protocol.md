@@ -168,7 +168,7 @@ reads as `undefined`, and `memory` may also be `null`.
 
 | Op | Params | Result | Peers | Errors besides `bad_request` |
 |---|---|---|---|---|
-| `send` | `text`, `requestId?` | `null` | both | `unavailable` |
+| `send` | `text`, `requestId?`, `steer?` | `null` | both | `unavailable` |
 | `abort` | — | `null` | both | |
 | `stopAgents` | `name?` | `{names}` | both | |
 | `feed.open` | `name` | `{feed}` | both | `not_found` |
@@ -194,7 +194,9 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 - **`send`** is `UiSession.send`: admitted durably, answered when admitted, not when Pi answers (the feed shows
   that). Text that is empty after trimming is `bad_request`. With `requestId` (1 to 128 characters, unique per
   message: e.g. `<client>-<random>-<counter>`), the server submits with pi-durable's request id, so a repeat is
-  admitted once. A client resends a `send` whose `res` a dropped link lost only with its `requestId`.
+  admitted once. A client resends a `send` whose `res` a dropped link lost only with its `requestId`. With
+  `steer: true`, a busy Pi gets the text between its steps (pi-durable's `whenBusy: 'steer'`) instead of after its
+  run; an idle Pi starts a run as usual. The web app steers whatever it sends while Pi works.
 - **`abort`**, **`stopAgents`**: as the session's `abort` and `stopAgents`; `names` lists the agents stopped,
   sub agents first, and is empty for an unknown name.
 - **`feed.open`** opens an agent's conversation by name (case-insensitive) and returns its feed id, an opaque

@@ -1,7 +1,9 @@
 // Renders a feed into a list: one element per item, kept by id, so an update touches only its own element. Changes
 // are drawn at most once per animation frame, and the list sticks to the bottom while the reader is there.
-import { prettyArgs, toolSummary } from './format.ts';
+import { addCodeCopies, copyButton } from './copy.ts';
+import { prettyArgs, toolCommand, toolSummary } from './format.ts';
 import { renderMarkdown } from './markdown.ts';
+import { turnEnds } from './store.ts';
 import type { ViewItem } from './store.ts';
 
 type ToolItem = Extract<ViewItem, { kind: 'tool' }>;
@@ -108,11 +110,19 @@ export class ChatView {
       entry.element.remove();
       this.entries.delete(id);
     }
+    const ends = turnEnds(this.items);
+    for (const [id, entry] of this.entries) {
+      const actions = entry.item.kind === 'assistant' ? entry.element.querySelector<HTMLElement>('.turn-actions') : null;
+      if (actions) actions.hidden = !ends.has(id);
+    }
     if (this.items.length) this.emptyNote.remove();
     else this.list.prepend(this.emptyNote);
     if (this.stuck) this.toBottom();
   }
 }
+
+/** The item a list element shows, kept on it for the handlers that read it later (copy, a tool's toggle). */
+const shown = new WeakMap<HTMLElement, ViewItem>();
 
 function create(item: ViewItem): HTMLLIElement {
   const li = el('li', `item item-${item.kind}`);
@@ -121,9 +131,16 @@ function create(item: ViewItem): HTMLLIElement {
       li.append(el('div', 'bubble'));
       if (item.kind === 'pending') li.append(el('div', 'meta'));
       break;
-    case 'assistant':
-      li.append(el('div', 'prose'));
+    case 'assistant': {
+      const actions = el('div', 'turn-actions');
+      actions.hidden = true;
+      actions.append(copyButton('copy-message', 'Message', () => {
+        const now = shown.get(li);
+        return now?.kind === 'assistant' ? now.text : '';
+      }));
+      li.append(el('div', 'prose'), actions);
       break;
+    }
     case 'thinking': {
       const details = el('details', 'fold');
       const summary = el('summary');
@@ -154,17 +171,32 @@ function create(item: ViewItem): HTMLLIElement {
   return li;
 }
 
-/** The tool item a list element shows, kept on it for its toggle handler. */
-const toolItems = new WeakMap<HTMLElement, ToolItem>();
+/** A tool's block of text with its copy button; the button reads the item's latest text when tapped. */
+function block(li: HTMLLIElement, className: string, label: string, text: string, read: (item: ToolItem) => string): HTMLElement {
+  const wrap = el('div', 'code-block');
+  const pre = el('pre', className, text);
+  // Focusable, so a keyboard can scroll a long line.
+  pre.tabIndex = 0;
+  pre.setAttribute('aria-label', label);
+  wrap.append(pre, copyButton('copy-code', label, () => {
+    const now = shown.get(li);
+    return now?.kind === 'tool' ? read(now) : text;
+  }));
+  return wrap;
+}
 
 function fillTool(details: HTMLDetailsElement, li: HTMLLIElement): void {
-  const item = toolItems.get(li);
+  const item = shown.get(li);
   const body = details.querySelector('.fold-body');
-  if (!item || !body) return;
+  if (item?.kind !== 'tool' || !body) return;
   const parts: HTMLElement[] = [];
+  const command = toolCommand(item.name, item.args);
   const args = prettyArgs(item.args);
-  if (args && args !== '{}') parts.push(el('pre', 'tool-args', args));
-  if (item.output) parts.push(el('pre', item.status === 'error' ? 'tool-output is-error' : 'tool-output', item.output));
+  if (command !== undefined) parts.push(block(li, 'tool-command', 'Command', command, now => toolCommand(now.name, now.args) ?? ''));
+  else if (args && args !== '{}') parts.push(block(li, 'tool-args', 'Arguments', args, now => prettyArgs(now.args)));
+  if (item.output) {
+    parts.push(block(li, item.status === 'error' ? 'tool-output is-error' : 'tool-output', 'Output', item.output, now => now.output));
+  }
   if (!parts.length) parts.push(el('p', 'fold-empty', item.status === 'running' ? 'Running…' : 'No output.'));
   body.replaceChildren(...parts);
 }
@@ -178,17 +210,21 @@ function setText(root: HTMLElement, selector: string, text: string): void {
 
 /** Brings an element up to `item`; `was` is what it showed before, if anything. */
 function update(li: HTMLLIElement, item: ViewItem, was: ViewItem | undefined): void {
+  shown.set(li, item);
   switch (item.kind) {
     case 'user':
       setText(li, '.bubble', item.text);
       break;
     case 'pending':
       setText(li, '.bubble', item.text);
-      setText(li, '.meta', item.state === 'sending' ? 'Sending…' : 'Queued');
+      setText(li, '.meta', item.state === 'sending' ? 'Sending…' : item.steer ? 'Steering' : 'Queued');
       break;
     case 'assistant': {
       const prose = li.querySelector('.prose');
-      if (prose && (was?.kind !== 'assistant' || was.text !== item.text)) prose.innerHTML = renderMarkdown(item.text);
+      if (prose instanceof HTMLElement && (was?.kind !== 'assistant' || was.text !== item.text)) {
+        prose.innerHTML = renderMarkdown(item.text);
+        addCodeCopies(prose);
+      }
       li.classList.toggle('is-streaming', item.streaming);
       li.hidden = !item.text.trim() && !item.streaming;
       break;
@@ -201,7 +237,6 @@ function update(li: HTMLLIElement, item: ViewItem, was: ViewItem | undefined): v
       break;
     }
     case 'tool': {
-      toolItems.set(li, item);
       li.dataset.status = item.status;
       setText(li, '.tool-mark', TOOL_MARK[item.status]);
       setText(li, '.tool-name', item.name);
@@ -214,7 +249,10 @@ function update(li: HTMLLIElement, item: ViewItem, was: ViewItem | undefined): v
     case 'report': {
       setText(li, '.report-from', item.from);
       const prose = li.querySelector('.prose');
-      if (prose && (was?.kind !== 'report' || was.text !== item.text)) prose.innerHTML = renderMarkdown(item.text);
+      if (prose instanceof HTMLElement && (was?.kind !== 'report' || was.text !== item.text)) {
+        prose.innerHTML = renderMarkdown(item.text);
+        addCodeCopies(prose);
+      }
       break;
     }
     case 'notice':

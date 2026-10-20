@@ -100,10 +100,11 @@ export interface UiSession {
   /** Called after any change to `status()`. Returns an unsubscribe function. */
   onStatus(listener: () => void): () => void;
   /**
-   * Sends text to Pi: starts a run, or follows up the running one. With `requestId`, a repeat of the same id is
-   * admitted once (pi-durable's submission dedup), so a client may resend after losing the answer to a reconnect.
+   * Sends text to Pi: starts a run, or follows up the running one; with `steer`, a busy Pi gets it between its steps
+   * instead of after its run. With `requestId`, a repeat of the same id is admitted once (pi-durable's submission
+   * dedup), so a client may resend after losing the answer to a reconnect.
    */
-  send(text: string, requestId?: string): Promise<void>;
+  send(text: string, requestId?: string, steer?: boolean): Promise<void>;
   /** Interrupts Pi's running work (Esc). Durable work stays resumable. */
   abort(): Promise<void>;
   /**

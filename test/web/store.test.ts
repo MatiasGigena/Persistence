@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatItem, ServerMessage, SessionStatus, Welcome } from '../../src/protocol/messages.ts';
-import { Store } from '../../src/web/store.ts';
+import { Store, turnEnds } from '../../src/web/store.ts';
+import type { ViewItem } from '../../src/web/store.ts';
 
 const WELCOME: Welcome = {
   t: 'welcome', protocol: 2, server: '0.1.0', boot: 'b1', assets: 'a1', peer: 'web', cwd: '/w',
@@ -97,6 +98,31 @@ test('a pending send shows until its user item arrives', () => {
   assert.deepEqual(ids(store), ['u1', 'u2']);
 });
 
+test('a steering send is marked as one, through admission, until it settles or drops', () => {
+  const store = connected([user('u1', 'go')]);
+  store.addPending('r1', 'not that one', true);
+  store.addPending('r2', 'and then this');
+  assert.deepEqual(store.rootView().slice(-2), [
+    { kind: 'pending', id: 'r1', text: 'not that one', state: 'sending', steer: true },
+    { kind: 'pending', id: 'r2', text: 'and then this', state: 'sending' },
+  ], 'a plain send has no steer key at all');
+  const plain = store.rootView().at(-1) ?? assert.fail('no pending item');
+  assert.equal('steer' in plain, false);
+
+  store.admitPending('r1');
+  store.admitPending('r2');
+  store.handle({ t: 'status', status: { ...STATUS, busy: true, queued: 2 } });
+  assert.deepEqual(store.rootView().slice(-2), [
+    { kind: 'pending', id: 'r1', text: 'not that one', state: 'queued', steer: true },
+    { kind: 'pending', id: 'r2', text: 'and then this', state: 'queued' },
+  ], 'queued keeps the flag');
+
+  store.handle({ t: 'items', feed: 'root', ops: [{ op: 'put', item: user('u2', 'not that one') }] });
+  assert.deepEqual(ids(store), ['u1', 'u2', 'r2'], 'the steer settled into its user item');
+  store.dropPending('r2');
+  assert.deepEqual(ids(store), ['u1', 'u2']);
+});
+
 test('agent feeds: open, sync, end, and survive a reconnect by name', () => {
   const store = connected();
   store.openAgent('f1', 'Scout');
@@ -115,4 +141,39 @@ test('agent feeds: open, sync, end, and survive a reconnect by name', () => {
   store.handle({ t: 'feed.end', feed: 'f9', reason: 'Scout was stopped.' });
   assert.equal(store.agentByName('Scout')?.agent.ended, 'Scout was stopped.');
   assert.deepEqual(store.disconnect(), [], 'an ended feed is not reopened');
+});
+
+test('turnEnds marks the last finished assistant text before each user message and at the end', () => {
+  const items: ViewItem[] = [
+    user('u1', 'hi'), reply('a1', 'one', false), reply('a2', 'two', false),
+    user('u2', 'more'), reply('a3', 'three', false),
+  ];
+  assert.deepEqual([...turnEnds(items)], ['a2', 'a3']);
+  // A streaming reply ends nothing yet; neither does one with no text.
+  assert.deepEqual([...turnEnds([user('u1', 'hi'), reply('a1', 'He', true)])], []);
+  assert.deepEqual([...turnEnds([user('u1', 'hi'), reply('a1', '  ', false)])], []);
+  assert.deepEqual([...turnEnds([user('u1', 'hi'), reply('a1', 'done', false), reply('a2', 'Ne', true)])], []);
+});
+
+test('turnEnds keeps the end past tool, thinking, notice and empty assistant items', () => {
+  const items: ViewItem[] = [
+    user('u1', 'hi'), reply('a1', 'Running it', false),
+    { kind: 'thinking', id: 't1', text: 'hm', streaming: false },
+    { kind: 'tool', id: 'k1', name: 'bash', args: '{}', output: 'ok', status: 'done' },
+    // Tool calls only, or cut off by a stop: no text, so a1 stays the end.
+    reply('a2', '', false),
+    { kind: 'notice', id: 'n1', text: 'Stopped', level: 'info' },
+    user('u2', 'next'), reply('a3', 'answer', false), reply('a4', '', false),
+  ];
+  assert.deepEqual([...turnEnds(items)], ['a1', 'a3']);
+});
+
+test('turnEnds splits a turn at a pending message, a steer mid-run included', () => {
+  // Deliberate: a steer is the user's message, so the answer before it ends its own stretch, as a user item would.
+  const items: ViewItem[] = [
+    user('u1', 'hi'), reply('a1', 'first', false),
+    { kind: 'pending', id: 'p1', text: 'also this', state: 'queued', steer: true },
+    reply('a2', 'second', false),
+  ];
+  assert.deepEqual([...turnEnds(items)], ['a1', 'a2']);
 });

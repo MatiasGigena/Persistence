@@ -46,6 +46,9 @@ function bool(o: Obj, key: string): boolean {
   if (typeof v !== 'boolean') throw new Bad(`${key} must be a boolean`);
   return v;
 }
+function optBool(o: Obj, key: string): boolean | undefined {
+  return o[key] === undefined ? undefined : bool(o, key);
+}
 /** A safe integer, at least `min`. */
 function int(o: Obj, key: string, min = 0): number {
   const v = o[key];
@@ -156,7 +159,8 @@ function toolsPolicy(x: unknown): ToolsPolicy {
 
 /** Each op's request, from its id and raw params. Typed per op, so every op is listed and checked. */
 const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
-  send: (id, p) => ({ t: 'req', id, op: 'send', params: withOptional({ text: str(p, 'text') }, 'requestId', optStr(p, 'requestId')) }),
+  send: (id, p) => ({ t: 'req', id, op: 'send',
+    params: withOptional(withOptional({ text: str(p, 'text') }, 'requestId', optStr(p, 'requestId')), 'steer', optBool(p, 'steer')) }),
   abort: id => ({ t: 'req', id, op: 'abort', params: {} }),
   stopAgents: (id, p) => ({ t: 'req', id, op: 'stopAgents', params: withOptional({}, 'name', optStr(p, 'name')) }),
   'feed.open': (id, p) => ({ t: 'req', id, op: 'feed.open', params: { name: str(p, 'name') } }),

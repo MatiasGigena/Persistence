@@ -11,10 +11,34 @@ export interface PendingItem {
   readonly id: string;
   readonly text: string;
   readonly state: 'sending' | 'queued';
+  /** Sent to steer Pi's running work rather than to follow it up. */
+  readonly steer?: boolean;
 }
 
 /** What a chat view draws: the feed's items, local notices among them, and pending sends at the end. */
 export type ViewItem = ChatItem | PendingItem;
+
+/**
+ * The assistant messages that end a turn, as Pi Cloud marks them: in each stretch between the user's messages (a
+ * pending one too, so a steer sent mid-run splits the turn), the last one with text that is not streaming. Each gets
+ * the turn's actions (copy). An assistant message with no text (tool calls only, or cut off by a stop) leaves the
+ * end where it was; a streaming one clears it until it finishes.
+ */
+export function turnEnds(items: readonly ViewItem[]): Set<string> {
+  const ends = new Set<string>();
+  let last: string | undefined;
+  for (const item of items) {
+    if (item.kind === 'user' || item.kind === 'pending') {
+      if (last) ends.add(last);
+      last = undefined;
+    } else if (item.kind === 'assistant') {
+      if (item.streaming) last = undefined;
+      else if (item.text.trim()) last = item.id;
+    }
+  }
+  if (last) ends.add(last);
+  return ends;
+}
 
 /** A feed's mirror. `waiting`: an op did not fit; `items` messages are ignored until the next snapshot. */
 export interface Mirror {
@@ -172,9 +196,10 @@ export class Store {
   }
 
   /** Adds a message being sent, shown at the end of the chat until it is in the feed. */
-  addPending(id: string, text: string): void {
+  addPending(id: string, text: string, steer = false): void {
     const baseline = new Set(this.root.items.filter(item => item.kind === 'user').map(item => item.id));
-    this.pending.push({ item: { kind: 'pending', id, text, state: 'sending' }, baseline });
+    const item: PendingItem = { kind: 'pending', id, text, state: 'sending' };
+    this.pending.push({ item: steer ? { ...item, steer } : item, baseline });
     this.changed();
   }
 

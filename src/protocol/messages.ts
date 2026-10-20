@@ -100,10 +100,11 @@ export type NoParams = Readonly<Record<string, never>>;
 /** Every request op: its params and its successful result. `null` results carry nothing. */
 export interface Ops {
   /**
-   * Sends text to Pi: starts a run, or follows up the running one. With `requestId`, a repeat of the same id is
-   * admitted once (pi-durable's submission dedup), so a client may resend after losing the `res` to a reconnect.
+   * Sends text to Pi: starts a run, or follows up the running one (`steer`: steers it, between its steps). With
+   * `requestId`, a repeat of the same id is admitted once (pi-durable's submission dedup), so a client may resend
+   * after losing the `res` to a reconnect.
    */
-  readonly send: { readonly params: { readonly text: string; readonly requestId?: string }; readonly result: null };
+  readonly send: { readonly params: { readonly text: string; readonly requestId?: string; readonly steer?: boolean }; readonly result: null };
   /** Interrupts Pi's running work (Esc). */
   readonly abort: { readonly params: NoParams; readonly result: null };
   /** Stops one agent and its sub agents, or all agents without `name`. Names stopped, sub agents first. */
