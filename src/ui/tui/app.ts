@@ -106,9 +106,9 @@ export function helpText(columns: number, attached = false): string {
     attached ? 'Pi and agents keep working on the server after you detach.' : 'Unfinished work and agents resume on the next launch.'].join('\n');
 }
 
-/** Asked before `/tools on`: the tools act on this machine as the user, without a sandbox or approval prompts. */
+/** Asked before `/tools on`: the tools act on this machine as the user, minus the protected folders, without prompts. */
 export const TOOLS_QUESTION = 'Enable read/write/edit/bash with your user permissions for this launch?'
-  + ' They run without a sandbox or approval prompts.';
+  + ' The chat\'s files and your credentials stay hidden, system folders read-only; there are no approval prompts.';
 
 /** Asked before Ctrl+C twice or Ctrl+D exits while something runs. */
 export const EXIT_QUESTION = 'Pi or agents are working. Exit anyway? Work resumes on the next launch.';

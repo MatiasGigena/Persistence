@@ -36,7 +36,7 @@ async function rawServer(path: string, onConnection: (socket: Socket) => void): 
   return { close: () => new Promise<void>(resolve => { for (const socket of sockets) socket.destroy(); server.close(() => resolve()); }) };
 }
 
-const WELCOME = JSON.stringify({ t: 'welcome', protocol: 1, server: '0.1.0', boot: 'b', assets: 'a', peer: 'socket', cwd: '/w',
+const WELCOME = JSON.stringify({ t: 'welcome', protocol: 2, server: '0.1.0', boot: 'b', assets: 'a', peer: 'socket', cwd: '/w',
   tools: { remote: 'confirm', idleMinutes: 30 } });
 
 test('over a real socket: hello, welcome, the state, requests, and NDJSON lines split anywhere', async t => {
@@ -98,9 +98,9 @@ test('no server: a missing socket, a silent server, or a file that is not a sock
 test('a welcome of another protocol, or a bye 4000 to hello, fails the first connect for good', async t => {
   const dir = await folder(t);
   const path = join(dir, 'v2.sock');
-  const v2 = await rawServer(path, socket => socket.once('data', () => socket.write(`${WELCOME.replace('"protocol":1', '"protocol":2')}\n`)));
+  const v2 = await rawServer(path, socket => socket.once('data', () => socket.write(`${WELCOME.replace('"protocol":2', '"protocol":3')}\n`)));
   t.after(() => v2.close());
-  await assert.rejects(new ClientLink({ connect: unixConnector(path), client: 'test' }).start(), /protocol 2, this client 1/);
+  await assert.rejects(new ClientLink({ connect: unixConnector(path), client: 'test' }).start(), /protocol 3, this client 2/);
   const byePath = join(dir, 'bye.sock');
   const bye = await rawServer(byePath, socket => socket.once('data', () => socket.end('{"t":"bye","code":4000,"reason":"too old"}\n')));
   t.after(() => bye.close());

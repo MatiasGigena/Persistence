@@ -67,7 +67,7 @@ host only through `src/ui/types.ts`.
   and the browser alike. The server (`src/server/`), the attaching client (`src/client/`) and the web app
   (`src/web/`) are built on it ([plan](plans/server-and-web.md), ADRs 0016 to 0022).
 - **Server** (`src/server/`, ADR 0016): `pi-durable serve` runs the host without a terminal, under the same
-  flock (`serve.ts`, entered from `host.ts`). It opens the chat with the tools off, listens on the Unix socket
+  flock (`serve.ts`, entered from `host.ts`). It opens the chat with the tools on (ADR 0025), listens on the Unix socket
   (`transport-unix.ts`) and, when configured, the web listener (`transport-ws.ts`), then serves one
   `createUiSession()` through the hub. `hub.ts` fans the session out: one `Connection` per peer
   (`connection.ts`: handshake, ops, per-feed sync by `diffItems`, backpressure, keepalive), agent feeds opened
@@ -111,6 +111,8 @@ host only through `src/ui/types.ts`.
    is logged alone by the next request. Every log line has a `src` key, so a replay
    never logs it twice.
 5. Tool calls run as tool tasks. Coding tools are present unless the launch has `--no-tools` or `/tools off` was used.
+   They run in the guarded environment (`src/runtime/guard.ts`, ADR 0025): the chat's state and credentials are
+   hidden, system folders read-only, and bash runs in bubblewrap.
 6. The final answer is committed as a `pi.assistant` entry. The host's reply watcher
    subscribes to the root's view and prints each new `pi.assistant` and
    `agents.report` entry, including replies to agent reports that no prompt waited for.
@@ -230,7 +232,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/client/attach.ts` | `probes`, `connect` (the probe), `attachChat` (the CLI's attach routing), `runAttached` (the TUI on a server, "Detached; the server keeps working."), `serverAnswers` |
 | `src/client/remote-session.ts` | `RemoteSession`: a `UiSession` over a `ServerLink`; mirrors, status, notices, requests, `send` resent with its requestId after a reconnect, agent feeds re-opened; `attached` for `TuiInfo` |
 | `src/client/unix-link.ts` | `ClientLink` (hello and welcome, ping, `bye`, reconnect with backoff), `unixConnector` (NDJSON over the socket, owner checked), `checkSocket` |
-| `src/server/serve.ts` | `serve`: opens the chat with tools off, the socket, the web listener and push when configured, the session and the hub; resumes pending work; stops on the signal with `bye` 1012 |
+| `src/server/serve.ts` | `serve`: opens the chat with tools on (protected folders), the socket, the web listener and push when configured, the session and the hub; resumes pending work; stops on the signal with `bye` 1012 |
 | `src/server/hub.ts` | `Hub` (the `PeerHub`): connections, the op handlers, agent feeds by refcount, notices, the tools policy and idle tools-off, push triggers and their suppression |
 | `src/server/connection.ts` | `Connection`: one peer's handshake, requests (peer checks, in-flight limit), feed and status sync (`diffItems`, ≤50 ms, gated on `buffered()`, status ≤4/s), slow-peer and silence closes, visibility |
 | `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing; `lineSplitter` |

@@ -1,4 +1,5 @@
-// `pi-durable serve` (ADR 0016): the host without a terminal. It opens the chat with coding tools off, listens on
+// `pi-durable serve` (ADR 0016): the host without a terminal. It opens the chat with coding tools on (unless
+// --no-tools) and held to the protected folders (ADR 0025), listens on
 // the Unix socket (and, when configured, the web listener), serves one UiSession to every client through the hub,
 // and keeps the Harness, the compactor and the agents' deliveries running until a signal stops it.
 import { randomBytes } from 'node:crypto';
@@ -8,6 +9,7 @@ import type { Config } from '../host/config.ts';
 import { errorMessage, isRecord, statePaths, VERSION } from '../host/config.ts';
 import { CloseCode } from '../protocol/messages.ts';
 import { resumeInstance } from '../runtime/recovery.ts';
+import { protection, sandboxProblem } from '../runtime/guard.ts';
 import { openInstance } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { createUiSession } from '../ui/session.ts';
@@ -44,8 +46,8 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
   if (!settings) throw new Error('serve needs its settings');
   if (!config.socketPath) throw new Error(`The socket path for ${config.databasePath} is over 107 bytes and XDG_RUNTIME_DIR is unset; use a shorter --database path`);
   const paths = statePaths(config.databasePath);
-  // Coding tools are always off at the start (ADR 0019); a client turns them on, and they turn off when idle.
-  const instance = await openInstance({ ...config, allowTools: false, models,
+  // Coding tools are on unless --no-tools (ADR 0025), held to the protected folders like a local launch's.
+  const instance = await openInstance({ ...config, models, protection: protection(config),
     onReport: report => log(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   let unix: UnixListener | undefined, web: WebListener | undefined, session: UiSessionHandle | undefined, hub: Hub | undefined;
   const { error: consoleError, warn: consoleWarn } = console;
@@ -64,7 +66,8 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
     try { assets = await assetsHash(); } catch (error) { log(`web app files unreadable: ${errorMessage(error)}`); }
     hub = new Hub({
       server: VERSION, boot: randomBytes(9).toString('base64url'), assets, cwd: config.cwd,
-      tools: { remote: settings.remoteTools, idleMinutes: settings.toolsIdleMinutes }, pushPreview: settings.pushPreview,
+      tools: { remote: settings.remoteTools, ...settings.toolsIdleMinutes === undefined ? {} : { idleMinutes: settings.toolsIdleMinutes } },
+      pushPreview: settings.pushPreview,
       ...push ? { push, revoked: (name: string) => push.forgetDevice(name) } : {},
       ...devices ? { devices } : {},
       backup: out => backup(config, instance.exclusive, out === undefined ? {} : { out }),
@@ -81,14 +84,16 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
       } catch (error) { log(`web app off: ${errorMessage(error)}`); }
     }
     if (signal.aborted) return;
-    session = await createUiSession(instance, { model: config.model, thinkingLevel: config.thinkingLevel, allowTools: false,
+    session = await createUiSession(instance, { model: config.model, thinkingLevel: config.thinkingLevel, allowTools: config.allowTools,
       settingsPath: config.settingsPath, authFile: config.authFile });
     // Host warnings (memory, runtime) go to the journal and, as notices, to every client.
     const notify = session.notify.bind(session);
     console.error = (...args: unknown[]) => { consoleError(...args); notify(format(...args), 'warn'); };
     console.warn = (...args: unknown[]) => { consoleWarn(...args); notify(format(...args), 'warn'); };
     hub.start(session);
-    log(`ready: ${config.databasePath}, tools off, cwd ${config.cwd}`);
+    log(`ready: ${config.databasePath}, tools ${config.allowTools ? 'on (protected folders enforced)' : 'off'}, cwd ${config.cwd}`);
+    // Said now, to the journal and every client, rather than at Pi's first bash call.
+    void sandboxProblem(protection(config)).then(problem => { if (problem) console.warn(`Coding tools: bash is off. ${problem}`); });
     // Pending work resumes behind the session, so clients watch it rather than wait for it.
     void resume(instance, log, signal);
     await new Promise<void>(resolve => {

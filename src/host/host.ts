@@ -8,6 +8,7 @@ import { cleanupSessionResources } from '@earendil-works/pi-ai';
 import type { Message, Models } from '@earendil-works/pi-ai';
 import type { ConversationView } from '@earendil-works/pi-durable';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { protection, sandboxProblem } from '../runtime/guard.ts';
 import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { resumeInstance, settleAgents } from '../runtime/recovery.ts';
@@ -170,7 +171,11 @@ async function main(): Promise<void> {
   if (stopping) return;
   // The server owns its Instance, and closes it after its clients got `bye`.
   if (config.command === 'serve') return serve(config, { models, signal: shutdown.signal });
-  instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly,
+  if (config.allowTools && !config.inspectOnly) {
+    const problem = await sandboxProblem(protection(config));
+    if (problem) console.error(`Coding tools: bash is off. ${problem}`);
+  }
+  instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly, protection: protection(config),
     onReport: report => console.error(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   if (stopping) return;
   if (config.status) return printStatus();
@@ -194,7 +199,7 @@ async function main(): Promise<void> {
   }
   if (process.stdout.isTTY && !config.plain) return chatTui();
   console.log(`Pi · one chat that never ends · ${config.model.provider}/${config.model.modelId} (${SOURCE[config.modelSource]})\nDatabase: ${config.databasePath}\nMemory: ${config.memoryDir}`);
-  console.log(`Tools: ${config.allowTools ? 'ENABLED — full user permissions; no approval guards' : 'OFF (--no-tools was given; relaunch without it to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
+  console.log(`Tools: ${config.allowTools ? 'ENABLED — your user permissions, minus the protected folders (chat state, credentials hidden; system read-only)' : 'OFF (--no-tools was given; relaunch without it to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
   await printHistory(6);
   watcher = await watchReplies();
   reader = createInterface({ input: process.stdin, output: process.stdout });

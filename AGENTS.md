@@ -9,7 +9,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 
 - `src/cli.ts`: entry. Parses arguments, takes the flock, spawns the host.
 - `src/host/`: `host.ts` (terminal chat, /commands, reply watcher), `config.ts` (CLI options, paths).
-- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`).
+- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks.
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
@@ -40,8 +40,10 @@ A change is done when both pass and the docs below still match the code.
 - **Exactly-once delivery.** Agent messages and reports travel in `agents.deliver`
   tasks keyed by task ID, and memory appends are keyed by `src`. Keep every replay
   path idempotent.
-- **Tools on for local launches.** A local launch starts with coding tools on unless
-  `--no-tools` is passed; `serve` always starts with them off (ADR 0019). `/tools on|off`
+- **Tools on, held to protected folders.** A local launch and `serve` start with coding tools on unless
+  `--no-tools` is passed (ADR 0025). Every tool runs through `GuardedEnv` (`src/runtime/guard.ts`): the chat's
+  state and credentials hidden, system folders read-only, bash in bubblewrap; never hand the tools a bare
+  `NodeExecutionEnv` outside tests. `/tools on|off`
   switches them for the current launch only; never persist that choice. Launch config and the toggle share
   one tool list (`piTools`), and both reconfigure Pi and its agents.
 - **No unauthenticated listener.** The server listens on loopback TCP (behind `tailscale serve`, with login,

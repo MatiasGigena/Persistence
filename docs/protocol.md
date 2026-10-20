@@ -148,7 +148,7 @@ stops them; the checks hold only together. The VPS is assumed to have one user.
 
 | `t` | Fields | Meaning |
 |---|---|---|
-| `welcome` | `protocol`, `server` (version), `boot`, `assets`, `peer: 'socket' \| 'web'`, `cwd`, `tools: {remote: 'confirm' \| 'off', idleMinutes}`, `pushKey?`, `device?` | The answer to `hello`. `boot` changes at every server start; `assets` is a hash of the web app's files. `pushKey` is the VAPID public key (base64url), for web peers when push works. `device` is the web device's name. |
+| `welcome` | `protocol`, `server` (version), `boot`, `assets`, `peer: 'socket' \| 'web'`, `cwd`, `tools: {remote: 'confirm' \| 'off', idleMinutes?}`, `pushKey?`, `device?` | The answer to `hello`. `boot` changes at every server start; `assets` is a hash of the web app's files. `pushKey` is the VAPID public key (base64url), for web peers when push works. `device` is the web device's name. |
 | `ready` | — | The initial state is complete. |
 | `status` | `status: SessionStatus` | The whole status, each time it changed (compared as JSON). |
 | `snapshot` | `feed: string`, `items: ChatItem[]` | A feed's whole item list: replaces the client's mirror. |
@@ -218,8 +218,9 @@ server does not know it, and `unavailable` while the server shuts down. Each map
     otherwise `forbidden`, checked before the `confirm`. Socket peers always may.
   - Every change is broadcast as a `notice` (`warn` for on, `info` for off) naming who made it (the device, or
     "terminal"), and written to the server's log (the systemd journal).
-  - The server starts with tools off. After `welcome.tools.idleMinutes` minutes with no run (Pi and agents idle),
-    it turns them off and broadcasts a notice.
+  - The server starts with tools on unless `--no-tools` (ADR 0025), held to the protected folders. Only with
+    `PI_DURABLE_TOOLS_IDLE_MIN` set is `welcome.tools.idleMinutes` sent: after that many minutes with no run (Pi and
+    agents idle), the server turns them off and broadcasts a notice. Without it they stay on.
 - **`push.subscribe`** stores the browser's push subscription for this device, replacing one with the same
   endpoint; `endpoint` must be an `https:` URL. **`push.unsubscribe`** removes it; an unknown endpoint is not an
   error. The server pushes when Pi finishes a run or an agent reports while no client is visible.
@@ -356,7 +357,7 @@ Any other code, or a close without `bye`: reconnect.
 
 ```
 → {"t":"hello","protocol":1,"client":"pi-durable-tui 0.1.0","visible":true}
-← {"t":"welcome","protocol":1,"server":"0.1.0","boot":"k3j","assets":"9f2","peer":"socket","cwd":"/home/me/projects","tools":{"remote":"confirm","idleMinutes":30}}
+← {"t":"welcome","protocol":2,"server":"0.1.0","boot":"k3j","assets":"9f2","peer":"socket","cwd":"/home/me/projects","tools":{"remote":"confirm","idleMinutes":30}}
 ← {"t":"status","status":{"model":"claude-cli/sonnet","thinkingLevel":"high","toolsEnabled":false,"busy":false,"queued":0,"memory":{"messages":12,"unsummarized":0,"active":0,"failed":0,"viewBytes":2048,"viewLines":3},"agents":[]}}
 ← {"t":"snapshot","feed":"root","items":[{"kind":"user","id":"e40","text":"hi"},{"kind":"assistant","id":"e41","text":"Hello!","streaming":false}]}
 ← {"t":"ready"}

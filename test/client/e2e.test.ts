@@ -46,8 +46,8 @@ class FakeTerminal implements Terminal {
     }
     return rows;
   }
-  /** The footer row (the header above the chat says "tools off" too). */
-  footer(): string { return this.screen().findLast(row => row.includes('tools off')) ?? ''; }
+  /** The footer row (the header above the chat says "tools on" too; a server starts with them on). */
+  footer(): string { return this.screen().findLast(row => row.includes('tools on')) ?? ''; }
 }
 
 async function until(ok: () => boolean, what: () => string, ms = 20_000): Promise<void> {
@@ -82,7 +82,7 @@ test('attach to serve: send, see the reply stream in, survive a restart, detach,
   const stop = new AbortController();
   t.after(() => { stop.abort(); return Promise.resolve(); });
   const done = attachChat(config, { tty: { stdin: true, stdout: true }, terminal, env: {}, signal: stop.signal, print: line => printed.push(line) });
-  await until(() => terminal.text().includes('tools off'), () => terminal.text());
+  await until(() => terminal.text().includes('tools on'), () => terminal.text());
   terminal.type('How many boats?', '\r');
   await until(() => terminal.text().includes('all of them blue.'), () => terminal.text());
 

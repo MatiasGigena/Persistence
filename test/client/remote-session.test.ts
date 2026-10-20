@@ -219,10 +219,10 @@ test('bye 4000 closes for good with a notice; pending requests reject', async ()
   server.hold('models');
   const models = session.models();
   await until(() => server.queue.length === 1, 'the held request');
-  lastPeer(wire).close(CloseCode.version, 'protocol 2 only');
+  lastPeer(wire).close(CloseCode.version, 'protocol 3 only');
   await assert.rejects(models, { code: 'disconnected' });
   await until(() => session.attached.state() === 'closed', 'closed');
-  assert.match(notices.at(-1)?.[0] ?? '', /refused this client's protocol \(1\): protocol 2 only\. Update pi-durable/);
+  assert.match(notices.at(-1)?.[0] ?? '', /refused this client's protocol \(2\): protocol 3 only\. Update pi-durable/);
   await delay(30);
   assert.equal(wire.peers.length, 1, 'no reconnect');
   await assert.rejects(session.send('x'), { code: 'disconnected' });

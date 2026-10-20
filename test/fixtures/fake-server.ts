@@ -5,7 +5,7 @@
 //
 //   const server = new FakeServer({ items: [{ kind: 'user', id: 'u1', text: 'hi' }] });
 //   const peer = server.connect({ send: text => wire.push(text), end: () => wire.close() });
-//   peer.handle('{"t":"hello","protocol":1,"client":"test","visible":true}');  // welcome, status, snapshot, ready
+//   peer.handle('{"t":"hello","protocol":2,"client":"test","visible":true}');  // welcome, status, snapshot, ready
 //
 // The host's side is plain state that tests change: `setItems`, `setAgentItems`, `removeAgent`, `setStatus`,
 // `notice`. Every change goes to every ready peer at once, as `items` ops (diff.ts `diffItems`, or a snapshot)

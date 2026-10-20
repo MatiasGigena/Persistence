@@ -7,17 +7,17 @@ import { byId } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 
 /** The confirmation's text: what the tools can do, where, and when they turn off. */
-export function toolsQuestion(cwd: string, idleMinutes: number): string {
-  return `Pi and its agents get read, write, edit and bash with your user's full permissions on the server, working in ${cwd}.`
-    + ' They run without a sandbox or approval prompts.'
-    + ` They turn off after ${idleMinutes} minutes without work, and when the server restarts.`;
+export function toolsQuestion(cwd: string, idleMinutes: number | undefined): string {
+  return `Pi and its agents get read, write, edit and bash with your user's permissions on the server, working in ${cwd}.`
+    + ' The chat\'s own files and your credentials stay hidden from them, and system folders read-only; there are no approval prompts.'
+    + (idleMinutes === undefined ? '' : ` They turn off after ${idleMinutes} minutes without work.`);
 }
 
 /** Asks the user in the tools dialog; resolves true for "Turn on tools". */
 export function confirmTools(ctx: PanelContext): Promise<boolean> {
   const dialog = byId('tools-confirm', HTMLDialogElement);
   const welcome = ctx.store.welcome;
-  byId('tools-confirm-text', HTMLParagraphElement).textContent = toolsQuestion(welcome?.cwd ?? 'the server', welcome?.tools.idleMinutes ?? 30);
+  byId('tools-confirm-text', HTMLParagraphElement).textContent = toolsQuestion(welcome?.cwd ?? 'the server', welcome?.tools.idleMinutes);
   dialog.returnValue = '';
   dialog.showModal();
   return new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'enable'), { once: true }));
@@ -55,7 +55,8 @@ export function toolsView(ctx: PanelContext): View {
         state.textContent = on ? 'Tools are on' : 'Tools are off';
         state.classList.toggle('is-on', on);
         text.textContent = on
-          ? `Pi and its agents can read, write and edit files and run bash as you on the server. They turn off after ${policy?.idleMinutes ?? 30} minutes without work.`
+          ? 'Pi and its agents can read, write and edit files and run bash as you on the server; the chat\'s files and your credentials stay hidden from them.'
+            + (policy?.idleMinutes === undefined ? '' : ` They turn off after ${policy.idleMinutes} minutes without work.`)
           : remoteOff
             ? 'The server does not let the web turn tools on (PI_DURABLE_REMOTE_TOOLS=off). Use the terminal: /tools on.'
             : 'Turn them on to let Pi and its agents read, write and edit files and run bash on the server.';

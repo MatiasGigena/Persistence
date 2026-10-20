@@ -146,7 +146,10 @@ test('flock rejects a second host and a symlink alias; status needs no credentia
 test('subcommands: serve, serve pair, serve devices, backup, with options before or after them', () => {
   assert.equal(parseArgs([]).command, 'chat');
   assert.equal(parseArgs(['hello']).command, 'chat');
-  assert.deepEqual([parseArgs(['serve']).command, parseArgs(['serve']).allowTools], ['serve', false]);
+  assert.deepEqual([parseArgs(['serve']).command, parseArgs(['serve']).allowTools], ['serve', true], 'serve starts with tools on');
+  assert.equal(parseArgs(['serve', '--no-tools']).allowTools, false);
+  assert.equal(parseArgs(['serve', '--allow-tools']).allowTools, true);
+  assert.throws(() => parseArgs(['serve', '--allow-tools', '--no-tools']), /Choose either --allow-tools or --no-tools/);
   const serve = parseArgs(['--data-dir', '/d', 'serve', '--cwd', '/p', '--port', '8080', '--model', 'claude-cli/sonnet']);
   assert.deepEqual([serve.command, serve.dataDir, serve.cwd, serve.port, serve.model?.modelId], ['serve', '/d', '/p', 8080, 'sonnet']);
   assert.equal(parseArgs(['serve', 'pair']).command, 'serve-pair');
@@ -158,8 +161,7 @@ test('subcommands: serve, serve pair, serve devices, backup, with options before
   assert.equal(parseArgs(['serve', '--help']).help, true);
 });
 
-test('each subcommand refuses what does not apply to it; serve refuses --allow-tools', () => {
-  assert.throws(() => parseArgs(['serve', '--allow-tools']), /serve always starts with coding tools off/);
+test('each subcommand refuses what does not apply to it', () => {
   assert.throws(() => parseArgs(['serve', 'the', 'soup']), /Unknown serve argument: the \(to send a prompt starting with "serve", use -p\)/);
   for (const args of [['serve', '-p', 'x'], ['serve', '--plain'], ['serve', '--local'], ['serve', '--attach'], ['serve', '--status'],
     ['serve', '--revoke', 'x'], ['serve', '--out', '/b'], ['serve', '--request-id', 'r'], ['serve', 'pair', '--port', '1'],
@@ -187,7 +189,8 @@ test('--local and --attach: one or the other, and --attach takes no launch setti
 });
 
 test('serve settings from --port and the environment, each variable checked', () => {
-  assert.deepEqual(serveSettings({}, {}), { port: DEFAULT_PORT, allowLogins: [], remoteTools: 'confirm', toolsIdleMinutes: 30, pushPreview: false });
+  assert.deepEqual(serveSettings({}, {}), { port: DEFAULT_PORT, allowLogins: [], remoteTools: 'confirm', pushPreview: false }, 'no idle turn-off');
+  assert.equal(serveSettings({}, { PI_DURABLE_TOOLS_IDLE_MIN: 'off' }).toolsIdleMinutes, undefined);
   const env = { PI_DURABLE_ORIGIN: 'https://vps.tail1234.ts.net/', PI_DURABLE_ALLOW_LOGIN: ' me@github , you@example.com,',
     PI_DURABLE_PORT: '8443', PI_DURABLE_REMOTE_TOOLS: 'off', PI_DURABLE_TOOLS_IDLE_MIN: '5', PI_DURABLE_PUSH_PREVIEW: 'on' };
   assert.deepEqual(serveSettings({}, env), { port: 8443, origin: 'https://vps.tail1234.ts.net', allowLogins: ['me@github', 'you@example.com'],
@@ -222,7 +225,7 @@ test('resolved serve and admin configs survive the trip to the host; admin comma
   const config = await resolveOptions(parseArgs(['serve', '--data-dir', join(folder, 'state'), '--cwd', folder, '--port', '8000']),
     { PI_DURABLE_ORIGIN: 'https://vps.ts.net', PI_DURABLE_ALLOW_LOGIN: 'me@github' });
   assert.equal(config.command, 'serve');
-  assert.deepEqual(config.serve, { port: 8000, origin: 'https://vps.ts.net', allowLogins: ['me@github'], remoteTools: 'confirm', toolsIdleMinutes: 30, pushPreview: false });
+  assert.deepEqual(config.serve, { port: 8000, origin: 'https://vps.ts.net', allowLogins: ['me@github'], remoteTools: 'confirm', pushPreview: false });
   assert.equal(config.socketPath, join(folder, 'state', 'chat.sqlite.sock'));
   assert.equal(config.serveDir, join(folder, 'state', 'serve'));
   assert.deepEqual(parseConfig(JSON.stringify(config)), JSON.parse(JSON.stringify(config)));
@@ -237,7 +240,7 @@ test('resolved serve and admin configs survive the trip to the host; admin comma
   }
 });
 
-test('the admin commands need a running server or a saved chat; serve refuses --allow-tools', async t => {
+test('the admin commands need a running server or a saved chat', async t => {
   const folder = await mkdtemp(join(tmpdir(), 'pi-durable-admin-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   const env = { ...process.env, PI_DURABLE_DATA_DIR: join(folder, 'state') };
@@ -245,5 +248,4 @@ test('the admin commands need a running server or a saved chat; serve refuses --
     await assert.rejects(exec(launcher, args, { env }), { code: 1, stderr: /No server is running for this chat/ }, args.join(' '));
   }
   await assert.rejects(exec(launcher, ['backup'], { env }), { code: 1, stderr: /No saved chat to back up/ });
-  await assert.rejects(exec(launcher, ['serve', '--allow-tools'], { env }), { code: 1, stderr: /serve always starts with coding tools off/ });
 });

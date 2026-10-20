@@ -5,6 +5,9 @@ How to install, run, back up, move, and remove a Persistence host.
 ## Requirements
 
 - Linux, Bash, and `flock` (usually from util-linux).
+- bubblewrap (`sudo apt install bubblewrap`), for the coding tools' bash: every command runs in it, so protected
+  folders stay protected. Without it bash is off (read, write and edit still work). It needs unprivileged user
+  namespaces, the default on Debian and Ubuntu.
 - Node.js 22.19 or newer. The launcher uses `PI_DURABLE_NODE` if set, else `node`
   on PATH. If that `node` is older than 22.19, it falls back to Pi's private Node at
   `~/.local/share/pi-node/current/bin/node` when present.
@@ -139,6 +142,26 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
 - Before any work launch, the host checks that the model exists and that credentials
   for its provider are available, with a 15 s timeout. `--status` and `--history`
   need no credentials.
+
+## Protected folders
+
+Coding tools are on by default, for Pi and every agent, local or `serve` (ADR 0025). They act as your user, except:
+
+| Kind | Paths | The tools |
+|---|---|---|
+| The chat's state | the data directory; the database, its WAL, lock and socket; `chat.unii/`; `settings.json`; `serve/`; `backups/` | cannot read or change |
+| Credentials | Pi's `auth.json`, `~/.ssh`, `~/.gnupg`, `~/.claude`, `~/.claude.json`, `~/.config/gh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc` | cannot read or change |
+| System | `/etc`, `/usr`, `/boot`, `/opt`, `/bin`, `/sbin`, `/lib*`, `/srv`, `/var/lib` | can read, not change |
+
+read, write and edit refuse such a path with "… is protected"; inside bash, a hidden folder is empty and a hidden
+file unreadable, and a system folder is a read-only file system. The model is told about them.
+
+- `PI_DURABLE_UNPROTECT=~/.ssh:~/.config/gh` gives paths back, for example so Pi can `git push` with your keys.
+- `PI_DURABLE_PROTECT=~/secrets:/srv/keys` hides more.
+
+Both take `:`-separated paths, `~` for the home directory; set them in the service's environment file or the
+shell, then restart. If bubblewrap is missing or cannot run, the host says so at start ("Coding tools: bash is off")
+and bash answers the same way.
 
 ## State locations
 
@@ -279,7 +302,9 @@ PI_DURABLE_ORIGIN=https://vps.example-tailnet.ts.net
 PI_DURABLE_ALLOW_LOGIN=me@github
 # PI_DURABLE_PORT=7433             # the loopback port tailscale serve proxies to
 # PI_DURABLE_REMOTE_TOOLS=confirm  # off: only a terminal on the VPS may turn coding tools on
-# PI_DURABLE_TOOLS_IDLE_MIN=30     # coding tools turn off after this many minutes without a run
+# PI_DURABLE_TOOLS_IDLE_MIN=off    # minutes without a run before coding tools turn off; off (default): never
+# PI_DURABLE_UNPROTECT=~/.ssh      # let the tools use these protected paths (':'-separated)
+# PI_DURABLE_PROTECT=~/secrets     # hide more paths from the tools (':'-separated)
 # PI_DURABLE_PUSH_PREVIEW=off      # on: notifications show the reply's first words
 # PI_DURABLE_DATA_DIR=/home/me/.local/state/pi-durable
 ```
@@ -289,10 +314,11 @@ A malformed value stops the server at start with a message naming the variable (
 
 ### What it does
 
-- It always starts with the coding tools off; `serve` refuses `--allow-tools`. A client turns them on, after a
-  confirmation: the terminal UI's `/tools on`, or the web app unless `PI_DURABLE_REMOTE_TOOLS=off`. They turn off
-  by themselves after `PI_DURABLE_TOOLS_IDLE_MIN` minutes in which neither Pi nor an agent ran. Every change is
-  shown to every client and written to the journal, naming who made it (ADR 0019).
+- It starts with the coding tools on, unless `--no-tools`, held to the protected folders (see
+  [Protected folders](#protected-folders), ADR 0025). A client switches them: the terminal UI's `/tools`, or the
+  web app (turning them on asks first; refused to the web with `PI_DURABLE_REMOTE_TOOLS=off`). They stay on until
+  turned off, unless `PI_DURABLE_TOOLS_IDLE_MIN` is set. Every change is shown to every client and written to the
+  journal, naming who made it (ADR 0019).
 - It listens on the socket `<data dir>/chat.sqlite.sock` (mode 600) as soon as the chat is open, and on
   `127.0.0.1:7433` when the web app is configured; never on another address. It resumes interrupted work behind
   the scenes, so clients can watch it.
@@ -432,6 +458,9 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 |---|---|
 | Exit status 75, "already open in another pi-durable process" | Another host holds the lock on this database (perhaps in tmux, or through a symlink alias). Close it first. |
 | `pi-durable requires flock` | Install util-linux. |
+| "Coding tools: bash is off. bwrap is not installed" | `sudo apt install bubblewrap`, then restart. |
+| "bash is off: bubblewrap cannot run here: … Operation not permitted" | Unprivileged user namespaces are off (`sysctl kernel.unprivileged_userns_clone`, or AppArmor's `kernel.apparmor_restrict_unprivileged_userns` on Ubuntu 24.04). Allow them for bwrap, or run without bash. |
+| A tool says "… is protected" | The path is a [protected folder](#protected-folders). Set `PI_DURABLE_UNPROTECT` if the tools should use it. |
 | `No credentials for PROVIDER` | Run `npm exec -- pi` in the install dir, then `/login`; or set the provider's API-key variable; or pass `--auth-file`. The message names the auth file it read. |
 | `No Claude Code login for claude-cli` | Run `claude auth login` (or `claude`, then `/login`). More `claude-cli` symptoms are in [models.md](models.md#troubleshooting). |
 | `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key in `ANTHROPIC_API_KEY` after removing any stored Pi `anthropic` login. |

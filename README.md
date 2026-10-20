@@ -132,10 +132,13 @@ after `-p`, run `pi-durable --resume` to let them finish. Details: [docs/agents.
 
 ## Safety
 
-Coding tools (read, write, edit, bash) are on for every local launch unless you pass
+Coding tools (read, write, edit, bash) are on for every launch, local or `pi-durable serve`, unless you pass
 `--no-tools`; `/tools off` and `/tools on` switch them in the chat, for this launch only.
-A server (`pi-durable serve`) still starts with them off. When on, they act with your user permissions. There is no sandbox
-and no per-command approval. A tool call saved by an earlier launch cannot restore
+When on, they act with your user permissions, except in protected folders: the chat's own state and your
+credentials (`~/.ssh`, `~/.claude`, `~/.config/gh`, `~/.aws`, …) are hidden from them, and system folders (`/etc`,
+`/usr`, …) are read-only. bash runs in bubblewrap to enforce this, so install it (`sudo apt install bubblewrap`);
+without it bash is off. `PI_DURABLE_UNPROTECT=~/.ssh` gives a path back, `PI_DURABLE_PROTECT` hides more
+([ADR 0025](docs/decisions/0025-protected-folders.md)). There is no per-command approval. A tool call saved by an earlier launch cannot restore
 permission on a later launch without the flag. The host does not load ordinary Pi
 extensions, guards, skills, MCP servers, or project instruction files.
 

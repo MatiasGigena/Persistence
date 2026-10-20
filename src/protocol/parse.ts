@@ -148,7 +148,8 @@ export function itemOp(x: unknown): ItemOp {
 
 function toolsPolicy(x: unknown): ToolsPolicy {
   const o = obj(x, 'tools');
-  return { remote: oneOf(o, 'remote', ['confirm', 'off']), idleMinutes: int(o, 'idleMinutes', 1) };
+  const remote = oneOf(o, 'remote', ['confirm', 'off']);
+  return o.idleMinutes === undefined ? { remote } : { remote, idleMinutes: int(o, 'idleMinutes', 1) };
 }
 
 // ------------------------------------------------------------------------------------------------ requests

@@ -27,7 +27,8 @@ Access, all of these together:
 
 Tools:
 
-- `serve` always starts with coding tools off, and refuses `--allow-tools`.
+- `serve` always starts with coding tools off, and refuses `--allow-tools`. (Superseded by [0025](0025-protected-folders.md):
+  it starts with them on, without the idle switch-off, held to protected folders.)
 - A client may turn them on with `tools.set` and `confirm: 'enable-tools'`, sent only after its user confirmed.
   `PI_DURABLE_REMOTE_TOOLS=off` (default `confirm`) keeps web clients from turning them on; terminal clients on the
   socket always may.

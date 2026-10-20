@@ -39,4 +39,5 @@ launch, for Pi and for every agent. Memory and agent tools touch only the chat.
 - Local launches now start with the coding tools **on**; `--no-tools` turns them off for that launch, and
   `--allow-tools` is kept as a no-op for scripts (giving both is an error). The choice is still never saved.
 - `serve` and the admin commands are unchanged: the server starts with the tools off and refuses `--allow-tools`
-  (ADR 0019); remote confirmation and the idle switch-off still apply.
+  (ADR 0019); remote confirmation and the idle switch-off still apply. (Amended by [0025](0025-protected-folders.md):
+  the server starts with them on too, and protected folders apply to every launch.)

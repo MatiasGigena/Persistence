@@ -76,8 +76,8 @@ export type Peer = 'socket' | 'web';
 export interface ToolsPolicy {
   /** `confirm`: web peers may enable the tools with `confirm: 'enable-tools'`; `off`: only socket peers may. */
   readonly remote: 'confirm' | 'off';
-  /** The server turns the tools off after this many minutes without a run. */
-  readonly idleMinutes: number;
+  /** The server turns the tools off after this many minutes without a run; absent: never (the default). */
+  readonly idleMinutes?: number;
 }
 
 /** A browser's push subscription, as `PushSubscription.toJSON()` gives it. */

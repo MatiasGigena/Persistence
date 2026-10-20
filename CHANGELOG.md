@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Coding tools are on by default for `pi-durable serve` too, and no longer turn off after 30 idle minutes
+  (`PI_DURABLE_TOOLS_IDLE_MIN=N` brings that back). Instead, for every launch, protected folders: the chat's own
+  state and your credentials (`~/.ssh`, `~/.claude`, `~/.config/gh`, `~/.aws`, …) are hidden from the tools, and
+  system folders are read-only. read/write/edit check the real path; bash runs in bubblewrap, which is now
+  required for bash (`sudo apt install bubblewrap`). `PI_DURABLE_PROTECT` / `PI_DURABLE_UNPROTECT` adjust the list.
+  ADR 0025. Protocol 2: `welcome.tools.idleMinutes` is optional; older web pages reload, an older attached TUI asks
+  for an update.
+
 - The existing right-hand web menu uses a rounded monochrome glass panel with a
   labelled header, close button and viewport-bounded scrolling; all actions stay the same.
 

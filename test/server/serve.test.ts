@@ -63,7 +63,7 @@ test('serve end to end: a socket client sends, watches the reply stream in, and 
   assert.deepEqual(welcome?.t === 'welcome' && { peer: welcome.peer, cwd: welcome.cwd, tools: welcome.tools },
     { peer: 'socket', cwd: folder, tools: { remote: 'confirm', idleMinutes: 5 } });
   const status = got.find(m => m.t === 'status');
-  assert.equal(status?.t === 'status' && status.status.toolsEnabled, false, 'a server starts with tools off');
+  assert.equal(status?.t === 'status' && status.status.toolsEnabled, true, 'a server starts with tools on');
 
   send({ t: 'req', id: 1, op: 'send', params: { text: 'How many boats?', requestId: 'serve-test-1' } });
   const answer = 'There are three boats in the harbour, all of them blue.';

@@ -60,7 +60,7 @@ test('hello gets welcome, status, the root snapshot and ready, in order', t => {
   link.hello(true);
   assert.deepEqual(types(link), ['welcome', 'status', 'snapshot', 'ready']);
   const [welcome, status, snapshot] = link.got;
-  assert.deepEqual(welcome, { t: 'welcome', protocol: 1, server: '0.1.0', boot: 'boot1', assets: 'a1', peer: 'web', cwd: '/work',
+  assert.deepEqual(welcome, { t: 'welcome', protocol: 2, server: '0.1.0', boot: 'boot1', assets: 'a1', peer: 'web', cwd: '/work',
     tools: { remote: 'confirm', idleMinutes: 30 }, device: 'phone' });
   assert.equal(status?.t === 'status' && status.status.model, 'faux/faux-1');
   assert.deepEqual(snapshot, { t: 'snapshot', feed: 'root', items: session.root.list });
@@ -322,6 +322,16 @@ test('tools policy: confirm needed, web refused when off, every change noticed a
   assert.deepEqual(await request(web, 'tools.set', { enabled: false }), { t: 'res', id: 4, op: 'tools.set', ok: true, result: null });
   assert.ok(socket.got.some(m => m.t === 'notice' && m.text === 'Coding tools off, by phone.' && m.level === 'info'));
   assert.deepEqual(logged, ['coding tools on, by socket (socket)', 'coding tools off, by me@example.com/phone (web)']);
+});
+
+test('without idleMinutes (the default) the tools stay on however long nothing runs', async t => {
+  const { hub, session, logged, wait, connect, request } = setup(t, { tools: { remote: 'confirm' } });
+  hub.start(session);
+  const web = connect('web');
+  await request(web, 'tools.set', { enabled: true, confirm: 'enable-tools' });
+  await wait(6 * 60 * 60_000, web);
+  assert.equal(session.status().toolsEnabled, true);
+  assert.ok(!logged.some(line => line.includes('idle')));
 });
 
 test('tools turn themselves off after idleMinutes without a run', async t => {

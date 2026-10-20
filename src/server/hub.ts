@@ -1,5 +1,5 @@
 // The hub (ADR 0016): fans one UiSession out to every connected peer. It holds the connections, opens agent feeds
-// once however many peers watch them, serves the ops, applies the remote tools policy (ADR 0019), and tells the
+// once however many peers watch them, serves the ops, applies the remote tools policy (ADRs 0019, 0025), and tells the
 // push notifier when Pi finishes or an agent reports while no one is looking.
 import { CloseCode, ENABLE_TOOLS, ErrorCode, ROOT_FEED } from '../protocol/messages.ts';
 import type { ChatItem, Device, NoticeLevel, SessionStatus, ToolsPolicy, Welcome } from '../protocol/messages.ts';
@@ -249,17 +249,18 @@ export class Hub implements PeerHub {
     const status = this.current;
     clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
-    if (!status?.toolsEnabled || this.stopping) { this.idleSince = undefined; return; }
+    const minutes = this.options.tools.idleMinutes;
+    if (minutes === undefined || !status?.toolsEnabled || this.stopping) { this.idleSince = undefined; return; }
     if (running(status)) { this.idleSince = undefined; return; }
     this.idleSince ??= Date.now();
-    const wait = this.idleSince + this.options.tools.idleMinutes * 60_000 - Date.now();
+    const wait = this.idleSince + minutes * 60_000 - Date.now();
     this.idleTimer = setTimeout(() => void this.idleOff(), Math.max(0, wait));
   }
 
   private async idleOff(): Promise<void> {
     const session = this.session, status = this.current;
     if (!session || !status?.toolsEnabled || running(status) || this.stopping) return;
-    const minutes = this.options.tools.idleMinutes;
+    const minutes = this.options.tools.idleMinutes ?? 0;
     try {
       await session.setTools(false);
     } catch (error) {

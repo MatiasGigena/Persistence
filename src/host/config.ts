@@ -60,11 +60,14 @@ Chat commands: /help, /model, /effort, /tools, /agents, /mem, /status, /exit (--
 /help, /history, /agents, /status, /exit). Ctrl+D or /exit closes the host, and
 so does Ctrl+C (twice in the terminal UI); unfinished work resumes next launch.
 Attached, they detach and the server keeps working.
-Tools are ON for a local launch unless --no-tools is supplied; /tools turns them
-on or off until the host exits, never for later launches. A server always starts
-with them off; a client may turn them on after a confirmation, and they turn
-off again after PI_DURABLE_TOOLS_IDLE_MIN idle minutes.
-No approval guards. Without serve: no daemon and no listener. A server listens
+Tools are ON, for a local launch and for serve, unless --no-tools is supplied;
+/tools turns them on or off until the host exits, never for later launches.
+Protected folders: the chat's own state and your credentials (~/.ssh, ~/.claude,
+~/.config/gh, ~/.aws, ...) are hidden from the tools, and system folders (/etc,
+/usr, ...) are read-only; bash runs in bubblewrap (apt install bubblewrap) to
+enforce it. PI_DURABLE_PROTECT adds hidden paths, PI_DURABLE_UNPROTECT removes
+defaults (each ':'-separated, ~ allowed). No approval prompts.
+Without serve: no daemon and no listener. A server listens
 only on a 0600 Unix socket beside the chat and on loopback TCP (for tailscale
 serve), never on a public address.
 
@@ -75,7 +78,7 @@ Server environment:
   PI_DURABLE_PORT            Default for --port
   PI_DURABLE_REMOTE_TOOLS    confirm (default): the web may turn tools on after a
                              confirmation; off: only terminal clients may
-  PI_DURABLE_TOOLS_IDLE_MIN  Idle minutes before tools turn off (default 30)
+  PI_DURABLE_TOOLS_IDLE_MIN  Idle minutes before tools turn off (default off: never)
   PI_DURABLE_PUSH_PREVIEW    on: push notifications show the reply's first words;
                              off (default): only that Pi or an agent finished
 `;
@@ -105,7 +108,7 @@ const LOCATION: readonly Key[] = ['help', 'version', 'database', 'dataDir'];
 const ALLOWED: Readonly<Record<Command, ReadonlySet<Key>>> = {
   chat: new Set<Key>([...LOCATION, 'allowTools', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'cwd',
     'modelSpec', 'thinkingLevel', 'authFile', 'requestId', 'prompt']),
-  serve: new Set<Key>([...LOCATION, 'cwd', 'portSpec', 'modelSpec', 'thinkingLevel', 'authFile']),
+  serve: new Set<Key>([...LOCATION, 'cwd', 'portSpec', 'modelSpec', 'thinkingLevel', 'authFile', 'allowTools', 'noTools']),
   'serve-pair': new Set<Key>(LOCATION),
   'serve-devices': new Set<Key>([...LOCATION, 'revoke']),
   backup: new Set<Key>([...LOCATION, 'out']),
@@ -175,8 +178,8 @@ export interface ServeSettings {
   readonly allowLogins: readonly string[];
   /** PI_DURABLE_REMOTE_TOOLS. */
   readonly remoteTools: 'confirm' | 'off';
-  /** PI_DURABLE_TOOLS_IDLE_MIN: the tools turn off after this many minutes without a run. */
-  readonly toolsIdleMinutes: number;
+  /** PI_DURABLE_TOOLS_IDLE_MIN: the tools turn off after this many minutes without a run; undefined: never (the default). */
+  readonly toolsIdleMinutes?: number;
   /** PI_DURABLE_PUSH_PREVIEW: push notifications carry the reply's first words. */
   readonly pushPreview: boolean;
 }
@@ -278,11 +281,10 @@ export function parseArgs(args: readonly string[]): Options {
     if (prompts.length) {
       throw new Error(`Unknown ${name} argument: ${prompts[0] ?? ''}${chosen === 'serve' ? ' (to send a prompt starting with "serve", use -p)' : ''}`);
     }
-    if (chosen === 'serve' && given.has('allowTools')) {
-      throw new Error('serve always starts with coding tools off; a client turns them on with /tools on, after a confirmation');
-    }
     for (const [key, spelling] of given) if (!ALLOWED[chosen].has(key)) throw new Error(`${spelling} does not apply to ${name}`);
-    options.allowTools = false;
+    if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
+    // serve starts with coding tools on unless --no-tools (ADR 0025); backup never runs them.
+    options.allowTools = chosen === 'serve' && !options.noTools;
   } else {
     if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
     options.allowTools = !options.noTools;
@@ -400,12 +402,14 @@ export function serveSettings(options: Pick<Options, 'port'>, env: NodeJS.Proces
   }
   const remoteTools = env.PI_DURABLE_REMOTE_TOOLS || 'confirm';
   if (remoteTools !== 'confirm' && remoteTools !== 'off') throw new Error('PI_DURABLE_REMOTE_TOOLS must be confirm or off');
-  const idle = env.PI_DURABLE_TOOLS_IDLE_MIN || '30';
-  const toolsIdleMinutes = /^\d{1,4}$/.test(idle) ? Number(idle) : NaN;
-  if (!(toolsIdleMinutes >= 1 && toolsIdleMinutes <= 1440)) throw new Error('PI_DURABLE_TOOLS_IDLE_MIN must be minutes from 1 to 1440');
+  const idle = env.PI_DURABLE_TOOLS_IDLE_MIN || 'off';
+  const toolsIdleMinutes = idle === 'off' ? undefined : /^\d{1,4}$/.test(idle) ? Number(idle) : NaN;
+  if (toolsIdleMinutes !== undefined && !(toolsIdleMinutes >= 1 && toolsIdleMinutes <= 1440)) {
+    throw new Error('PI_DURABLE_TOOLS_IDLE_MIN must be off or minutes from 1 to 1440');
+  }
   const preview = env.PI_DURABLE_PUSH_PREVIEW || 'off';
   if (preview !== 'on' && preview !== 'off') throw new Error('PI_DURABLE_PUSH_PREVIEW must be on or off');
-  const settings: ServeSettings = { port, allowLogins, remoteTools, toolsIdleMinutes, pushPreview: preview === 'on' };
+  const settings: ServeSettings = { port, allowLogins, remoteTools, ...toolsIdleMinutes === undefined ? {} : { toolsIdleMinutes }, pushPreview: preview === 'on' };
   return env.PI_DURABLE_ORIGIN ? { ...settings, origin: parseOrigin(env.PI_DURABLE_ORIGIN) } : settings;
 }
 
@@ -453,7 +457,7 @@ function isServeSettings(x: unknown): x is ServeSettings {
   return isRecord(x) && isPort(x.port) && (x.origin === undefined || typeof x.origin === 'string')
     && Array.isArray(x.allowLogins) && x.allowLogins.every(login => typeof login === 'string')
     && (x.remoteTools === 'confirm' || x.remoteTools === 'off')
-    && typeof x.toolsIdleMinutes === 'number' && Number.isInteger(x.toolsIdleMinutes) && x.toolsIdleMinutes >= 1
+    && (x.toolsIdleMinutes === undefined || (typeof x.toolsIdleMinutes === 'number' && Number.isInteger(x.toolsIdleMinutes) && x.toolsIdleMinutes >= 1))
     && typeof x.pushPreview === 'boolean';
 }
 export const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);

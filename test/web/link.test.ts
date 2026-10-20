@@ -21,7 +21,7 @@ class FakeSocket {
   serve(msg: object): void { this.events.message(JSON.stringify(msg)); }
   /** The server's side of a handshake. */
   handshake(): void {
-    this.serve({ t: 'welcome', protocol: 1, server: '0.1.0', boot: 'b1', assets: 'a1', peer: 'web', cwd: '/w', tools: { remote: 'confirm', idleMinutes: 30 } });
+    this.serve({ t: 'welcome', protocol: 2, server: '0.1.0', boot: 'b1', assets: 'a1', peer: 'web', cwd: '/w', tools: { remote: 'confirm', idleMinutes: 30 } });
     this.serve({ t: 'ready' });
   }
   last(): Record<string, unknown> | undefined { return this.sent.at(-1); }
@@ -57,7 +57,7 @@ test('hello, ready, requests and their answers', async t => {
   link.start();
   await flush();
   socket().events.open();
-  assert.deepEqual(socket().sent[0], { t: 'hello', protocol: 1, client: 'web test', visible: true });
+  assert.deepEqual(socket().sent[0], { t: 'hello', protocol: 2, client: 'web test', visible: true });
   await assert.rejects(link.request('models', {}), RequestError, 'no requests before ready');
   socket().handshake();
   assert.equal(link.state, 'ready');
