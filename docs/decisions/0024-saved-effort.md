@@ -1,4 +1,4 @@
-# 0023. Reasoning effort is chosen in session and saved like the model
+# 0024. Reasoning effort is chosen in session and saved like the model
 
 ## Status
 

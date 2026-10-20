@@ -22,7 +22,7 @@ working, and inspection launches must create nothing.
 - A launch takes `--model`, else `PI_DURABLE_MODEL`, else `settings.json`, else `openai-codex/gpt-6.1-sol`;
   `src/host/config.ts` resolves it and reports the source.
 - Coding tools are not saved ([ADR 0009](0009-tools-opt-in.md)). The thinking level was not either, until
-  [ADR 0023](0023-saved-effort.md).
+  [ADR 0024](0024-saved-effort.md).
 
 ## Consequences
 

@@ -302,6 +302,14 @@ There is no session resumption: every connection starts from `hello` and gets th
 - After a close other than 1000, 4000 and 4001, or a dead link, the client reconnects with backoff: 0.5 s, doubling
   to 10 s, ±20% jitter (the attached TUI, whose server is on the same machine: 0.25 s doubling to 5 s). While it
   does, a client shows its last state and says it is reconnecting (the attached TUI's footer: `reconnecting…`).
+- A phone that sleeps freezes the page, and the socket open at the time is usually dead on waking, with no close.
+  So a client gives up on an attempt (the web app's `/api/me` gate, or a socket that neither opens nor closes)
+  after `LIMITS.connectMs` (10 s). When the app comes back to the front or the browser comes online, the web app
+  pings at once and drops the link if nothing answers within `LIMITS.wakeMs` (5 s); if it was already
+  reconnecting, it starts a fresh attempt at once, with the backoff reset, abandoning one that hangs. Its banner
+  says "Reconnecting…" only after 2 s, so the usual reconnect on waking is not shown.
+- The server's work never depends on a client: Pi and agents keep running while every client is away (a turn
+  started from a phone that then sleeps finishes, and its answer is there on the next connection).
 - Requests pending when the link dropped reject on the client with "connection lost", except a `send` with a
   `requestId`, which a client may keep and resend on the next connection (the attached TUI does). Request ids
   may start over on the new connection.

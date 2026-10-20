@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Web app: after the phone slept, it could stay on "Reconnecting…" for good: an attempt started around the sleep
+  (the `/api/me` check or the WebSocket) could hang without failing, and coming back to the app did nothing while
+  one was in flight. Attempts now give up after 10 s; coming back to the front pings a link that looks open
+  (dropping it within 5 s if dead) or starts a fresh attempt at once, and the banner waits 2 s before showing.
 - `claude-cli`: Opus's thinking streams as a summary (`--thinking-display summarized`); before, it arrived empty,
   so a long think left the chat silent for minutes.
 - `claude-cli`: a request whose CLI prints nothing for 10 minutes fails as timed out, and the Harness retries it,
@@ -31,7 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `/effort` picks the reasoning effort (thinking level) for Pi and its agents from the levels the current model
   takes; `/effort LEVEL` sets it directly. It is saved in `settings.json` with the model, and `--thinking`
-  overrides it (ADR 0023). `claude-cli` models now list `xhigh` and `max`. Protocol ops `thinking.levels` and
+  overrides it (ADR 0024). `claude-cli` models now list `xhigh` and `max`. Protocol ops `thinking.levels` and
   `thinking.set`.
 - The terminal UI footer shows the running tool call next to the spinner while Pi works (for example
   `⠋ working · bash npm test`), so a long turn is never silent. It is cut to 60 columns, or 24 on a phone.

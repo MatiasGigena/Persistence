@@ -26,7 +26,8 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0020](0020-web-client-without-build.md) | A web client without a build step (server half accepted, web app proposed) |
 | [0021](0021-web-push-on-node-crypto.md) | Web Push on node:crypto |
 | [0022](0022-online-backups.md) | Online backups |
-| [0023](0023-saved-effort.md) | Reasoning effort is chosen in session and saved like the model |
+| [0023](0023-pi-cloud-web-style.md) | Match the Pi Cloud web style |
+| [0024](0024-saved-effort.md) | Reasoning effort is chosen in session and saved like the model |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".

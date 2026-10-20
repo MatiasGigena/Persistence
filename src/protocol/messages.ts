@@ -25,6 +25,10 @@ export const LIMITS = {
   helloMs: 10_000,
   /** Clients ping this often while open; a client that gets no message for 2 × this reconnects. */
   pingMs: 25_000,
+  /** A client gives up on a connection attempt (its gate, or a socket that neither opens nor closes) after this. */
+  connectMs: 10_000,
+  /** Back in front (a phone woken up), a client pings at once and drops a link that does not answer within this. */
+  wakeMs: 5_000,
 } as const;
 
 /** Error codes of a failed `res`. A client treats a code it does not know as `failed`. */

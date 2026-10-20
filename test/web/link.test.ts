@@ -195,3 +195,72 @@ test('events from an abandoned socket are ignored', async t => {
   assert.equal(sockets.length, 2);
   link.stop();
 });
+
+// A phone that sleeps freezes the page: sockets and fetches started around the sleep can hang without ever opening,
+// closing or failing, and the socket that was open is usually dead on waking.
+
+test('an attempt that never opens is abandoned after connectMs, and the link retries', async t => {
+  const { link, sockets, states } = harness(t);
+  link.start();
+  await flush();
+  assert.equal(sockets.length, 1);
+  t.mock.timers.tick(LIMITS.connectMs - 1);
+  assert.equal(link.state, 'connecting', 'still waiting');
+  t.mock.timers.tick(1);
+  assert.equal(sockets[0]?.closed, CloseCode.normal);
+  assert.deepEqual(states, ['reconnecting']);
+  t.mock.timers.tick(500);
+  await flush();
+  assert.equal(sockets.length, 2);
+  link.stop();
+});
+
+test('a gate that never answers counts as offline after connectMs', async t => {
+  const { link, sockets } = harness(t, () => new Promise(() => undefined));
+  link.start();
+  await flush();
+  t.mock.timers.tick(LIMITS.connectMs);
+  await flush();
+  assert.equal(link.state, 'offline');
+  assert.equal(sockets.length, 0);
+  link.stop();
+});
+
+test('poke while an attempt hangs starts a fresh one at once, with the backoff reset', async t => {
+  const { link, sockets } = harness(t);
+  link.start();
+  await flush();
+  for (let i = 0; i < 3; i++) {
+    sockets.at(-1)?.events.close(1006);
+    t.mock.timers.tick(10_000);
+    await flush();
+  }
+  const hung = sockets.at(-1);
+  assert.equal(sockets.length, 4);
+  link.poke(); // the app came back to the front
+  await flush();
+  assert.equal(hung?.closed, CloseCode.normal, 'the hung attempt is closed');
+  assert.equal(sockets.length, 5);
+  sockets.at(-1)?.events.open();
+  sockets.at(-1)?.handshake();
+  assert.equal(link.state, 'ready');
+  link.stop();
+});
+
+test('poke while ready checks the link: a dead socket is dropped within wakeMs, a live one stays', async t => {
+  const { link, socket, sockets } = harness(t);
+  link.start();
+  await flush();
+  socket().events.open();
+  socket().handshake();
+  link.poke();
+  assert.deepEqual(socket().last(), { t: 'ping', n: 0 });
+  socket().serve({ t: 'pong', n: 0 });
+  t.mock.timers.tick(LIMITS.wakeMs);
+  assert.equal(link.state, 'ready', 'it answered');
+  link.poke();
+  t.mock.timers.tick(LIMITS.wakeMs);
+  assert.equal(link.state, 'reconnecting', 'no answer: dead');
+  assert.equal(sockets[0]?.closed, CloseCode.normal);
+  link.stop();
+});

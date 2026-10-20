@@ -21,6 +21,8 @@ const CLIENT = 'web';
 const DRAFT_KEY = 'pd.draft';
 /** sessionStorage: the value a reload was last made for, so a reload happens once per new value. */
 const RELOAD_KEY = 'pd.reloaded';
+/** How long the link may be reconnecting before the banner says so. */
+const RECONNECT_BANNER_MS = 2_000;
 
 // ------------------------------------------------------------------------------------------------ storage
 
@@ -283,7 +285,10 @@ function start(): void {
 
   // -------------------------------------------------------------- link
 
+  // A phone that wakes up reconnects in about a second: the banner waits RECONNECT_BANNER_MS, so that is not shown.
+  let bannerTimer: ReturnType<typeof setTimeout> | undefined;
   const setBanner = (text: string, canRetry: boolean): void => {
+    clearTimeout(bannerTimer);
     banner.hidden = !text;
     bannerText.textContent = text;
     retry.hidden = !canRetry;
@@ -298,7 +303,10 @@ function start(): void {
     }
     if (wasReady && state !== 'closed') reopen = [...new Set([...reopen, ...store.disconnect()])];
     wasReady = false;
-    if (state === 'reconnecting') setBanner('Reconnecting…', true);
+    if (state === 'reconnecting') {
+      if (banner.hidden) bannerTimer = setTimeout(() => setBanner('Reconnecting…', true), RECONNECT_BANNER_MS);
+      else setBanner('Reconnecting…', true);
+    }
     else if (state === 'offline') setBanner('Offline. Connect to Tailscale; retrying.', true);
     else if (state === 'closed') {
       const by = link.closedBy;

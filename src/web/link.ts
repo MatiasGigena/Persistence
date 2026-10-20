@@ -106,12 +106,25 @@ export class Link {
     this.finish('stopped');
   }
 
-  /** Retries at once if waiting to reconnect (the browser came online, the app came to the front). */
+  /**
+   * The browser came online or the app came to the front (a phone woke up). Ready: ping at once, and drop the link
+   * if nothing answers within wakeMs, since a socket that slept is usually dead without a close. Reconnecting or
+   * offline: start a fresh attempt now, with the backoff reset, abandoning one that hangs since the sleep.
+   */
   poke(): void {
+    if (this.current === 'ready') {
+      this.socket?.send(JSON.stringify({ t: 'ping', n: this.pingN++ }));
+      this.deadline(LIMITS.wakeMs);
+      return;
+    }
     if (this.current !== 'reconnecting' && this.current !== 'offline') return;
-    if (this.retry === undefined) return;
     clearTimeout(this.retry);
     this.retry = undefined;
+    const hung = this.socket;
+    this.generation++;
+    this.teardown();
+    hung?.close(CloseCode.normal, 'retry');
+    this.attempt = 0;
     void this.open();
   }
 
@@ -148,7 +161,9 @@ export class Link {
     const generation = ++this.generation;
     if (this.options.gate) {
       let gate: Awaited<ReturnType<Gate>>;
-      try { gate = await this.options.gate(); } catch { gate = 'offline'; }
+      let timer: Timer | undefined;
+      const late = new Promise<'offline'>(resolve => { timer = setTimeout(() => resolve('offline'), LIMITS.connectMs); });
+      try { gate = await Promise.race([this.options.gate(), late]); } catch { gate = 'offline'; } finally { clearTimeout(timer); }
       if (generation !== this.generation || this.current === 'closed') return;
       if (gate === 'unpaired' || gate === 'forbidden') { this.finish(gate); return; }
       if (gate === 'offline') { this.schedule('offline'); return; }
@@ -161,6 +176,8 @@ export class Link {
       message: text => { if (live()) this.receive(text); },
       close: code => { if (live()) this.dropped(code); },
     });
+    // A socket that neither opens nor closes (started as the phone went to sleep) would otherwise wait forever.
+    this.deadline(LIMITS.connectMs);
   }
 
   private opened(): void {
@@ -171,11 +188,16 @@ export class Link {
 
   /** Any message proves the link alive; silence for 2 × pingMs means it is dead. */
   private alive(): void {
+    this.deadline(2 * LIMITS.pingMs);
+  }
+
+  /** Drops the socket unless a message arrives within `ms`. */
+  private deadline(ms: number): void {
     clearTimeout(this.dead);
     this.dead = setTimeout(() => {
       this.socket?.close(CloseCode.normal, 'no answer');
       this.dropped(0);
-    }, 2 * LIMITS.pingMs);
+    }, ms);
   }
 
   private receive(text: string): void {
