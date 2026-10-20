@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The existing right-hand web menu uses a rounded monochrome glass panel with a
+  labelled header, close button and viewport-bounded scrolling; all actions stay the same.
+
 - The web app matches Pi Cloud's dark monochrome palette, monospace type, glass
   surfaces and rounded composer; installed-app and offline colours match too.
 

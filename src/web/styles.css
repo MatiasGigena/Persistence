@@ -348,18 +348,37 @@ dialog { color: var(--ink); }
 dialog::backdrop { background: var(--scrim); }
 
 .menu {
-  margin: calc(52px + env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) auto auto;
-  padding: 6px; width: 15rem; border: 1px solid var(--line); border-radius: 16px;
+  --menu-top: calc(var(--nav-h) + env(safe-area-inset-top) + 8px);
+  --menu-right: max(12px, env(safe-area-inset-right));
+  margin: var(--menu-top) var(--menu-right) auto auto;
+  padding: 8px; width: 18rem;
+  max-width: calc(100vw - var(--menu-right) - max(12px, env(safe-area-inset-left)));
+  max-height: calc(100dvh - var(--menu-top) - max(12px, env(safe-area-inset-bottom)));
+  overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid var(--edge); border-radius: var(--r-lg);
   background: var(--chrome-heavy); box-shadow: var(--shadow);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
 }
-.menu::backdrop { background: transparent; }
-.menu-list { display: flex; flex-direction: column; }
+.menu::backdrop { background: var(--scrim); }
+.menu-head { display: flex; align-items: center; gap: 8px; padding: 0 0 6px 12px; }
+.menu-title { flex: 1; min-width: 0; margin: 0; font-size: 0.8125rem; font-weight: 500; color: var(--faint); }
+.menu-head form { margin: 0; }
+.menu-list { display: flex; flex-direction: column; gap: 4px; }
 .menu-item {
-  min-height: var(--tap); padding: 0 14px; text-align: left; border: 0; border-radius: 10px; background: transparent;
-  font-size: 1rem;
+  flex: none; width: 100%; min-height: var(--tap); padding: 10px 12px;
+  text-align: left; overflow-wrap: anywhere;
+  border: 1px solid transparent; border-radius: var(--r-sm); background: transparent;
+  font-size: 0.9375rem;
 }
-.menu-item:hover, .menu-item:focus-visible { background: var(--raised); }
-.menu-danger { color: var(--danger); border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; margin-top: 4px; }
+.menu-item:focus-visible { background: var(--glass); outline-offset: -3px; }
+.menu-item:active { background: var(--raised); }
+.menu-danger { border-top-color: var(--line); margin-top: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  .menu-item:hover { background: var(--glass); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .menu { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
 
 /* The sheet: from the bottom on a phone, from the right on a wide screen. */
 .sheet {
@@ -439,12 +458,12 @@ dialog::backdrop { background: var(--scrim); }
   @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
   .sheet-grip { display: none; }
   .sheet-head { padding-top: 14px; }
-  .menu { margin-right: max(16px, calc((100vw - var(--column)) / 2 - 8px)); }
+  .menu { --menu-right: max(16px, env(safe-area-inset-right), calc((100vw - var(--column)) / 2 - 8px)); }
   .feed { padding-top: 32px; gap: 22px; }
 }
 
 @media (hover: none) {
-  .icon-button:hover, .row:hover:not(:disabled), .menu-item:hover { background: transparent; }
+  .icon-button:hover, .row:hover:not(:disabled) { background: transparent; }
 }
 
 @media (prefers-reduced-motion: reduce) {
