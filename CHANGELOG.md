@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The terminal UI footer shows the running tool call next to the spinner while Pi works (for example
+  `⠋ working · bash npm test`), so a long turn is never silent. It is cut to 60 columns, or 24 on a phone.
+
 - Server mode (phase 2, ADRs 0016 and 0022 accepted): `pi-durable serve [--cwd D] [--port N]` runs the chat
   headless under its flock, with coding tools off, on a mode 600 Unix socket (NDJSON) and, when configured,
   the web listener. One session is fanned out to every client (`src/server/hub.ts`, `connection.ts`): item
