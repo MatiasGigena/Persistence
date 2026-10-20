@@ -6,13 +6,10 @@ import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
 import { agentsView } from './panels/agents.ts';
+import { chatSettingsView } from './panels/chat-settings.ts';
 import { memoryView } from './panels/memory.ts';
-import { effortView } from './panels/effort.ts';
-import { modelView } from './panels/model.ts';
-import { settingsView } from './panels/settings.ts';
 import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
-import { toolsView } from './panels/tools.ts';
 import { syncPush } from './push.ts';
 import { Store } from './store.ts';
 import type { Effect } from './store.ts';
@@ -156,11 +153,7 @@ function start(): void {
   const live = byId('live', HTMLDivElement);
   const pulse = byId('pulse', HTMLDivElement);
   const statusLine = byId('status', HTMLDivElement);
-  const modelChip = byId('model-chip', HTMLButtonElement);
   const modelName = byId('model-name', HTMLSpanElement);
-  const effortChip = byId('effort-chip', HTMLButtonElement);
-  const effortName = byId('effort-name', HTMLSpanElement);
-  const menu = byId('menu', HTMLDialogElement);
 
   const view = new ChatView(byId('feed', HTMLOListElement), byId('scroller', HTMLDivElement), {
     empty: 'This is your one conversation with Pi. It never resets, and Pi remembers it. Write something to begin.',
@@ -234,38 +227,16 @@ function start(): void {
   composer.addEventListener('submit', event => { event.preventDefault(); submit(); input.focus(); });
 
   const abort = (): void => { link.request('abort', {}).catch((error: unknown) => notice(`Interrupt failed: ${errorText(error)}`, 'error')); };
-  const stopAll = (): void => {
-    abort();
-    link.request('stopAgents', {}).then(
-      ({ names }) => notice(names.length ? `Stopped ${names.join(', ')}.` : 'No agents to stop.'),
-      (error: unknown) => notice(`Stop failed: ${errorText(error)}`, 'error'),
-    );
-  };
   stopButton.addEventListener('click', abort);
 
-  // -------------------------------------------------------------- header and menu
+  // -------------------------------------------------------------- header
 
-  modelChip.addEventListener('click', () => sheet.open(modelView(ctx)));
-  effortChip.addEventListener('click', () => sheet.open(effortView(ctx)));
-  byId('menu-button', HTMLButtonElement).addEventListener('click', () => menu.showModal());
-  menu.addEventListener('click', event => { if (event.target === menu) menu.close(); });
-  const panels = { agents: agentsView, memory: memoryView, model: modelView, effort: effortView, tools: toolsView, settings: settingsView } as const;
-  for (const button of menu.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
-    button.addEventListener('click', () => {
-      menu.close();
-      const action = button.dataset.action ?? '';
-      if (action === 'stop-all') stopAll();
-      for (const [name, open] of Object.entries(panels)) if (name === action) sheet.open(open(ctx));
-    });
-  }
+  byId('settings-button', HTMLButtonElement).addEventListener('click', () => sheet.open(chatSettingsView(ctx)));
 
   const drawStatus = (): void => {
     const status = store.status;
     if (!status) return;
-    modelName.textContent = shortModel(status.model);
-    modelChip.setAttribute('aria-label', `Model ${status.model}. Change model`);
-    effortName.textContent = status.thinkingLevel;
-    effortChip.setAttribute('aria-label', `Reasoning effort ${status.thinkingLevel}. Change effort`);
+    modelName.textContent = `${shortModel(status.model)} · ${status.thinkingLevel}`;
     stopButton.hidden = !status.busy;
     pulse.classList.toggle('is-busy', status.busy || status.agents.some(a => a.busy));
     statusLine.replaceChildren(...statusParts(status).map(part => {

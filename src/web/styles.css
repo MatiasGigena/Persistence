@@ -61,7 +61,7 @@ body { overflow: hidden; overscroll-behavior: none; }
 
 [hidden] { display: none !important; }
 
-button, input, textarea { font: inherit; color: inherit; }
+button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button, a, summary { touch-action: manipulation; }
 ::selection { background: #292929; }
@@ -147,17 +147,7 @@ code, pre { font-family: var(--mono); }
 .top-row { display: flex; align-items: center; gap: 8px; min-height: var(--nav-h); }
 .brand { font: 600 14px/1 var(--mono); margin: 0 4px 0 0; letter-spacing: -0.01em; }
 
-.chip {
-  display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 60vw;
-  min-height: 34px; padding: 0 10px 0 12px; border-radius: 999px;
-  border: 1px solid var(--line); background: var(--glass); color: var(--muted);
-  font-size: 0.875rem; font-weight: 500;
-}
-.chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chip-icon { width: 12px; height: 12px; flex: none; }
-/* Beside the model's chip: never squeezed, so the model's name gives way first. */
-.chip-effort { flex: none; max-width: none; padding-left: 10px; }
-.chip-effort .chip-icon:first-child { width: 14px; height: 14px; }
+.top-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; color: var(--faint); }
 
 .icon-button {
   margin-left: auto; flex: none;
@@ -165,6 +155,7 @@ code, pre { font-family: var(--mono); }
   border: 0; border-radius: 12px; background: transparent; color: var(--muted);
 }
 .icon-button:hover { background: var(--raised); color: var(--ink); }
+.icon-button svg { width: 18px; height: 18px; }
 
 .status { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; min-height: 22px; font-size: 0.8125rem; color: var(--faint); }
 .status-part { font-variant-numeric: tabular-nums; }
@@ -365,39 +356,6 @@ button.status-part {
 dialog { color: var(--ink); }
 dialog::backdrop { background: var(--scrim); }
 
-.menu {
-  --menu-top: calc(var(--nav-h) + env(safe-area-inset-top) + 8px);
-  --menu-right: max(12px, env(safe-area-inset-right));
-  margin: var(--menu-top) var(--menu-right) auto auto;
-  padding: 8px; width: 18rem;
-  max-width: calc(100vw - var(--menu-right) - max(12px, env(safe-area-inset-left)));
-  max-height: calc(100dvh - var(--menu-top) - max(12px, env(safe-area-inset-bottom)));
-  overflow-y: auto; overscroll-behavior: contain;
-  border: 1px solid var(--edge); border-radius: var(--r-lg);
-  background: var(--chrome-heavy); box-shadow: var(--shadow);
-  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
-}
-.menu::backdrop { background: var(--scrim); }
-.menu-head { display: flex; align-items: center; gap: 8px; padding: 0 0 6px 12px; }
-.menu-title { flex: 1; min-width: 0; margin: 0; font-size: 0.8125rem; font-weight: 500; color: var(--faint); }
-.menu-head form { margin: 0; }
-.menu-list { display: flex; flex-direction: column; gap: 4px; }
-.menu-item {
-  flex: none; width: 100%; min-height: var(--tap); padding: 10px 12px;
-  text-align: left; overflow-wrap: anywhere;
-  border: 1px solid transparent; border-radius: var(--r-sm); background: transparent;
-  font-size: 0.9375rem;
-}
-.menu-item:focus-visible { background: var(--glass); outline-offset: -3px; }
-.menu-item:active { background: var(--raised); }
-.menu-danger { border-top-color: var(--line); margin-top: 4px; }
-@media (hover: hover) and (pointer: fine) {
-  .menu-item:hover { background: var(--glass); }
-}
-@media (prefers-reduced-transparency: reduce) {
-  .menu { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
-}
-
 /* The sheet: from the bottom on a phone, from the right on a wide screen. */
 .sheet {
   margin: auto 0 0; padding: 0; width: 100%; max-width: 100%; max-height: 88dvh; height: 88dvh;
@@ -451,12 +409,32 @@ dialog::backdrop { background: var(--scrim); }
 
 .agent-chat { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); border-top: 1px solid var(--line); }
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 1rem/1.6 var(--serif); }
-.tools-state { font: 600 1.125rem/1.3 var(--serif); margin: 8px 0 0; }
-.tools-state.is-on { color: var(--danger); }
-.settings-section { padding: 6px 0 14px; border-bottom: 1px solid var(--line); }
-.settings-section:last-child { border-bottom: 0; }
-.settings-title { font-size: 0.9375rem; margin: 10px 0 2px; }
-.status-text { margin: 8px 0; padding: 10px 12px; background: var(--raised); border-radius: 10px; font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Chat settings, as Pi Cloud's sheet: labelled selects, then switch rows, then rows into Agents and Memory. */
+.controls { display: grid; gap: 14px; padding: 6px 0 4px; }
+.control { display: flex; flex-direction: column; gap: 6px; }
+.control-label { color: var(--faint); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+.control-select {
+  width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--glass); color: var(--ink); font-size: 16px;
+}
+.control-select:disabled { opacity: 0.55; }
+.switches { display: grid; gap: 14px; margin: 18px 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.switch-row { display: flex; align-items: center; gap: 14px; }
+.switch-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.switch-text strong { font-size: 0.8125rem; }
+.switch-text small { color: var(--faint); font-size: 0.6875rem; line-height: 1.5; }
+.switch {
+  position: relative; display: flex; align-items: center; flex: none; width: 44px; height: 28px; padding: 4px;
+  border: 1px solid var(--edge); border-radius: 999px; background: var(--raised);
+}
+.switch::before { content: ""; position: absolute; inset: -8px 0; }
+.switch span { width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform 140ms ease-out; }
+.switch[aria-checked="true"] { background: var(--ink); }
+.switch[aria-checked="true"] span { transform: translateX(16px); background: var(--bg); }
+.switch:disabled { opacity: 0.45; }
+.rows-settings { border-top: 1px solid var(--line); }
+.rows-settings .row-aside { font-size: 1.125rem; }
 
 .confirm {
   width: min(calc(100% - 32px), 26rem); padding: 22px; border: 0; border-radius: 18px;
@@ -476,7 +454,6 @@ dialog::backdrop { background: var(--scrim); }
   @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
   .sheet-grip { display: none; }
   .sheet-head { padding-top: 14px; }
-  .menu { --menu-right: max(16px, env(safe-area-inset-right), calc((100vw - var(--column)) / 2 - 8px)); }
   .feed { padding-top: 32px; gap: 22px; }
 }
 

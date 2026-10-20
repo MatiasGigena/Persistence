@@ -101,17 +101,9 @@ SOFTWARE.
   <header class="top">
     <div class="top-row">
       <h1 class="brand">Pi</h1>
-      <button id="model-chip" class="chip" type="button" aria-label="Change model">
-        <span id="model-name" class="chip-text">…</span>
-        <svg class="chip-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-      </button>
-      <button id="effort-chip" class="chip chip-effort" type="button" aria-label="Change reasoning effort">
-        <svg class="chip-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3Z"/><path d="M9.5 20h5"/></svg>
-        <span id="effort-name" class="chip-text">…</span>
-        <svg class="chip-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-      </button>
-      <button id="menu-button" class="icon-button" type="button" aria-label="Menu" aria-haspopup="dialog" aria-controls="menu">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      <span id="model-name" class="top-model"></span>
+      <button id="settings-button" class="icon-button" type="button" aria-label="Chat settings" title="Chat settings" aria-haspopup="dialog" aria-controls="sheet">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg>
       </button>
     </div>
     <div id="status" class="status" aria-label="Status"></div>
@@ -142,26 +134,6 @@ SOFTWARE.
   </div>
   <div id="live" class="sr-only" aria-live="polite"></div>
 </main>
-
-<dialog id="menu" class="menu" aria-labelledby="menu-title">
-  <div class="menu-head">
-    <h2 id="menu-title" class="menu-title">Menu</h2>
-    <form method="dialog">
-      <button class="icon-button" type="submit" aria-label="Close menu">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12"/></svg>
-      </button>
-    </form>
-  </div>
-  <div class="menu-list">
-    <button type="button" class="menu-item" data-action="agents">Agents</button>
-    <button type="button" class="menu-item" data-action="memory">Memory</button>
-    <button type="button" class="menu-item" data-action="model">Model</button>
-    <button type="button" class="menu-item" data-action="effort">Reasoning effort</button>
-    <button type="button" class="menu-item" data-action="tools">Coding tools</button>
-    <button type="button" class="menu-item" data-action="settings">Settings</button>
-    <button type="button" class="menu-item menu-danger" data-action="stop-all">Stop all</button>
-  </div>
-</dialog>
 
 <dialog id="sheet" class="sheet" aria-labelledby="sheet-title">
   <div class="sheet-panel">
