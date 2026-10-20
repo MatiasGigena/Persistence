@@ -63,8 +63,9 @@ In the terminal UI, `/model` switches Pi's model without a relaunch (`src/ui/ses
 
 ## Reasoning effort
 
-`/effort` picks Pi's reasoning effort (pi-ai's thinking level) from the levels the current model takes;
-`/effort LEVEL` sets it directly. Like a model switch it applies to Pi and every agent from their next request, and
+In the web app, the chip beside the model's chip (a bulb and the level, e.g. `high`) opens a list of the levels the
+current model takes; tapping one sets it. The menu has it too, as "Reasoning effort". In the terminal UI, the footer
+shows it next to the model, and `/effort` opens the same list (`/effort LEVEL` sets one directly). Like a model switch it applies to Pi and every agent from their next request, and
 is saved as `"thinkingLevel"` in `settings.json` ([ADR 0024](decisions/0024-saved-effort.md)). A launch takes
 `--thinking`, else the saved level, else `high`.
 

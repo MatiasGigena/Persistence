@@ -33,6 +33,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Web app: a reasoning effort chip beside the model's chip (and "Reasoning effort" in the menu) opens the levels
+  the current model takes; tapping one sets it.
 - `/effort` picks the reasoning effort (thinking level) for Pi and its agents from the levels the current model
   takes; `/effort LEVEL` sets it directly. It is saved in `settings.json` with the model, and `--thinking`
   overrides it (ADR 0024). `claude-cli` models now list `xhigh` and `max`. Protocol ops `thinking.levels` and

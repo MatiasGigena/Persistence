@@ -13,7 +13,8 @@ effort is something a user adjusts while chatting, as the model is.
 
 ## Decision
 
-- `/effort` in the terminal UI picks a level from those the current model takes (pi-ai's
+- The web app has a chip beside the model's chip that opens the level list; the terminal UI has `/effort`. Both pick
+  a level from those the current model takes (pi-ai's
   `getSupportedThinkingLevels`); `/effort LEVEL` sets one directly. The `thinking.levels` and `thinking.set` protocol
   ops do the same for attached clients (additive: no `PROTOCOL` bump).
 - The level is applied with `root.configure({ thinkingLevel })`, then `syncAgents`, so Pi and every agent use it

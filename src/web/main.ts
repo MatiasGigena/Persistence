@@ -7,6 +7,7 @@ import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
 import { agentsView } from './panels/agents.ts';
 import { memoryView } from './panels/memory.ts';
+import { effortView } from './panels/effort.ts';
 import { modelView } from './panels/model.ts';
 import { settingsView } from './panels/settings.ts';
 import { byId, Sheet } from './panels/sheet.ts';
@@ -157,6 +158,8 @@ function start(): void {
   const statusLine = byId('status', HTMLDivElement);
   const modelChip = byId('model-chip', HTMLButtonElement);
   const modelName = byId('model-name', HTMLSpanElement);
+  const effortChip = byId('effort-chip', HTMLButtonElement);
+  const effortName = byId('effort-name', HTMLSpanElement);
   const toolsBar = byId('tools-bar', HTMLDivElement);
   const menu = byId('menu', HTMLDialogElement);
 
@@ -244,10 +247,11 @@ function start(): void {
   // -------------------------------------------------------------- header and menu
 
   modelChip.addEventListener('click', () => sheet.open(modelView(ctx)));
+  effortChip.addEventListener('click', () => sheet.open(effortView(ctx)));
   byId('tools-off', HTMLButtonElement).addEventListener('click', () => void setTools(ctx, false));
   byId('menu-button', HTMLButtonElement).addEventListener('click', () => menu.showModal());
   menu.addEventListener('click', event => { if (event.target === menu) menu.close(); });
-  const panels = { agents: agentsView, memory: memoryView, model: modelView, tools: toolsView, settings: settingsView } as const;
+  const panels = { agents: agentsView, memory: memoryView, model: modelView, effort: effortView, tools: toolsView, settings: settingsView } as const;
   for (const button of menu.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
     button.addEventListener('click', () => {
       menu.close();
@@ -262,6 +266,8 @@ function start(): void {
     if (!status) return;
     modelName.textContent = shortModel(status.model);
     modelChip.setAttribute('aria-label', `Model ${status.model}. Change model`);
+    effortName.textContent = status.thinkingLevel;
+    effortChip.setAttribute('aria-label', `Reasoning effort ${status.thinkingLevel}. Change effort`);
     toolsBar.hidden = !status.toolsEnabled;
     document.documentElement.classList.toggle('tools-on', status.toolsEnabled);
     stopButton.hidden = !status.busy;
