@@ -4,10 +4,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
-import { EXIT_QUESTION, LINK_CLOSED, commands, editorLines, helpText, runTui } from '../../src/ui/tui/app.ts';
+import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, runTui } from '../../src/ui/tui/app.ts';
 import type { AttachedLink, LinkState, TuiInfo } from '../../src/ui/tui/app.ts';
 import { ChatView, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
-import { Footer, footerText, SPIN_FAST, SPIN_SLOW, spinnerInterval } from '../../src/ui/tui/footer.ts';
+import { Footer, footerText, SPIN_FAST, SPIN_SLOW, STEP_WIDTH, spinnerInterval } from '../../src/ui/tui/footer.ts';
 import type { FooterStatus } from '../../src/ui/tui/footer.ts';
 import { theme } from '../../src/ui/tui/theme.ts';
 
@@ -188,6 +188,34 @@ test('the footer shows the status on one line, truncated to the width', () => {
     assert.ok(visibleWidth(lines[0] ?? '') <= width);
   }
   assert.equal(stripTerminalSequences(footerText({ ...STATUS, memory: undefined }, theme)), 'faux/model-1 · thinking high · tools off');
+});
+
+test('the footer shows the running step next to the spinner, only while busy', () => {
+  const step = 'bash cd ~/pi-durable-instance && npm test';
+  const busy: FooterStatus = { ...STATUS, memory: undefined, busy: true, step };
+  assert.equal(stripTerminalSequences(footerText(busy, theme)),
+    `faux/model-1 · thinking high · tools off · ⠋ working · ${step}`);
+  assert.equal(stripTerminalSequences(footerText({ ...busy, busy: false }, theme)), 'faux/model-1 · thinking high · tools off');
+  const long = stripTerminalSequences(footerText({ ...busy, step: `bash ${'x'.repeat(200)}` }, theme));
+  const shown = long.split(' · ').at(-1) ?? '';
+  assert.ok(visibleWidth(shown) <= STEP_WIDTH && shown.endsWith('…'), 'a long step is cut');
+  const narrow = stripTerminalSequences(footerText(busy, theme, 0, 40));
+  assert.match(narrow, /tools off/);
+  assert.match(narrow, /busy/);
+});
+
+test('currentStep is the newest running tool call', () => {
+  const tool = (id: string, name: string, args: string, status: 'running' | 'done' | 'error'): ChatItem =>
+    ({ kind: 'tool', id, name, args, output: '', status });
+  assert.equal(currentStep([]), undefined);
+  assert.equal(currentStep([tool('t1', 'bash', '{"command":"ls"}', 'done')]), undefined);
+  assert.equal(currentStep([
+    tool('t1', 'bash', '{"command":"ls"}', 'running'),
+    { kind: 'assistant', id: 'a1', text: 'reading', streaming: false },
+    tool('t2', 'read', '{"path":"src/a.ts"}', 'running'),
+    tool('t3', 'bash', '{"command":"pwd"}', 'done'),
+  ]), 'read src/a.ts');
+  assert.equal(currentStep([tool('t1', 'list_agents', '{}', 'running')]), 'list_agents');
 });
 
 test('Enter sends, Esc aborts, Ctrl+D exits and restores the terminal', async () => {

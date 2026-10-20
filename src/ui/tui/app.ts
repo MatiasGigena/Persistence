@@ -5,8 +5,8 @@ import {
   TuiAltScreen, VStack,
 } from '@earendil-works/pi-tui';
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
-import type { SessionStatus, UiSession } from '../types.ts';
-import { ChatView } from './chat.ts';
+import type { ChatItem, SessionStatus, UiSession } from '../types.ts';
+import { ChatView, toolSummary } from './chat.ts';
 import type { NoticeLevel } from './chat.ts';
 import { Footer, spinnerInterval } from './footer.ts';
 import { openAgentsPanel } from './panels/agents.ts';
@@ -198,6 +198,18 @@ class ChatEditor extends Editor {
   }
 }
 
+/** The newest tool call still running, as "name summary", or undefined when none runs. */
+export function currentStep(items: readonly ChatItem[]): string | undefined {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item?.kind === 'tool' && item.status === 'running') {
+      const summary = toolSummary(item.name, item.args);
+      return summary ? `${item.name} ${summary}` : item.name;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Run the chat in the terminal until the user exits (/exit, Ctrl+D, Ctrl+C twice), `info.signal` aborts, or an
  * attached link closes. Ctrl+D and Ctrl+C twice ask first while Pi or an agent is working, unless attached; /exit
@@ -210,7 +222,15 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   const tui = new TuiAltScreen(terminal);
   const chat = new ChatView(session.chat, theme, info.backlog === undefined ? {} : { backlog: info.backlog });
   const { attached } = info;
-  const footer = new Footer(() => (attached ? { ...session.status(), reconnecting: attached.state() === 'reconnecting' } : session.status()), theme);
+  const footer = new Footer(() => {
+    const status = session.status();
+    const step = status.busy ? currentStep(session.chat.items()) : undefined;
+    return {
+      ...status,
+      ...attached ? { reconnecting: attached.state() === 'reconnecting' } : {},
+      ...step ? { step } : {},
+    };
+  }, theme);
   const editor = new ChatEditor(tui, theme.editor, { paddingX: 1 });
   const env = info.env ?? process.env;
   // `/model ` completes available models, as in Pi; Enter takes the highlighted one, a second Enter sends.

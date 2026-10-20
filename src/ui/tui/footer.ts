@@ -27,7 +27,13 @@ const size = (bytes: number): string => bytes < 1024 ? `${bytes} B`
 export type FooterStatus = Omit<SessionStatus, 'agents'> & {
   readonly agents: readonly { readonly busy: boolean }[];
   readonly reconnecting?: boolean;
+  /** The tool call running now, as "name summary" on one line; shown next to the spinner while busy. */
+  readonly step?: string;
 };
+
+/** Longest step shown, in columns: wide and compact. */
+export const STEP_WIDTH = 60;
+export const STEP_COMPACT = 24;
 
 /** One footer segment: `rank` orders what is kept when the line is too narrow (0 first). */
 interface Segment { readonly text: string; readonly rank: number }
@@ -48,7 +54,8 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
   ];
   if (status.busy) {
     list.push({ text: theme.accent(`${SPINNER[frame % SPINNER.length] ?? ''} ${compact ? 'busy' : 'working'}`), rank: 0 });
-    if (status.queued) list.push({ text: dim(`${status.queued} queued`), rank: 1 });
+    if (status.step) list.push({ text: dim(truncateToWidth(status.step, compact ? STEP_COMPACT : STEP_WIDTH, '…')), rank: 1 });
+    if (status.queued) list.push({ text: dim(`${status.queued} queued`), rank: 2 });
   }
   const { memory } = status;
   if (memory) {
@@ -59,15 +66,15 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
   }
   if (status.agents.length) {
     const busy = status.agents.filter(agent => agent.busy).length;
-    list.push({ text: dim(compact ? `${busy}/${status.agents.length} ag` : `${busy}/${status.agents.length} agents busy`), rank: 2 });
+    list.push({ text: dim(compact ? `${busy}/${status.agents.length} ag` : `${busy}/${status.agents.length} agents busy`), rank: 3 });
   }
   return list;
 }
 
 /**
  * The footer's text within `width` columns (default: unlimited); `frame` picks the busy spinner's glyph.
- * Below NARROW columns it uses short forms. Segments are kept in priority order (working, tools, queued,
- * agents, model, memory failures, memory size, thinking, summaries) until one does not fit, and shown in their
+ * Below NARROW columns it uses short forms. Segments are kept in priority order (working, tools, current step,
+ * queued, agents, model, memory failures, memory size, thinking, summaries) until one does not fit, and shown in their
  * usual order; the tools state and "reconnecting…" are never dropped.
  */
 export function footerText(status: FooterStatus, theme: Theme, frame = 0, width = Number.POSITIVE_INFINITY): string {
