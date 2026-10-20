@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-20, at the user's request.
+Accepted, 2026-10-20, at the user's request. The menu part is amended by [0026](0026-pi-cloud-chat-controls.md).
 
 ## Decision
 
