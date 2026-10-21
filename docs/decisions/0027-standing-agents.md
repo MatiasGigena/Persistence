@@ -63,7 +63,9 @@ every standing agent; `browser` and `web_fetch` stay, since they touch no local 
 ### Models and effort
 
 `deriveAgent` still copies Pi's choices first, then a standing agent's roster entry overrides model, thinking level,
-tools and instructions. `/model` and `/effort` change Pi and its ad-hoc agents only. A sub agent of a standing agent
+tools and instructions. Its instructions keep Pi's text but replace Pi's line about the coding tools with one naming the
+agent's own tools (the protected-folders note only while it has a local kit's tools), so an agent without `bash` is not
+told it has it. `/model` and `/effort` change Pi and its ad-hoc agents only. A sub agent of a standing agent
 copies its main agent's model, effort and kits (not Pi's), then `subModel` and `subThinkingLevel` when given; it still
 loses `spawn_agent` and `stop_agent`.
 
@@ -81,6 +83,8 @@ Only for standing agents; ad-hoc agents keep one conversation.
   send_message to steer it, or stop_agent first.`): a task is never cut off silently. A current session that holds
   nothing yet takes the new task itself, so a delivery that ended before submitting cannot lock `delegate` out.
 - The previous task's subs keep their `session`; one woken later reports nowhere and cannot message its main agent.
+  `send_message` to such a sub is refused except from the session it works for, or from the main agent's current
+  session, which takes it on.
 - Past sessions stay quiet: a message whose delivery finds its target in `past` goes to the current session (the choice
   kept in the delivery task's memo before it submits, so a replay goes to the same place). A past session that runs
   anyway counts as busy, is stopped by `stop_agent`, and is re-derived with the current one, so `/tools off` reaches it.
@@ -89,17 +93,39 @@ Only for standing agents; ad-hoc agents keep one conversation.
   is `send_message`.
 - `delegate` is replay-safe through `once()`, like `spawn_agent`.
 - `zoom("Coder")` reads the current session; `zoom("Coder#2")` reads the second (1 is the oldest). The transcript's
-  first line says which session it is and how many there are.
+  first line says which session it is and how many there are. A report to Pi links the session it came from
+  (`zoom("Coder#2")`), kept in its entry's `data.session`, so the link stays right after later delegates.
+- `last_message` and `list_agents` show the current session's latest answer, or right after a delegate the newest
+  past session's, marked with its number.
 - Continuity between tasks comes from Pi's memory: each new session starts with Pi's view, which holds the earlier
   reports.
+
+### Agents without coding tools stay in their team
+
+A standing agent whose kits lack `coding` may `send_message` only Pi and its own sub agents; its subs only their main
+agent and each other. The Researcher reads untrusted web pages and the Reviewer opens them in a browser: a page could
+otherwise have one tell the Coder (bash) what to run. Pi then sees the request and decides. Enforced as the sub limits
+are, at the offer (role text and the tool's description), in the `beforeTool` guard and in the tool. Reading
+(`last_message`, `list_agents`) stays open; agents with `coding` and ad-hoc agents (which copy Pi's tools) keep the
+general rules.
 
 ### The browser (Reviewer)
 
 Ported from Pi Cloud's `resources/extensions/browser` (at `ff6f72c`) to a pi-durable extension, `src/tools/browser.ts`:
 the same eight tools, a headless Chromium with a persistent profile per agent in the chat's state directory (hidden
 from the coding tools), one queue serializing operations, a 60 s timeout per operation, HTTP(S) only, sensitive
-headers redacted. Always on for agents with the kit: there is no `/browser on`. It may open loopback and private
-addresses, since it is for debugging the user's apps. `PI_DURABLE_CHROMIUM` may name the Chromium executable.
+headers redacted. Always on for agents with the kit: there is no `/browser on`. `PI_DURABLE_CHROMIUM` may name the
+Chromium executable.
+
+Its egress is checked, after a security review (amended 2026-10-21, at the user's decision). Each browser has its own
+loopback proxy, behind a random credential, that checks every connection (navigations, redirect hops,
+subresources, fetches, WebSockets) and connects only to the address it checked; context routes refuse up front
+with a readable reason, service workers are blocked, and WebRTC UDP is off. Loopback and private (RFC 1918,
+unique-local) addresses are allowed, since it is for debugging the user's apps. Link-local (cloud metadata such as
+`169.254.169.254`) and Tailscale/CGNAT (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are always refused. Public addresses
+are refused too when the agent also has the `read` or `coding` kit (`localOnly`), so a page's prompt injection
+cannot make it read a file and send it out: the default Reviewer's browser is local only. A residual leak remains:
+the DNS lookup of a refused name still reaches the resolver.
 
 ### Web fetch (Researcher)
 
@@ -112,7 +138,7 @@ the same for every redirect (at most 5).
 ### Persisted names
 
 New and frozen once shipped: the tool names `delegate`, `web_fetch` and the eight `browser_*`; the extension names of
-the two new extensions; the registry fields `standing` and `past`, and `session` on a standing agent's sub (the session it belongs to); the `agents.deliver` memo `session` (where a redirected message goes); the `settings.json` key `agents` and its fields.
+the two new extensions; the registry fields `standing` and `past`, and `session` on a standing agent's sub (the session it belongs to); the `agents.deliver` memo `session` (where a redirected message goes); the optional `session` (a number from 1) in an `agents.report` entry's data (the standing agent's session a report to Pi came from); the `settings.json` key `agents` and its fields.
 
 ## Consequences
 

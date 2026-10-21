@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,8 +13,9 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
+import { chromium as playwrightChromium } from 'playwright-core';
 import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents, missingKits, syncAgents } from '../agents/index.ts';
-import type { AgentsSetup, Roster, ToolKits } from '../agents/index.ts';
+import type { AgentRecord, AgentsSetup, Roster, StandingAgent, ToolKits } from '../agents/index.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
@@ -22,6 +24,8 @@ import type { BrowserOptions } from '../tools/browser.ts';
 import { createWebFetchExtension } from '../tools/web-fetch.ts';
 import { GuardedEnv } from './guard.ts';
 import type { Protection } from './guard.ts';
+import { accessProblem, catalogProblem, checkAccess } from './models.ts';
+import type { Access, CatalogModels } from './models.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;
@@ -56,8 +60,16 @@ export interface InstanceOptions {
   readonly chromium?: string | undefined;
   /** Launches the browser kit's Chromium; tests inject it. Default: Playwright's `launchPersistentContext`. */
   readonly launchBrowser?: BrowserOptions['launch'];
-  /** A launch warning, such as standing agents' missing kits; at most one per launch. */
+  /**
+   * A launch warning: standing agents' missing kits, a browser kit with no Chromium, a roster model not in the catalog
+   * or without credentials. Each problem at most once per launch; the roster checks arrive after `openInstance()`
+   * resolves, never failing or delaying it.
+   */
   readonly onWarning?: (message: string) => void;
+  /** Named in a roster model's "No credentials" warning. */
+  readonly authFile?: string | undefined;
+  /** The work launch's roster checks (`rosterWarnings()`); tests inject fakes, or false to skip them. */
+  readonly rosterChecks?: Partial<Omit<RosterCheckOptions, 'chromium' | 'authFile' | 'signal'>> | false;
 }
 
 /** The opened root; `memory` is undefined when inspecting. */
@@ -148,11 +160,103 @@ export function builtinKits(): ToolKits {
  * conversation the registry does not name keep their conversation ID.
  */
 export async function browserKey(source: DocumentReader, conversationId: ConversationId, context: Context): Promise<string> {
-  const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
+  return keyIn((await source.snapshot(AgentsDoc, context))?.agents ?? {}, conversationId);
+}
+
+/** The browser key of `conversationId` in the registry `agents`: the agent it is a session of, else its own ID. */
+function keyIn(agents: Readonly<Record<string, AgentRecord>>, conversationId: ConversationId): string {
   for (const [name, agent] of Object.entries(agents)) {
     if (agent.conversationId === conversationId || agent.past?.includes(conversationId)) return name;
   }
   return String(conversationId);
+}
+
+/** The roster entry named `name`, ignoring case as every agent lookup does. */
+const rosterEntry = (roster: Roster, name: string): StandingAgent | undefined =>
+  Object.entries(roster).find(([each]) => each.toLowerCase() === name.toLowerCase())?.[1];
+
+/**
+ * Whether browser key `key` gets a local-only browser: the agent, or a sub's main, is a standing agent whose roster
+ * entry has a kit that reads local files (`read`, `coding`), so its browser cannot carry those files off the machine.
+ * The roster's own names count even before the registry knows them.
+ */
+export function localOnlyBrowser(agents: Readonly<Record<string, AgentRecord>>, key: string, roster: Roster): boolean {
+  const readsFiles = (name: string): boolean => (rosterEntry(roster, name)?.tools ?? []).some(kit => kit === 'read' || kit === 'coding');
+  if (readsFiles(key)) return true;
+  const agent = Object.entries(agents).find(([name]) => name.toLowerCase() === key.toLowerCase())?.[1];
+  if (agent?.role !== 'sub') return false;
+  const main = Object.entries(agents).find(([name]) => name.toLowerCase() === agent.parent.toLowerCase())?.[1];
+  return main?.standing === true && readsFiles(agent.parent);
+}
+
+/** What `rosterWarnings()` checks with; tests inject fakes. */
+export interface RosterCheckOptions {
+  readonly models: CatalogModels;
+  /** PI_DURABLE_CHROMIUM; Playwright's own Chromium otherwise. */
+  readonly chromium?: string | undefined;
+  /** Whether to look for Chromium at all: false when the browser kit or its launcher is a test's. Default true. */
+  readonly checkChromium?: boolean;
+  /** Named in the "No credentials" warning. */
+  readonly authFile?: string | undefined;
+  /** Default: `existsSync`. */
+  readonly exists?: (path: string) => boolean;
+  /** Playwright's Chromium path; default `chromium.executablePath()`. */
+  readonly defaultChromium?: () => string;
+  /** Per provider's credential check. Default 5 s. */
+  readonly timeoutMs?: number;
+  readonly signal?: AbortSignal;
+  /** Default: `checkAccess()`. */
+  readonly access?: (provider: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<Access>;
+}
+
+const listed = (names: readonly string[]): string => names.length === 1 ? `Standing agent ${names[0] ?? ''}` : `Standing agents ${names.join(', ')}`;
+
+/**
+ * The standing agents' launch problems, one message each, naming the agents and what to do: a `browser` kit with no
+ * Chromium executable, a model (or sub model) not in the catalog, a provider whose credentials fail or could not be
+ * checked within `timeoutMs`. Never rejects; each provider is checked once, all in parallel.
+ */
+export async function rosterWarnings(roster: Roster, {
+  models, chromium, checkChromium = true, authFile, exists = existsSync, defaultChromium = () => playwrightChromium.executablePath(),
+  timeoutMs = 5_000, signal, access = (provider, options) => checkAccess(models, provider, options),
+}: RosterCheckOptions): Promise<string[]> {
+  const warnings: string[] = [];
+  const browsing = Object.entries(roster).filter(([, agent]) => agent.tools.includes('browser')).map(([name]) => name);
+  if (checkChromium && browsing.length) {
+    const fix = 'Run npx --no-install playwright-core install chromium in the installation directory, or set PI_DURABLE_CHROMIUM to a Chromium executable (docs/operations.md).';
+    if (chromium !== undefined) {
+      if (!exists(chromium)) warnings.push(`${listed(browsing)} cannot browse: PI_DURABLE_CHROMIUM names ${chromium}, which does not exist. Fix the path, or unset it to use Playwright's Chromium.`);
+    } else {
+      let path: string | undefined;
+      try { path = defaultChromium(); } catch { path = undefined; }
+      if (!path || !exists(path)) warnings.push(`${listed(browsing)} cannot browse: Playwright's Chromium is not installed${path ? ` (${path})` : ''}. ${fix}`);
+    }
+  }
+  // Every model the roster runs, by provider, with the agents that run it.
+  const byProvider = new Map<string, { model: ModelRef; names: string[] }>();
+  for (const [name, agent] of Object.entries(roster)) {
+    for (const [model, who] of [[agent.model, name], ...agent.subModel ? [[agent.subModel, `${name}'s subs`] as const] : []] as const) {
+      const unknown = catalogProblem(models, model);
+      if (unknown) {
+        warnings.push(`${listed([who])}: ${unknown}. Set another model for ${name} in settings.json's "agents" (docs/operations.md).`);
+        continue;
+      }
+      const entry = byProvider.get(model.provider) ?? { model, names: [] };
+      if (!entry.names.includes(who)) entry.names.push(who);
+      byProvider.set(model.provider, entry);
+    }
+  }
+  const checked = await Promise.all([...byProvider].map(async ([provider, { model, names }]) => {
+    let result: Access;
+    try { result = await access(provider, { timeoutMs, ...signal ? { signal } : {} }); } catch (error) {
+      result = { ok: false, reason: 'error', detail: error instanceof Error ? error.message : String(error) };
+    }
+    if (result.ok) return undefined;
+    if (result.reason === 'timeout') return `${listed(names)}: could not verify the credentials for ${provider} in time; if they are missing, the agent's tasks fail. Check with /model.`;
+    return `${listed(names)} cannot run: ${accessProblem(model, result, authFile) ?? `${provider} is unavailable.`}`;
+  }));
+  for (const warning of checked) if (warning) warnings.push(warning);
+  return warnings;
 }
 
 /** The memory's compaction for a turn model: its provider's cheap model; a claude-cli one runs fewer calls at once. */
@@ -181,6 +285,8 @@ export async function openInstance({
   chromium,
   launchBrowser,
   onWarning,
+  authFile,
+  rosterChecks = {},
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
@@ -199,9 +305,19 @@ export async function openInstance({
   // Browser profiles live in the memory directory, which the coding tools cannot read or change (guard.ts); the
   // extensions have no shutdown hook, so close() closes the browsers. Neither opens anything until a tool runs. Every
   // session of an agent shares the agent's browser, so a standing agent's tasks neither lose its logins nor leak one
-  // Chromium each.
+  // Chromium each. An agent that reads local files (the Reviewer) gets a local-only browser, so it cannot carry them off
+  // the machine; keyOf records which keys those are, as the registry names them, before the browser asks.
+  const localKeys = new Set<string>();
   const Browser = createBrowserExtension({ profileRoot: memoryDir,
-    keyOf: (conversationId, keyContext) => opened ? browserKey(opened, conversationId, keyContext) : Promise.resolve(String(conversationId)),
+    keyOf: async (conversationId, keyContext) => {
+      if (!opened) return String(conversationId);
+      const agents = (await opened.snapshot(AgentsDoc, keyContext))?.agents ?? {};
+      const key = keyIn(agents, conversationId);
+      if (localOnlyBrowser(agents, key, roster)) localKeys.add(key);
+      else localKeys.delete(key);
+      return key;
+    },
+    localOnly: (key: string) => localKeys.has(key) || localOnlyBrowser({}, key, roster),
     ...chromium ? { executablePath: chromium } : {}, ...launchBrowser ? { launch: launchBrowser } : {} });
   const WebFetch = createWebFetchExtension();
   const kits: ToolKits = { ...builtinKits(), browser: { extension: Browser, tools: Browser.tools },
@@ -229,6 +345,8 @@ export async function openInstance({
     instructions: piInstructions(cwd, allowTools),
   };
 
+  // close() stops the roster checks, and drops what they would still warn.
+  const checks = new AbortController();
   let database: HostDatabase | undefined;
   let storage: SqliteStorage | undefined;
   try {
@@ -254,6 +372,12 @@ export async function openInstance({
       await syncAgents(harness, context, setup);
       const missing = missingKits(roster, kits);
       if (missing.length) onWarning?.(`Standing agents run without tool kits this host lacks: ${missing.join('; ')}.`);
+      // Not awaited: a credential check may take seconds (claude-cli asks its CLI), and only warns.
+      if (rosterChecks !== false && onWarning && Object.keys(roster).length) {
+        void rosterWarnings(roster, { models, chromium, authFile, signal: checks.signal,
+          checkChromium: !extraKits.browser && !launchBrowser, ...rosterChecks })
+          .then(found => { if (!checks.signal.aborted) for (const warning of found) onWarning(warning); }, () => undefined);
+      }
     }
     /** Apply `change` to Pi, then re-derive every agent from Pi: the launch's path, so the same rules apply. */
     const reconfigure = async (change: AgentChange): Promise<void> => {
@@ -277,6 +401,7 @@ export async function openInstance({
       setThinkingLevel: level => reconfigure({ thinkingLevel: level }),
       exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
+        checks.abort();
         try { await harness.close(context); } finally {
           try { await Browser.close(); } finally { await memory?.close(); }
         }

@@ -97,8 +97,10 @@ and effort, not Pi's:
   another model, edit its entry in `settings.json` and relaunch; `/model` and `/effort` keep the `agents` key as written.
 - Each standing agent's work draws on its own model's credentials and limits: the `Coder`'s on your Claude plan
   (through the `claude` CLI, so it needs `claude auth login`), the others' on the Pi login for `openai-codex`. A
-  launch checks Pi's model only; a standing agent whose model lacks credentials fails its own requests, with the
-  provider's error in its transcript.
+  launch requires only Pi's model to run. It also checks each standing agent's model (and `subModel`) against the
+  catalog and its provider's credentials, each provider once, in the background (5 s each): a problem is a warning
+  naming the agent and the fix (or saying the check could not finish), never a launch failure. A standing agent whose
+  model lacks credentials fails its own requests, with the provider's error in its transcript.
 
 ## Policy
 

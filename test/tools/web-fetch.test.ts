@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { describe, test, type TestContext } from 'node:test';
 import {
-  addressKind, createWebFetchExtension, isPublicAddress, MAX_OUTPUT_CHARS, webFetch, type Lookup, type WebFetchOptions,
+  addressKind, createWebFetchExtension, extractRSCContent, isPublicAddress, MAX_OUTPUT_CHARS, webFetch, type Lookup, type WebFetchOptions,
 } from '../../src/tools/web-fetch.ts';
 
 // web_fetch offline: the address classifier, refusals before any connection, and pages served by a local server
@@ -59,7 +59,7 @@ describe('isPublicAddress', () => {
     ['192.168.1.1', 'a private'],
     ['169.254.169.254', 'a link-local'], ['fe80::1', 'a link-local'], ['febf::1', 'a link-local'],
     ['100.64.0.1', 'a CGNAT (Tailscale)'], ['100.127.255.254', 'a CGNAT (Tailscale)'],
-    ['fc00::1', 'a unique-local'], ['fd7a:115c:a1e0::1', 'a unique-local'],
+    ['fc00::1', 'a unique-local'], ['fd7a:115c:a1e0::1', 'a Tailscale'], ['fd7a:115c:a1e0:ab12::1', 'a Tailscale'], ['fd7a:115c:a1e1::1', 'a unique-local'],
     ['::ffff:127.0.0.1', 'a loopback'], ['::ffff:10.0.0.5', 'a private'], ['::ffff:a00:5', 'a private'],
     ['::ffff:169.254.1.1', 'a link-local'], ['::ffff:100.100.100.100', 'a CGNAT (Tailscale)'], ['::ffff:0.0.0.0', 'an unspecified'],
     ['::ffff:192.168.0.1', 'a private'], ['::127.0.0.1', 'a loopback'], ['64:ff9b::10.0.0.1', 'a private'],
@@ -202,6 +202,44 @@ describe('web_fetch content', () => {
     setTimeout(() => controller.abort(), 50);
     assert.match((await webFetch(base, local, controller.signal)).text, /Aborted$/);
     assert.match((await webFetch(base, { ...local, timeoutMs: 50 })).text, /Timed out after 0 s$/);
+  });
+});
+
+describe('extractRSCContent', () => {
+  const push = (lines: readonly string[]) => `<script>self.__next_f.push([1,${JSON.stringify(lines.join('\n'))}])</script>`;
+
+  test('renders a payload of elements and references', () => {
+    const html = `<html><head><title>Docs | Site</title></head><body>${push([
+      `1:["$","article",null,{"children":[["$","h1",null,{"children":"Durable chats"}],"$L2"]}]`,
+      `2:["$","p",null,{"children":${JSON.stringify(paragraph)}}]`,
+    ])}</body></html>`;
+    const result = extractRSCContent(html);
+    assert.equal(result?.title, 'Docs');
+    assert.match(result?.content ?? '', /^# Durable chats\n\nPersistence keeps/);
+  });
+
+  test('chunks that each cite the next one twice expand once, not 2^n times', () => {
+    const n = 40;
+    const lines = Array.from({ length: n }, (_, i) => {
+      const id = (0x100 + i).toString(16);
+      const next = (0x100 + i + 1).toString(16);
+      return i === n - 1 ? `${id}:["$","p",null,{"children":"leaf text "}]` : `${id}:["$","div",null,{"children":["$L${next}","$L${next}"]}]`;
+    });
+    const html = `<html><body>${push(lines)}</body></html>`;
+    assert.ok(html.length < 3000, String(html.length));
+    const started = performance.now();
+    const result = extractRSCContent(html);
+    assert.ok(performance.now() - started < 2000, 'finishes fast');
+    assert.ok(result);
+    assert.ok(result.content.length <= 2 * MAX_OUTPUT_CHARS * 2, String(result.content.length));
+    assert.match(result.content, /^leaf text/);
+  });
+
+  test('a reference cycle ends', () => {
+    const html = `<html><body>${push([
+      `1:["$","div",null,{"children":[${JSON.stringify(paragraph)},"$L2"]}]`, '2:["$","div",null,{"children":["$L1"]}]',
+    ])}</body></html>`;
+    assert.match(extractRSCContent(html)?.content ?? '', /^Persistence keeps/);
   });
 });
 

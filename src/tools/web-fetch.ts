@@ -1,6 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
-import { request as httpRequest, type IncomingMessage, type RequestOptions } from 'node:http';
-import { request as httpsRequest } from 'node:https';
+import { Agent as HttpAgent, request as httpRequest, type IncomingMessage, type RequestOptions } from 'node:http';
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { isIP, type LookupFunction } from 'node:net';
 import { basename } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -105,6 +105,7 @@ export function addressKind(ip: string): string | undefined {
   if (w0 === 0x64 && w1 === 0xff9b && w2 === 0 && w3 === 0 && w4 === 0 && w5 === 0) return v4Kind(embeddedV4(w6, w7));
   if (w0 === 0x2002) return v4Kind(embeddedV4(w1, w2));
   if ((w0 & 0xffc0) === 0xfe80) return 'a link-local';
+  if (w0 === 0xfd7a && w1 === 0x115c && w2 === 0xa1e0) return 'a Tailscale';
   if ((w0 & 0xfe00) === 0xfc00) return 'a unique-local';
   if ((w0 & 0xff00) === 0xff00) return 'a multicast';
   // Global unicast is 2000::/3; everything else is unassigned or special.
@@ -114,7 +115,8 @@ export function addressKind(ip: string): string | undefined {
 /** Whether `ip` (IPv4 or IPv6, textual) is a public unicast address that web_fetch may connect to. */
 export const isPublicAddress = (ip: string): boolean => addressKind(ip) === undefined;
 
-const defaultLookup: Lookup = (hostname) => dnsLookup(hostname, { all: true, verbatim: true });
+/** The default `Lookup`: every address `node:dns` finds for `hostname`. The browser tools check hosts with it too. */
+export const lookupAll: Lookup = (hostname) => dnsLookup(hostname, { all: true, verbatim: true });
 
 class Refusal extends Error {}
 
@@ -122,7 +124,7 @@ class Refusal extends Error {}
 async function checkedAddress(url: URL, options: WebFetchOptions): Promise<LookupAddress> {
   const host = url.hostname.replace(/^\[|\]$/g, '');
   const literal = isIP(host);
-  const addresses = literal ? [{ address: host, family: literal }] : await (options.lookup ?? defaultLookup)(host);
+  const addresses = literal ? [{ address: host, family: literal }] : await (options.lookup ?? lookupAll)(host);
   if (!addresses.length) throw new Error(`${host} did not resolve`);
   if (!options.allowPrivate?.(host)) {
     for (const { address } of addresses) {
@@ -154,10 +156,20 @@ const pinned = (address: LookupAddress): LookupFunction => (_hostname, options, 
   else callback(null, address.address, address.family);
 };
 
+/**
+ * Agents of web_fetch's own, never the global ones: Node may give its global agents a proxy from the environment
+ * (`NODE_USE_ENV_PROXY`), which would resolve and connect itself, past the pinned lookup. No keep-alive, so a socket
+ * pinned to one address is never reused for another request.
+ */
+const httpAgent = new HttpAgent({ keepAlive: false });
+const httpsAgent = new HttpsAgent({ keepAlive: false });
+
 function get(url: URL, address: LookupAddress, signal: AbortSignal): Promise<IncomingMessage> {
+  const https = url.protocol === 'https:';
   const options: RequestOptions = {
     method: 'GET',
     signal,
+    agent: https ? httpsAgent : httpAgent,
     lookup: pinned(address),
     headers: {
       'User-Agent': USER_AGENT,
@@ -167,7 +179,7 @@ function get(url: URL, address: LookupAddress, signal: AbortSignal): Promise<Inc
       'Cache-Control': 'no-cache',
     },
   };
-  const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
+  const send = https ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => {
     const req = send(url, options, resolve);
     req.on('error', reject);
@@ -228,20 +240,54 @@ const isPDF = (url: URL, contentType: string) =>
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
-async function extractPDF(bytes: Buffer, url: URL): Promise<Extracted> {
+/** Call `target[method](...args)` on a pdf.js object this project has no types for, or throw. */
+async function callMethod(target: unknown, method: string, ...args: unknown[]): Promise<unknown> {
+  const fn = record(target)?.[method];
+  if (typeof fn !== 'function') throw new Error(`PDF: no ${method}()`);
+  const value: unknown = await Reflect.apply(fn, target, args);
+  return value;
+}
+
+/** One page's text, as unpdf's `extractText` joins it. */
+async function pageText(pdf: unknown, pageNumber: number): Promise<string> {
+  const page = await callMethod(pdf, 'getPage', pageNumber);
+  const items = record(await callMethod(page, 'getTextContent'))?.items;
+  if (!Array.isArray(items)) return '';
+  const list: readonly unknown[] = items;
+  return list.map((item) => {
+    const fields = record(item);
+    return typeof fields?.str === 'string' ? fields.str + (fields.hasEOL === true ? '\n' : '') : '';
+  }).join('');
+}
+
+async function extractPDF(bytes: Buffer, url: URL, signal: AbortSignal): Promise<Extracted> {
   // unpdf's typed helpers: its getDocumentProxy types point at pdf.js declarations the package does not ship.
-  const { extractText, getDocumentProxy, getMeta } = await import('unpdf');
+  const { getDocumentProxy, getMeta } = await import('unpdf');
   const pdf: unknown = await getDocumentProxy(new Uint8Array(bytes));
-  const meta = await getMeta(pdf);
-  const info: Readonly<Record<string, unknown>> = meta.info;
+  try {
+    return await pdfContent(pdf, url, signal, await getMeta(pdf));
+  } finally {
+    await callMethod(pdf, 'destroy').catch(() => undefined);
+  }
+}
+
+async function pdfContent(pdf: unknown, url: URL, signal: AbortSignal, meta: { readonly info: Readonly<Record<string, unknown>> }): Promise<Extracted> {
+  const info = meta.info;
   const metaTitle = typeof info.Title === 'string' ? info.Title.trim() : '';
   const metaAuthor = typeof info.Author === 'string' ? info.Author.trim() : '';
   const urlTitle = basename(url.pathname, '.pdf').replace(/[_-]+/g, ' ').trim() || 'document';
   const title = metaTitle || urlTitle;
 
-  const { totalPages, text } = await extractText(pdf);
+  const numPages = record(pdf)?.numPages;
+  const totalPages = typeof numPages === 'number' ? numPages : 0;
   const maxPages = Math.min(totalPages, MAX_PDF_PAGES);
-  const pages = text.slice(0, maxPages).map((page) => page.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  // Page by page, the first 100 only, and stoppable: a long PDF must not hold the host past an abort or the timeout.
+  const pages: string[] = [];
+  for (let n = 1; n <= maxPages; n++) {
+    signal.throwIfAborted();
+    const text = (await pageText(pdf, n)).replace(/\s+/g, ' ').trim();
+    if (text) pages.push(text);
+  }
   const truncated = totalPages > maxPages;
   const lines = [
     `# ${title}`, '', `> Source: ${url.href}`,
@@ -252,6 +298,10 @@ async function extractPDF(bytes: Buffer, url: URL): Promise<Extracted> {
   if (truncated) lines.push('', '---', '', `*[Truncated: Only first ${maxPages} of ${totalPages} pages extracted]*`);
   return { title, content: lines.join('\n') };
 }
+
+/** Bounds on the RSC walk: nodes visited, and characters any one piece of text may grow to. */
+const MAX_RSC_NODES = 200_000;
+const MAX_RSC_CHARS = 2 * MAX_OUTPUT_CHARS;
 
 const SKIP_TAGS = new Set(['script', 'style', 'svg', 'path', 'circle', 'link', 'meta', 'template', 'button', 'input', 'nav', 'footer', 'aside']);
 
@@ -285,16 +335,36 @@ export function extractRSCContent(html: string): { title: string; content: strin
     return value;
   };
 
+  // `visited` holds the chunks being expanded (a reference back to one is a cycle); `expanded` memoizes each chunk's
+  // text, so a chunk referenced many times (chunk n citing chunk n+1 twice, n deep) is walked once, not 2^n times.
+  // Each text is capped and the walk has a node budget, so no payload can hold the host.
   const visited = new Set<string>();
+  const expanded = new Map<string, string>();
+  let nodes = 0;
+  const cap = (text: string) => text.length > MAX_RSC_CHARS ? text.slice(0, MAX_RSC_CHARS) : text;
   const follow = (id: string, inCode: boolean): string => {
     if (visited.has(id)) return '';
+    const key = `${inCode ? 'c' : 't'}${id}`;
+    const known = expanded.get(key);
+    if (known !== undefined) return known;
     visited.add(id);
     const node = chunk(id);
     const text = node ? walk(node, inCode) : '';
     visited.delete(id);
+    expanded.set(key, text);
     return text;
   };
-  const walk = (node: unknown, inCode = false): string => {
+  const walkAll = (items: readonly unknown[], inCode: boolean): string => {
+    let text = '';
+    for (const item of items) {
+      text += walk(item, inCode);
+      if (text.length >= MAX_RSC_CHARS) break;
+    }
+    return cap(text);
+  };
+  const walk = (node: unknown, inCode = false): string => cap(walkNode(node, inCode));
+  const walkNode = (node: unknown, inCode: boolean): string => {
+    if (++nodes > MAX_RSC_NODES) return '';
     if (typeof node === 'string') {
       const ref = /^\$L([0-9a-f]+)$/i.exec(node)?.[1];
       if (ref) return follow(ref, inCode);
@@ -305,7 +375,7 @@ export function extractRSCContent(html: string): { title: string; content: strin
     if (!Array.isArray(node)) return '';
     const items: readonly unknown[] = node;
     const [marker, tag] = items;
-    if (marker !== '$' || typeof tag !== 'string') return items.map((item) => walk(item, inCode)).join('');
+    if (marker !== '$' || typeof tag !== 'string') return walkAll(items, inCode);
     if (SKIP_TAGS.has(tag)) return '';
     const props = record(items[3]) ?? {};
     const children: unknown = props.children;
@@ -405,7 +475,7 @@ async function extract(start: URL, options: WebFetchOptions, signal: AbortSignal
     response.destroy();
     return { url, title: '', content: '', error: `Response too large (${Math.round(length / 1024 / 1024)}MB)` };
   }
-  if (pdf) return { url, ...await extractPDF(await boundedBody(response, max), url) };
+  if (pdf) return { url, ...await extractPDF(await boundedBody(response, max), url, signal) };
   if (UNSUPPORTED.some((type) => contentType.includes(type))) {
     response.destroy();
     return { url, title: '', content: '', error: `Unsupported content type: ${contentType.split(';')[0] ?? ''}` };

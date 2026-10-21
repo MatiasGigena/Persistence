@@ -48,10 +48,15 @@ A change is done when both pass and the docs below still match the code.
   `NodeExecutionEnv` outside tests. `/tools on|off`
   switches them for the current launch only; never persist that choice. Launch config and the toggle share
   one tool list (`piTools`), and both reconfigure Pi and its agents.
-- **Network tools stay in their lanes.** The kits' network tools differ: the `browser` may open loopback and
-  private addresses (it debugs the user's apps) and keeps its profiles in `chat.unii/browser/`, hidden from the
-  coding tools and left out of backups; `web_fetch` refuses loopback, private, link-local, CGNAT and unique-local
-  addresses, on every redirect too. The host closes the browsers when the instance closes (`Instance.close`).
+- **Network tools stay in their lanes.** The kits' network tools differ. Every `browser` request goes through
+  its own loopback egress proxy, which checks each connection (redirect hops and WebSockets included) and connects
+  only to the address it checked: loopback and private addresses are allowed (it debugs the user's apps),
+  link-local (cloud metadata) and Tailscale/CGNAT never, and public ones only when the agent has no `read` or
+  `coding` kit (`localOnly`: the Reviewer's browser is local only, so it cannot carry files out). Profiles live in
+  `chat.unii/browser/`, hidden from the coding tools and left out of backups. `web_fetch` refuses loopback,
+  private, link-local, CGNAT and unique-local addresses, on every redirect too. Agents without the `coding` kit
+  may message only Pi and their own sub agents, so untrusted web content cannot steer one that has bash. The host
+  closes the browsers when the instance closes (`Instance.close`).
 - **No unauthenticated listener.** The server listens on loopback TCP (behind `tailscale serve`, with login,
   device and origin checks) or a 0600 Unix socket only; never on a public address. See
   [docs/protocol.md](docs/protocol.md#authentication).

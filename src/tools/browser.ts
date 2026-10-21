@@ -1,10 +1,17 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
+import { Agent as HttpAgent, createServer, type IncomingMessage, request as httpRequest, type ServerResponse } from 'node:http';
+import { connect, isIP, type LookupFunction } from 'node:net';
 import { join } from 'node:path';
+import type { Duplex } from 'node:stream';
 import type { Context, JsonValue } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { ConversationId, Extension, ToolExecutionResult, ToolRegistration } from '@earendil-works/pi-durable';
-import { type BrowserContext, chromium, type ConsoleMessage, type Page, type Request } from 'playwright-core';
+import {
+  type BrowserContext, chromium, type ConsoleMessage, type Page, type Request, type Route, type WebSocketRoute,
+} from 'playwright-core';
+import { addressKind, type Lookup, type LookupAddress, lookupAll } from './web-fetch.ts';
 
 /**
  * Browser tools: a headless Chromium per agent, ported from Pi Cloud's `resources/extensions/browser` (ADR 0027).
@@ -14,9 +21,14 @@ import { type BrowserContext, chromium, type ConsoleMessage, type Page, type Req
  * `<profileRoot>/browser/<key>`, whose cookies and localStorage survive between calls, tasks and restarts. Each browser
  * has one queue: Playwright's Page is not safe for concurrent use, so a `goto` and an `eval` fired in one round must not
  * interleave, and two sessions of one agent running at once (rare) take turns on the same page. Each operation, queue wait included,
- * has 60 s; a timeout or an abort closes that browser, and the next call relaunches it. Navigation is HTTP(S) only;
- * loopback and private addresses are allowed, since the browser is for debugging the user's apps. Unlike Pi Cloud there
- * is no `/browser on` gate and no manual control from the web UI.
+ * has 60 s; a timeout or an abort closes that browser, and the next call relaunches it. Navigation is HTTP(S) only.
+ * Unlike Pi Cloud there is no `/browser on` gate and no manual control from the web UI.
+ *
+ * Egress: every request the page makes (navigations, subresources, fetch and XHR, each redirect hop, WebSockets) is
+ * checked in Node before Chromium may send it (`egressCheck`, enforced by the routes and a per-browser egress proxy). Loopback and private addresses are allowed, since the
+ * browser is for debugging the user's apps; link-local (cloud metadata), CGNAT and Tailscale addresses and the
+ * unspecified and reserved ones are always refused; a `localOnly` browser refuses public addresses too. Service workers
+ * are blocked, since their requests would pass the routes unchecked.
  *
  * pi-durable extensions have no shutdown hook, so the host calls `close()` when it closes the Harness.
  */
@@ -34,10 +46,13 @@ export const KEEP_HEADERS: ReadonlySet<string> = new Set([
   'authorization', 'apikey', 'content-type', 'x-client-info', 'accept-profile', 'content-profile', 'prefer', 'location',
   'www-authenticate', 'retry-after',
 ]);
-const SENSITIVE = /authorization|cookie|api[-_]?key|token|secret/i;
+const SENSITIVE = /authorization|cookie|api[-_]?key|token|secret|session|csrf|xsrf|(?:^|[^a-z])sid(?:$|[^a-z])/i;
 /** Query and fragment parameters whose values `redactUrl` hides. */
-const SENSITIVE_PARAM = /token|code|secret|key|auth|session|password|sig/i;
+const SENSITIVE_PARAM = /token|code|secret|key|auth|session|password|sig|csrf|xsrf|(?:^|[^a-z])sid(?:$|[^a-z])/i;
 const REDACTED = '[redacted]';
+/** A JWT: three base64url parts, the first a JSON object (`{"` is `eyJ`). */
+const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
+const URL_IN_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
 
 function redactParams(params: string): string {
   return params.split('&').map((pair) => {
@@ -49,8 +64,14 @@ function redactParams(params: string): string {
   }).join('&');
 }
 
-/** `url` (absolute or not) with the values of sensitive query and fragment parameters (`code=`, `#access_token=`) hidden. */
-export function redactUrl(url: string): string {
+/**
+ * `url` (absolute or not) without its `user:pass@` and with the values of sensitive query and fragment parameters
+ * (`code=`, `#access_token=`) hidden.
+ */
+const stripUserinfo = (url: string): string => url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, '$1');
+
+export function redactUrl(raw: string): string {
+  const url = stripUserinfo(raw);
   const hash = url.indexOf('#');
   const before = hash < 0 ? url : url.slice(0, hash);
   const question = before.indexOf('?');
@@ -58,8 +79,14 @@ export function redactUrl(url: string): string {
   return hash < 0 ? path : `${path}#${redactParams(url.slice(hash + 1))}`;
 }
 
+/** Console text with JWTs hidden, and URLs in it redacted as `redactUrl` does. */
+export function redactText(text: string): string {
+  return text.replace(URL_IN_TEXT, (url) => redactUrl(url)).replace(JWT, REDACTED);
+}
+
 /** A `location` header with its whole query and fragment hidden: redirects carry OAuth codes and tokens there. */
-export function redactLocation(url: string): string {
+export function redactLocation(raw: string): string {
+  const url = stripUserinfo(raw);
   const hash = url.indexOf('#');
   const before = hash < 0 ? url : url.slice(0, hash);
   const question = before.indexOf('?');
@@ -89,6 +116,204 @@ export function httpUrl(url: string): URL {
   return parsed;
 }
 
+// ── Egress ───────────────────────────────────────────────────────────
+
+/** Address kinds (`addressKind`) every browser may open besides public ones: the user's machine and LAN. */
+const LOCAL_KINDS: ReadonlySet<string> = new Set(['a loopback', 'a private', 'a unique-local']);
+
+/**
+ * Why a browser may not open `address`, as an article and adjective (`a link-local`), or undefined when it may.
+ * Loopback, private (RFC 1918) and unique-local addresses are allowed; public ones unless `localOnly`; every other kind
+ * (link-local, CGNAT and Tailscale, unspecified, multicast, reserved) never.
+ */
+export function browserAddressRefusal(address: string, localOnly: boolean): string | undefined {
+  const kind = addressKind(address);
+  if (kind === undefined) return localOnly ? 'a public' : undefined;
+  return LOCAL_KINDS.has(kind) ? undefined : kind;
+}
+
+const WEB_SCHEMES: ReadonlySet<string> = new Set(['http:', 'https:', 'ws:', 'wss:']);
+
+/** An egress verdict: the reason a request is refused, or the checked addresses to connect to (none for `data:` and such). */
+export type EgressCheck =
+  | { readonly refusal: string; readonly addresses?: undefined }
+  | { readonly refusal?: undefined; readonly addresses: readonly LookupAddress[] };
+
+const LOOPBACK: readonly LookupAddress[] = [{ address: '127.0.0.1', family: 4 }];
+
+/**
+ * Whether a browser may send a request to `raw`. The host of an http(s) or ws(s) URL is checked as an IP literal, or
+ * resolved with `lookup` and refused when any of its addresses is; a host that does not resolve is refused too, except
+ * `localhost` and `*.localhost`, which are loopback. Other schemes (`data:`, `blob:`, `about:`) open no connection.
+ *
+ * Two layers apply it. The context's routes refuse a request before Chromium sends it, with the reason in the request's
+ * failure; they cannot see redirect hops or a worker's WebSocket. The egress proxy (`startEgressProxy`) sees every
+ * connection and dials only the addresses this check returned, which also closes DNS rebinding: Chromium resolving the
+ * name again would need `--host-resolver-rules`, fixed at launch and not per request, so the proxy resolves instead.
+ * Accepted residue: the lookup itself sends the name to the resolver, so a `localOnly` browser can still leak a
+ * hostname's labels through DNS, though no connection to a public address is ever made.
+ */
+export async function egressCheck(raw: string, localOnly: boolean, lookup: Lookup = lookupAll): Promise<EgressCheck> {
+  let url: URL;
+  try { url = new URL(raw); } catch { return { refusal: `Refused: ${raw} is not a valid URL.` }; }
+  if (!WEB_SCHEMES.has(url.protocol)) return { addresses: [] };
+  const host = url.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  const why = (kind: string) => kind === 'a public'
+    ? 'this browser opens loopback and private addresses only.' : 'the browser may not open it.';
+  const family = isIP(host);
+  if (family) {
+    const kind = browserAddressRefusal(host, localOnly);
+    return kind ? { refusal: `Refused: ${host} is ${kind} address; ${why(kind)}` } : { addresses: [{ address: host, family }] };
+  }
+  let addresses: readonly LookupAddress[];
+  try { addresses = await lookup(host); } catch { addresses = []; }
+  if (!addresses.length && (host === 'localhost' || host.endsWith('.localhost'))) addresses = LOOPBACK;
+  if (!addresses.length) return { refusal: `Refused: ${host} did not resolve.` };
+  for (const { address } of addresses) {
+    const kind = browserAddressRefusal(address, localOnly);
+    if (kind) return { refusal: `Refused: ${host} resolves to ${address}, ${kind} address; ${why(kind)}` };
+  }
+  return { addresses };
+}
+
+/** `egressCheck`'s refusal for `raw`, or undefined when a browser may open it. */
+export const egressRefusal = async (raw: string, localOnly: boolean, lookup: Lookup = lookupAll): Promise<string | undefined> =>
+  (await egressCheck(raw, localOnly, lookup)).refusal;
+
+/** How long a host's verdict is reused: a page loads many resources from one host. */
+const VERDICT_TTL_MS = 5_000;
+
+/** The header the egress proxy sets on the 403 it answers a refused plain-HTTP request with. */
+const REFUSED_HEADER = 'x-pi-durable-refused';
+
+/** A `lookup` that answers with the checked addresses only, so a socket connects where the check looked. */
+const pinnedAll = (addresses: readonly LookupAddress[]): LookupFunction => (_hostname, options, callback) => {
+  const [first] = addresses;
+  if (options.all) callback(null, addresses.map(({ address, family }) => ({ address, family })));
+  else if (first) callback(null, first.address, first.family);
+  else callback(new Error('no address'), '', 4);
+};
+
+type EgressProxy = { readonly server: string; readonly username: string; readonly password: string; close(): void };
+
+type ProxyHooks = {
+  readonly check: (url: string) => Promise<EgressCheck>;
+  readonly refused: (url: string, refusal: string) => void;
+  /** Tests only: the address to connect to for a checked one. */
+  readonly connectAddress?: (address: string) => string;
+};
+
+/**
+ * One browser's egress proxy, on loopback behind a random Basic credential that only its Chromium is given. Chromium
+ * sends every connection through it (Playwright proxies loopback too), so it sees what the context's routes cannot:
+ * each redirect hop, WebSockets from workers, WebRTC over TCP (UDP is off). It checks each host as the routes do, then
+ * connects to the addresses it checked, so a DNS answer that changes between the check and the connection (rebinding)
+ * reaches nothing new. Plain HTTP is forwarded; HTTPS and WebSockets are CONNECT tunnels, checked by host and port.
+ */
+async function startEgressProxy(hooks: ProxyHooks): Promise<EgressProxy> {
+  const username = 'pi-durable';
+  const password = randomBytes(24).toString('base64url');
+  const expected = Buffer.from(`Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`);
+  const authorized = (req: IncomingMessage): boolean => {
+    const given = Buffer.from(req.headers['proxy-authorization'] ?? '');
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  };
+  const challenge = 'Proxy-Authenticate: Basic realm="pi-durable browser"';
+  const agent = new HttpAgent({ keepAlive: false });
+  const tunnels = new Set<Duplex>();
+  const target = (addresses: readonly LookupAddress[]): readonly LookupAddress[] => {
+    const map = hooks.connectAddress;
+    return map ? addresses.map(({ address }) => { const mapped = map(address); return { address: mapped, family: isIP(mapped) || 4 }; }) : addresses;
+  };
+
+  const forward = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (!authorized(req)) { res.writeHead(407, { 'proxy-authenticate': 'Basic realm="pi-durable browser"' }).end(); return; }
+    const url = req.url ?? '';
+    if (!url.startsWith('http://')) { res.writeHead(400).end(); return; }
+    const verdict = await hooks.check(url);
+    if (verdict.refusal !== undefined) {
+      hooks.refused(url, verdict.refusal);
+      res.writeHead(403, { 'content-type': 'text/plain', [REFUSED_HEADER]: verdict.refusal }).end(verdict.refusal);
+      return;
+    }
+    const headers = { ...req.headers };
+    delete headers['proxy-authorization'];
+    delete headers['proxy-connection'];
+    const upstream = httpRequest(url, {
+      method: req.method ?? 'GET', headers, agent, lookup: pinnedAll(target(verdict.addresses)),
+    }, (response) => {
+      res.writeHead(response.statusCode ?? 502, response.statusMessage, response.rawHeaders);
+      response.pipe(res);
+    });
+    upstream.on('error', () => { if (res.headersSent) res.destroy(); else res.writeHead(502).end(); });
+    res.on('close', () => upstream.destroy());
+    req.pipe(upstream);
+  };
+
+  const tunnel = async (req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> => {
+    tunnels.add(socket);
+    socket.on('close', () => tunnels.delete(socket));
+    socket.on('error', () => socket.destroy());
+    if (!authorized(req)) { socket.end(`HTTP/1.1 407 Proxy Authentication Required\r\n${challenge}\r\nContent-Length: 0\r\n\r\n`); return; }
+    const authority = req.url ?? '';
+    const url = `https://${authority}/`;
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { socket.end('HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n'); return; }
+    const verdict = await hooks.check(url);
+    if (verdict.refusal !== undefined) {
+      hooks.refused(url, verdict.refusal);
+      socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
+    const upstream = connect({
+      host: parsed.hostname.replace(/^\[|\]$/g, ''), port: Number(parsed.port || 443),
+      lookup: pinnedAll(target(verdict.addresses)), autoSelectFamily: true,
+    });
+    let connected = false;
+    tunnels.add(upstream);
+    upstream.on('close', () => { tunnels.delete(upstream); if (connected) socket.destroy(); });
+    socket.on('close', () => upstream.destroy());
+    upstream.on('error', () => {
+      if (!connected) socket.end('HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n');
+      upstream.destroy();
+    });
+    upstream.on('connect', () => {
+      connected = true;
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head.length) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+  };
+
+  const server = createServer();
+  server.on('request', (req: IncomingMessage, res: ServerResponse) => {
+    forward(req, res).catch(() => { if (!res.headersSent) res.writeHead(502).end(); else res.destroy(); });
+  });
+  server.on('connect', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    tunnel(req, socket, head).catch(() => socket.destroy());
+  });
+  // Chromium tunnels WebSockets with CONNECT; an upgrade sent as a plain request is not forwarded.
+  server.on('upgrade', (_req: IncomingMessage, socket: Duplex) => { socket.destroy(); });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+  });
+  // A browser that never closed (its launch failed or hung) must not keep the process alive.
+  server.unref();
+  const address = server.address();
+  const port = address !== null && typeof address === 'object' ? address.port : 0;
+  return {
+    server: `http://127.0.0.1:${port}`, username, password,
+    close: () => {
+      server.close();
+      server.closeAllConnections();
+      for (const socket of tunnels) socket.destroy();
+      agent.destroy();
+    },
+  };
+}
+
 /**
  * Page source that evaluates `source` once and calls the value if it is a function, so an expression, a function
  * (`() => x`, `async () => {...}`) and an already-called IIFE all work. Wrapping by regex instead double-calls IIFEs.
@@ -99,6 +324,12 @@ export const evalSource = (source: string): string =>
 export type BrowserLaunchOptions = {
   readonly headless: true;
   readonly chromiumSandbox: true;
+  /** Service workers would fetch past the context's routes, unchecked. */
+  readonly serviceWorkers: 'block';
+  /** The browser's egress proxy (`startEgressProxy`): every connection goes through it. */
+  readonly proxy: { readonly server: string; readonly username: string; readonly password: string };
+  /** WebRTC may not send UDP, which would pass the proxy; its TCP goes through the proxy. */
+  readonly args: string[];
   readonly executablePath?: string;
   readonly viewport: { readonly width: number; readonly height: number };
 };
@@ -117,6 +348,16 @@ export type BrowserOptions = {
    * A key that is not a plain name (`BROWSER_KEY`) falls back to the conversation ID. Default: the conversation ID.
    */
   readonly keyOf?: (conversationId: ConversationId, context: Context) => Promise<string>;
+  /**
+   * Whether the browser of `key` (the `keyOf` result: an agent's name) may open loopback and private addresses only,
+   * never public ones, so an agent that can also read files cannot send them to the internet. Asked once per key, when
+   * its browser is first used. Default: no browser is local-only.
+   */
+  readonly localOnly?: (key: string) => boolean;
+  /** Resolves hosts for the egress check; tests inject it. Default: `node:dns`, every address. */
+  readonly lookup?: Lookup;
+  /** Tests only: the address the egress proxy connects to for one it checked. Default: that address. */
+  readonly connectAddress?: (address: string) => string;
 };
 
 /** A browser key that is safe as a folder name: an agent name (`AGENT_NAME`) or a conversation ID. */
@@ -142,6 +383,17 @@ function pushBounded<T>(buffer: T[], entry: T): void {
 /** One key's (agent's) browser: its context, current page, buffers, and operation queue. */
 type Browser = {
   readonly profileDir: string;
+  readonly localOnly: boolean;
+  /** Recent egress verdicts by host name, so one page's many requests resolve once; the proxy connects to their addresses. */
+  readonly verdicts: Map<string, { readonly at: number; readonly check: Promise<EgressCheck> }>;
+  /** Started with the first launch, closed by `close()`. */
+  proxy: Promise<EgressProxy> | null;
+  /** Refusals by the proxy, by host (`host:port`), for the rows and results the routes did not refuse. */
+  readonly proxyRefusals: Map<string, { readonly at: number; readonly refusal: string }>;
+  /** The reason each refused request was aborted, for `browser_network`. */
+  readonly refusals: WeakMap<Request, string>;
+  /** The last refused navigation request, for `browser_goto` (a redirect to a refused address). */
+  navigationRefusal: string | undefined;
   context: BrowserContext | null;
   page: Page | null;
   /** Bumped by teardown, so a launch that finishes after it closes what it launched. */
@@ -168,13 +420,77 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     let browser = browsers.get(key);
     if (!browser) {
       browser = {
-        profileDir: join(options.profileRoot, 'browser', key), context: null, page: null, generation: 0,
+        profileDir: join(options.profileRoot, 'browser', key), localOnly: options.localOnly?.(key) ?? false,
+        verdicts: new Map(), proxy: null, proxyRefusals: new Map(), refusals: new WeakMap(), navigationRefusal: undefined, context: null, page: null, generation: 0,
         tail: Promise.resolve(), console: [], network: [], watched: new WeakSet(),
       };
       browsers.set(key, browser);
     }
     return browser;
   };
+
+  const lookup = options.lookup ?? lookupAll;
+
+  /** `egressCheck` for `url`, its host's verdict reused for a few seconds. */
+  const checkFor = (browser: Browser, url: string): Promise<EgressCheck> => {
+    let host: string;
+    try { host = new URL(url).hostname; } catch { return egressCheck(url, browser.localOnly, lookup); }
+    const now = Date.now();
+    const cached = browser.verdicts.get(host);
+    if (cached && now - cached.at < VERDICT_TTL_MS) return cached.check;
+    if (browser.verdicts.size > 256) browser.verdicts.clear();
+    const check = egressCheck(url, browser.localOnly, lookup);
+    browser.verdicts.set(host, { at: now, check });
+    return check;
+  };
+  const refusalFor = async (browser: Browser, url: string): Promise<string | undefined> => (await checkFor(browser, url)).refusal;
+
+  const proxyFor = (browser: Browser): Promise<EgressProxy> => {
+    browser.proxy ??= startEgressProxy({
+      check: (url) => checkFor(browser, url),
+      refused: (url, refusal) => {
+        let host = url;
+        try { host = new URL(url).host; } catch { /* keep it whole */ }
+        if (browser.proxyRefusals.size > 256) browser.proxyRefusals.clear();
+        browser.proxyRefusals.set(host, { at: Date.now(), refusal });
+      },
+      ...(options.connectAddress ? { connectAddress: options.connectAddress } : {}),
+    });
+    const started = browser.proxy;
+    started.catch(() => { if (browser.proxy === started) browser.proxy = null; });
+    return started;
+  };
+
+  /** The proxy's recent refusal of `url`'s host, if any. */
+  const proxyRefusal = (browser: Browser, url: string, since = 0): string | undefined => {
+    let host: string;
+    try { host = new URL(url).host; } catch { return undefined; }
+    const hit = browser.proxyRefusals.get(host) ?? browser.proxyRefusals.get(`${host}:${new URL(url).protocol === 'http:' ? 80 : 443}`);
+    return hit && hit.at >= since && Date.now() - hit.at < VERDICT_TTL_MS * 6 ? hit.refusal : undefined;
+  };
+
+  /** The context's gate for every request: aborted with its reason when refused, else continued. */
+  async function guardRequest(browser: Browser, route: Route): Promise<void> {
+    const request = route.request();
+    try {
+      const refusal = await refusalFor(browser, request.url());
+      if (!refusal) { await route.continue(); return; }
+      browser.refusals.set(request, refusal);
+      if (request.isNavigationRequest()) browser.navigationRefusal = refusal;
+      await route.abort('blockedbyclient');
+    } catch {
+      await route.abort('blockedbyclient').catch(() => undefined);
+    }
+  }
+
+  /** The gate for WebSockets: connected to the server when allowed, closed with the reason (in `browser_network`) when not. */
+  async function guardSocket(browser: Browser, socket: WebSocketRoute): Promise<void> {
+    const url = socket.url();
+    const refusal = await refusalFor(browser, url).catch(() => 'Refused: the address check failed.');
+    if (!refusal) { socket.connectToServer(); return; }
+    pushBounded(browser.network, { ts: Date.now(), method: 'GET', url, resourceType: 'websocket', failure: refusal });
+    await socket.close({ code: 1008, reason: 'Refused by the browser\'s egress policy' });
+  }
 
   const teardown = async (browser: Browser): Promise<void> => {
     browser.generation++;
@@ -190,15 +506,22 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     page.on('console', (message: ConsoleMessage) => {
       const location = message.location();
       pushBounded(browser.console, {
-        ts: Date.now(), type: message.type(), text: message.text(),
+        ts: Date.now(), type: message.type(), text: redactText(message.text()),
         ...(location.url ? { location: `${redactUrl(location.url)}:${location.lineNumber}` } : {}),
       });
     });
     page.on('pageerror', (error) => {
-      pushBounded(browser.console, { ts: Date.now(), type: 'pageerror', text: `${error.name}: ${error.message}` });
+      pushBounded(browser.console, { ts: Date.now(), type: 'pageerror', text: redactText(`${error.name}: ${error.message}`) });
     });
     page.on('requestfinished', (request: Request) => {
       void request.response().then((response) => {
+        const refusal = response?.headers()[REFUSED_HEADER];
+        if (refusal) {
+          pushBounded(browser.network, {
+            ts: Date.now(), method: request.method(), url: request.url(), resourceType: request.resourceType(), failure: refusal,
+          });
+          return;
+        }
         pushBounded(browser.network, {
           ts: Date.now(), method: request.method(), url: request.url(), resourceType: request.resourceType(),
           requestHeaders: request.headers(),
@@ -207,7 +530,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       }, () => { /* aborted with its page */ });
     });
     page.on('requestfailed', (request: Request) => {
-      const failure = request.failure()?.errorText;
+      const failure = browser.refusals.get(request) ?? proxyRefusal(browser, request.url()) ?? request.failure()?.errorText;
       pushBounded(browser.network, {
         ts: Date.now(), method: request.method(), url: request.url(), resourceType: request.resourceType(),
         ...(failure ? { failure } : {}),
@@ -220,10 +543,20 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     if (!browser.context) {
       await mkdir(browser.profileDir, { recursive: true, mode: 0o700 });
       const generation = browser.generation;
+      const { server, username, password } = await proxyFor(browser);
       const launched = await launch(browser.profileDir, {
-        headless: true, chromiumSandbox: true, viewport: { width: 1280, height: 800 },
+        headless: true, chromiumSandbox: true, serviceWorkers: 'block', viewport: { width: 1280, height: 800 },
+        proxy: { server, username, password }, args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
         ...(options.executablePath ? { executablePath: options.executablePath } : {}),
       });
+      try {
+        // Before any page loads: the gates must see the first request.
+        await launched.route('**/*', (route) => guardRequest(browser, route));
+        await launched.routeWebSocket(() => true, (socket) => guardSocket(browser, socket));
+      } catch (error) {
+        await launched.close().catch(() => undefined);
+        throw error;
+      }
       if (generation !== browser.generation) {
         await launched.close().catch(() => undefined);
         throw new Error('Browser launch cancelled');
@@ -280,7 +613,9 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
   const goto = defineTool({
     name: 'browser_goto',
     description: 'Navigate your persistent headless Chromium to an http(s) URL; returns the HTTP status and final URL. '
-      + 'Cookies and localStorage persist across calls. To debug a web app (failed requests, auth, JS errors, a form or '
+      + 'Cookies and localStorage persist across calls. Loopback and private addresses work; link-local (cloud metadata), '
+      + 'CGNAT and Tailscale addresses are refused for every request the page makes, as are public ones when your browser '
+      + 'is local-only. To debug a web app (failed requests, auth, JS errors, a form or '
       + 'a blank screen), drive the live app with browser_goto, browser_eval, browser_console and browser_network instead '
       + 'of asking the user to copy from devtools; after a frontend change, exercise it with browser_click and browser_fill.',
     parameters: Type.Object({
@@ -293,8 +628,29 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     executionMode: 'sequential',
     execute: ({ url, waitUntil, timeoutMs: navigationTimeout }, api, context) => run(api.conversationId, context, async (browser) => {
       const target = httpUrl(url);
+      const refused = (refusal: string) => result(refusal, { status: null, refused: refusal }, true);
+      const early = await refusalFor(browser, target.href);
+      if (early) return refused(early);
       const page = await ensurePage(browser);
-      const response = await page.goto(target.href, { waitUntil: waitUntil ?? 'domcontentloaded', timeout: navigationTimeout ?? 30_000 });
+      browser.navigationRefusal = undefined;
+      const started = Date.now();
+      const latestProxyRefusal = (): string | undefined => {
+        let latest: { readonly at: number; readonly refusal: string } | undefined;
+        for (const hit of browser.proxyRefusals.values()) if (hit.at >= started && (!latest || hit.at >= latest.at)) latest = hit;
+        return latest?.refusal;
+      };
+      let response;
+      try {
+        response = await page.goto(target.href, { waitUntil: waitUntil ?? 'domcontentloaded', timeout: navigationTimeout ?? 30_000 });
+      } catch (error) {
+        // A hop a gate refused fails the navigation: say why rather than net::ERR_BLOCKED_BY_CLIENT or a tunnel error.
+        const refusal = browser.navigationRefusal ?? latestProxyRefusal();
+        if (refusal) return refused(refusal);
+        throw error;
+      }
+      // The routes do not see redirect hops; the proxy refuses a plain-HTTP one with a 403 that names the reason.
+      const proxied = response?.headers()[REFUSED_HEADER];
+      if (proxied) return refused(proxied);
       const status = response?.status() ?? null;
       const finalUrl = redactUrl(page.url());
       return result(`${status ?? '?'} ${finalUrl}`, { status, finalUrl });
@@ -450,6 +806,13 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
   return {
     name: BROWSER_EXTENSION,
     tools: [goto, evaluate, consoleTool, network, fill, click, screenshot, close],
-    close: async () => { await Promise.all([...browsers.values()].map(teardown)); },
+    close: async () => {
+      await Promise.all([...browsers.values()].map(async (browser) => {
+        await teardown(browser);
+        const proxy = browser.proxy;
+        browser.proxy = null;
+        (await proxy?.catch(() => undefined))?.close();
+      }));
+    },
   };
 }

@@ -48,6 +48,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Standing agents (ADR 0027): Coder (programming, coding tools), Reviewer (reviewing and debugging: read tool and a
+  browser) and Researcher (web research: `web_fetch`) exist in every chat, each with its own model and effort.
+  `settings.json`'s `"agents"` replaces the built-in roster. A work launch warns when a standing agent's model is not
+  in the catalog, its provider has no usable login, or its browser has no Chromium; it never fails for them.
+- `delegate` hands a standing agent a task; each task runs in a fresh session of that agent, with Pi's memory view.
+- Browser tools (`browser_goto`, `browser_eval`, `browser_console`, `browser_network`, `browser_fill`,
+  `browser_click`, `browser_screenshot`, `browser_close`) on a headless Chromium, one profile per agent. The browser
+  may open loopback and private addresses, never link-local (cloud metadata) or CGNAT (Tailscale) ones; for an agent
+  that also reads local files (the Reviewer) it is local-only. Install Chromium with
+  `npx --no-install playwright-core install chromium`, or set `PI_DURABLE_CHROMIUM` to another executable.
+- `web_fetch` fetches a public page as Markdown (a PDF as text); it refuses loopback, private, link-local, CGNAT and unique-local
+  addresses, on every redirect too.
+- Agents without coding tools may message only Pi and their own subs.
+- Browser profiles (`chat.unii/browser/`) hold sites' login cookies and are left out of backups.
+- `/model` and `/effort` keep the other keys of `settings.json` (such as `agents`) when they write it.
+
 - Web app: a reasoning effort chip beside the model's chip (and "Reasoning effort" in the menu) opens the levels
   the current model takes; tapping one sets it.
 - `/effort` picks the reasoning effort (thinking level) for Pi and its agents from the levels the current model
