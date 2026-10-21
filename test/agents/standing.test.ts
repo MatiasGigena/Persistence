@@ -95,7 +95,7 @@ describe('standing agents (offline, host wiring)', { concurrency: false, timeout
         assert.deepEqual([agent.role, agent.parent, agent.standing, agent.reported], ['main', 'Pi', true, []], name);
         ids[name] = agent.conversationId;
       }
-      assert.deepEqual(warnings, ['Standing agents run without tool kits this host lacks: Researcher (web_fetch).']);
+      assert.deepEqual(warnings, [], 'the host has every kit');
 
       assert.deepEqual(await stored(instance, 'Coder'), { model: 'faux-coder', thinkingLevel: 'medium',
         tools: [...AGENT_TOOLS, ...CODING].sort() });
@@ -103,7 +103,7 @@ describe('standing agents (offline, host wiring)', { concurrency: false, timeout
       assert.deepEqual([reviewer.model, reviewer.thinkingLevel, reviewer.tools], ['faux-coder', 'xhigh', [...AGENT_TOOLS, 'browser_goto', 'read'].sort()]);
       assert.deepEqual(await offered(instance, 'Reviewer'), [...AGENT_TOOLS, 'browser_goto', 'read'].sort(), 'the kit\'s extension is selected');
       assert.deepEqual(await offered(instance, 'Coder'), [...AGENT_TOOLS, ...CODING].sort(), 'no browser without the kit');
-      assert.deepEqual((await stored(instance, 'Researcher')).tools, AGENT_TOOLS, 'a missing kit gives no tools');
+      assert.deepEqual((await stored(instance, 'Researcher')).tools, [...AGENT_TOOLS, 'web_fetch'].sort());
 
       // An ad-hoc agent, Lead, to compare with.
       const pi = await instance.root.submit({ type: 'input', content: 'Start Lead.' }, instance.context);

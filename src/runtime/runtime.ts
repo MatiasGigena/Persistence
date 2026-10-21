@@ -15,6 +15,9 @@ import type { AgentsSetup, Roster, ToolKits } from '../agents/index.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
+import { createBrowserExtension } from '../tools/browser.ts';
+import type { BrowserOptions } from '../tools/browser.ts';
+import { createWebFetchExtension } from '../tools/web-fetch.ts';
 import { GuardedEnv } from './guard.ts';
 import type { Protection } from './guard.ts';
 
@@ -42,10 +45,15 @@ export interface InstanceOptions {
   /** The standing agents (ADR 0027); default none. The host passes settings.json's roster, or the built-in one. */
   readonly roster?: Roster;
   /**
-   * Tool kits besides the built-in `coding` and `read` (`browser`, `web_fetch`), by kit; a kit's extension is
-   * installed in the registry on every launch. A standing agent's kit that no one supplies gives it none of its tools.
+   * Tool kits that replace this instance's own (`coding`, `read`, `browser`, `web_fetch`), by kit; tests use it. A kit's
+   * extension is installed in the registry on every launch. A standing agent's kit that no one supplies gives it none
+   * of its tools.
    */
   readonly kits?: ToolKits;
+  /** PI_DURABLE_CHROMIUM: the browser kit's Chromium executable; Playwright's own download otherwise. */
+  readonly chromium?: string | undefined;
+  /** Launches the browser kit's Chromium; tests inject it. Default: Playwright's `launchPersistentContext`. */
+  readonly launchBrowser?: BrowserOptions['launch'];
   /** A launch warning, such as standing agents' missing kits; at most one per launch. */
   readonly onWarning?: (message: string) => void;
 }
@@ -58,6 +66,8 @@ export interface Instance {
   readonly memory: Memory | undefined;
   /** The catalog and credentials the Harness runs models with. */
   readonly models: Models;
+  /** The tool kits standing agents draw on, by kit (ADR 0027). */
+  readonly kits: ToolKits;
   /**
    * Switch Pi, its ad-hoc agents, and the memory's compaction model (its provider's cheap one) to `model`, from their
    * next request; standing agents and their subs keep the roster's. Checks nothing: callers validate first. Rejects on
@@ -76,6 +86,7 @@ export interface Instance {
    * no commit lands during it and, since it is synchronous, no memory write either. For online backups (ADR 0022).
    */
   exclusive<T>(step: (database: DatabaseSync) => T): Promise<T>;
+  /** Close the Harness, then every browser the `browser` kit launched, then the memory. */
   close(): Promise<void>;
 }
 
@@ -152,6 +163,8 @@ export async function openInstance({
   onReport,
   roster = {},
   kits: extraKits = {},
+  chromium,
+  launchBrowser,
   onWarning,
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
@@ -168,7 +181,13 @@ export async function openInstance({
   });
   // Spawned agents copy Pi's choices, then standing ones their roster entry's; the chat's memory is Pi's alone.
   const childAgent: AgentChange = { extensions: { remove: [Unii] } };
-  const kits: ToolKits = { ...builtinKits(), ...extraKits };
+  // Browser profiles live in the memory directory, which the coding tools cannot read or change (guard.ts); the
+  // extensions have no shutdown hook, so close() closes the browsers. Neither opens anything until a tool runs.
+  const Browser = createBrowserExtension({ profileRoot: memoryDir,
+    ...chromium ? { executablePath: chromium } : {}, ...launchBrowser ? { launch: launchBrowser } : {} });
+  const WebFetch = createWebFetchExtension();
+  const kits: ToolKits = { ...builtinKits(), browser: { extension: Browser, tools: Browser.tools },
+    web_fetch: { extension: WebFetch, tools: WebFetch.tools }, ...extraKits };
   const setup: AgentsSetup = { childAgent, roster, kits };
   const Agents = createAgentsExtension({ ...setup, initialContext: async (_agent, _api, spawn) => {
     if (!memory) return undefined;
@@ -230,6 +249,7 @@ export async function openInstance({
       context,
       memory,
       models,
+      kits,
       async setModel(next) {
         await reconfigure({ model: next });
         const { compactionModel, jobs } = compactionFor(next, models);
@@ -239,7 +259,9 @@ export async function openInstance({
       setThinkingLevel: level => reconfigure({ thinkingLevel: level }),
       exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
-        try { await harness.close(context); } finally { await memory?.close(); }
+        try { await harness.close(context); } finally {
+          try { await Browser.close(); } finally { await memory?.close(); }
+        }
       },
     };
   } catch (error) {
@@ -247,6 +269,7 @@ export async function openInstance({
       if (opened) await opened.close(context);
       else if (storage) await storage.close(context);
       else if (database) await database.close();
+      await Browser.close();
       await memory?.close();
     } catch {
       // Preserve the opening failure, including when an API already closed

@@ -8,12 +8,17 @@ import { describe, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { Serializable } from 'node:child_process';
 import type { Message } from '@earendil-works/pi-ai';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
+import type { ToolExecutionApi } from '@earendil-works/pi-durable';
+import type { BrowserContext } from 'playwright-core';
 import type { Agent, EntryRecord } from '@earendil-works/pi-durable';
 import {
   fauxAssistantMessage, fauxThinking, fauxText, fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { isRecord } from '../../src/host/config.ts';
+import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
 import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
 import { resumeInstance } from '../../src/runtime/recovery.ts';
@@ -264,6 +269,32 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
     } finally {
       await instance.close();
     }
+  });
+
+  test('supplies every kit the built-in roster names, and closing the instance closes its browsers', async (t) => {
+    const options = await temporaryInstance(t);
+    const warnings: string[] = [];
+    const launches: string[] = [];
+    let closed = 0;
+    // Just enough of a Playwright context for browser_goto: one page that navigates nowhere.
+    const page = { isClosed: () => false, on: () => page, goto: () => Promise.resolve(null), url: () => 'http://127.0.0.1:9/' };
+    const fake = { on: () => fake, pages: () => [page], close: () => { closed++; return Promise.resolve(); } };
+    const instance = await openInstance({ ...options, ...offlineModels(), roster: DEFAULT_ROSTER,
+      onWarning: (message) => warnings.push(message),
+      launchBrowser: (dir) => { launches.push(dir); return Promise.resolve(fake as unknown as BrowserContext); } });
+    try {
+      assert.deepEqual(warnings, []);
+      assert.deepEqual(Object.keys(instance.kits).sort(), ['browser', 'coding', 'read', 'web_fetch']);
+      assert.deepEqual(instance.kits.web_fetch?.tools.map((tool) => tool.name), ['web_fetch']);
+      const goto = instance.kits.browser?.tools.find((tool) => tool.name === 'browser_goto');
+      assert.ok(goto);
+      const api = { conversationId: ROOT_CONVERSATION_ID } as unknown as ToolExecutionApi;
+      await goto.execute({ url: 'http://127.0.0.1:9/' }, api, BACKGROUND_CONTEXT);
+      assert.deepEqual(launches, [join(options.databasePath.replace(/\.sqlite$/, '.unii'), 'browser', String(ROOT_CONVERSATION_ID))]);
+    } finally {
+      await instance.close();
+    }
+    assert.equal(closed, 1, 'no Chromium outlives the instance');
   });
 
   test('every SQLite transaction uses synchronous FULL, including after reopen', async (t) => {

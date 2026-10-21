@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
 import { DEFAULT_ROSTER, isAgentName, isKit, KITS } from '../agents/roster.ts';
@@ -69,6 +69,9 @@ Protected folders: the chat's own state and your credentials (~/.ssh, ~/.claude,
 /usr, ...) are read-only; bash runs in bubblewrap (apt install bubblewrap) to
 enforce it. PI_DURABLE_PROTECT adds hidden paths, PI_DURABLE_UNPROTECT removes
 defaults (each ':'-separated, ~ allowed). No approval prompts.
+Standing agents (Coder, Reviewer, Researcher; settings.json's "agents") have
+their own models and tool kits; the browser kit needs Chromium (npx
+playwright-core install chromium, or PI_DURABLE_CHROMIUM). See docs/agents.md.
 Without serve: no daemon and no listener. A server listens
 only on a 0600 Unix socket beside the chat and on loopback TCP (for tailscale
 serve), never on a public address.
@@ -83,6 +86,8 @@ Server environment:
   PI_DURABLE_TOOLS_IDLE_MIN  Idle minutes before tools turn off (default off: never)
   PI_DURABLE_PUSH_PREVIEW    on: push notifications show the reply's first words;
                              off (default): only that Pi or an agent finished
+  PI_DURABLE_CHROMIUM        Absolute path of the Chromium the browser tools run
+                             (local launches too); default: Playwright's own
 `;
 
 type Flag = 'help' | 'version' | 'allowTools' | 'noTools' | 'resume' | 'history' | 'status' | 'plain' | 'local' | 'attach';
@@ -229,6 +234,8 @@ export interface Config extends Options {
   modelSource: ModelSource;
   /** The standing agents: settings.json's `agents`, else the built-in roster (ADR 0027). */
   roster: Roster;
+  /** PI_DURABLE_CHROMIUM: the browser kit's Chromium executable, an absolute path. */
+  chromium?: string;
 }
 
 /**
@@ -473,6 +480,14 @@ export function statePaths(databasePath: string, env: NodeJS.ProcessEnv = proces
   };
 }
 
+/** PI_DURABLE_CHROMIUM: unset or empty for Playwright's own Chromium, else an absolute path; rejects anything else. */
+export function chromiumPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const value = env.PI_DURABLE_CHROMIUM;
+  if (!value) return undefined;
+  if (!isAbsolute(value)) throw new Error('PI_DURABLE_CHROMIUM must be an absolute path to the Chromium executable');
+  return resolve(value);
+}
+
 /** `serve`'s settings from --port and the environment; rejects a malformed variable by name. */
 export function serveSettings(options: Pick<Options, 'port'>, env: NodeJS.ProcessEnv = process.env): ServeSettings {
   const port = options.port ?? (env.PI_DURABLE_PORT ? parsePort(env.PI_DURABLE_PORT, 'PI_DURABLE_PORT') : DEFAULT_PORT);
@@ -523,15 +538,16 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
   const paths = statePaths(databasePath, env);
   const serve = options.command === 'serve' ? { serve: serveSettings(options, env) } : {};
   // The admin commands run no agents; the others read the roster, which an invalid entry makes a launch error.
-  const roster = options.command === 'chat' || options.command === 'serve'
-    ? await readRoster(paths.settings, { lenient: options.model !== undefined }) : DEFAULT_ROSTER;
-  return { ...options, ...await resolveModel(options, env, paths.settings), roster, cwd, dataDir, databasePath,
+  const runsAgents = options.command === 'chat' || options.command === 'serve';
+  const roster = runsAgents ? await readRoster(paths.settings, { lenient: options.model !== undefined }) : DEFAULT_ROSTER;
+  const chromium = runsAgents ? chromiumPath(env) : undefined;
+  return { ...options, ...await resolveModel(options, env, paths.settings), roster, ...chromium ? { chromium } : {}, cwd, dataDir, databasePath,
     memoryDir: paths.memoryDir, settingsPath: paths.settings, ...paths.socket ? { socketPath: paths.socket } : {},
     serveDir: paths.serveDir, ...serve, exists, inspectOnly, authFile: resolve(options.authFile ?? join(agentDir, 'auth.json')) };
 }
 
 const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'settingsPath', 'serveDir', 'authFile'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out', 'launchOption'] as const satisfies readonly (keyof Config)[];
+const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out', 'launchOption', 'chromium'] as const satisfies readonly (keyof Config)[];
 const BOOLEANS = ['allowTools', 'exists', 'inspectOnly'] as const satisfies readonly (keyof Config)[];
 const OPTIONAL_BOOLEANS = ['help', 'version', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'thinkingFlag'] as const satisfies readonly (keyof Config)[];
 const isPort = (x: unknown): boolean => typeof x === 'number' && Number.isInteger(x) && x >= 1 && x <= 65535;

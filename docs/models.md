@@ -42,8 +42,8 @@ In the terminal UI, `/model` switches Pi's model without a relaunch (`src/ui/ses
 
 - **Picking one** checks it again, as a launch does: in the catalog, credentials present, no `anthropic`
   subscription. A failure leaves everything as it was and shows the same message a launch would print.
-- **What switches.** Pi's stored model (`root.configure({ model })`), then every agent, re-derived from Pi by
-  `syncAgents` as on a launch, then the compaction model: the new provider's cheap one (see
+- **What switches.** Pi's stored model (`root.configure({ model })`), then its ad-hoc agents, re-derived from Pi by
+  `syncAgents` as on a launch (standing agents keep their own; see [Standing agents](#standing-agents)), then the compaction model: the new provider's cheap one (see
   [memory.md](memory.md#the-model)), so a switch from `openai-codex` to `claude-cli` moves compaction from `gpt-6-luna`
   to `claude-cli/haiku`, 2 calls at once. pi-durable fixes a request's model when it prepares it, so a request already
   under way finishes on the old model; the next one, Pi's or an agent's, uses the new one. Compactions in flight
@@ -65,7 +65,7 @@ In the terminal UI, `/model` switches Pi's model without a relaunch (`src/ui/ses
 
 In the web app, the chat settings (the sliders button in the header) hold it as "Thinking", a select of the levels
 the current model takes, beside the model's; the header shows both, e.g. `opus · high`. In the terminal UI, the footer
-shows it next to the model, and `/effort` opens the same list (`/effort LEVEL` sets one directly). Like a model switch it applies to Pi and every agent from their next request, and
+shows it next to the model, and `/effort` opens the same list (`/effort LEVEL` sets one directly). Like a model switch it applies to Pi and its ad-hoc agents from their next request (not to standing agents), and
 is saved as `"thinkingLevel"` in `settings.json` ([ADR 0024](decisions/0024-saved-effort.md)). A launch takes
 `--thinking`, else the saved level, else `high`.
 
@@ -79,6 +79,26 @@ plan's limits.
 
 `/tools on` and `/tools off` switch the coding tools the same way, for Pi and every agent, but never persist: every
 launch starts with them off unless it passes `--allow-tools` ([ADR 0009](decisions/0009-tools-opt-in.md)).
+
+## Standing agents
+
+The standing agents ([ADR 0027](decisions/0027-standing-agents.md), [agents.md](agents.md)) run on their own models
+and effort, not Pi's:
+
+| Agent | Model | Effort |
+|---|---|---|
+| `Coder` | `claude-cli/opus` | `medium` |
+| `Reviewer` | `openai-codex/gpt-6.1-sol` | `xhigh` |
+| `Researcher` | `openai-codex/gpt-6.1-sol` | `high` |
+
+- `settings.json`'s `"agents"` replaces this roster: each entry's `model` and `thinkingLevel` (default `high`), and
+  optionally `subModel` and `subThinkingLevel` for the sub agents it spawns, which otherwise copy their main agent's.
+- `/model` and `/effort` (terminal UI or web app) change Pi and its ad-hoc agents only. To move a standing agent to
+  another model, edit its entry in `settings.json` and relaunch; `/model` and `/effort` keep the `agents` key as written.
+- Each standing agent's work draws on its own model's credentials and limits: the `Coder`'s on your Claude plan
+  (through the `claude` CLI, so it needs `claude auth login`), the others' on the Pi login for `openai-codex`. A
+  launch checks Pi's model only; a standing agent whose model lacks credentials fails its own requests, with the
+  provider's error in its transcript.
 
 ## Policy
 

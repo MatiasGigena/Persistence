@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
-import { DEFAULT_PORT, isRecord, parseArgs, parseConfig, readSettings, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, updateSettings,
+import { chromiumPath, DEFAULT_PORT, isRecord, parseArgs, parseConfig, readSettings, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, updateSettings,
   writeSettings } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 
@@ -261,6 +261,20 @@ test('--local and --attach: one or the other, and --attach takes no launch setti
   for (const mode of [['-p', 'x'], ['hello'], ['--status'], ['--history'], ['--resume']]) {
     assert.throws(() => parseArgs(['--attach', ...mode]), /--attach is for interactive chat only/, mode.join(' '));
   }
+});
+
+test('PI_DURABLE_CHROMIUM: unset for Playwright\'s own, else an absolute path carried to the host', async t => {
+  assert.equal(chromiumPath({}), undefined);
+  assert.equal(chromiumPath({ PI_DURABLE_CHROMIUM: '' }), undefined);
+  assert.equal(chromiumPath({ PI_DURABLE_CHROMIUM: '/opt/chrome/chrome' }), '/opt/chrome/chrome');
+  assert.throws(() => chromiumPath({ PI_DURABLE_CHROMIUM: 'chrome' }), /PI_DURABLE_CHROMIUM must be an absolute path/);
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-chromium-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const args = parseArgs(['--database', join(folder, 'chat.sqlite'), '--cwd', folder]);
+  const config = await resolveOptions(args, { PI_DURABLE_CHROMIUM: '/opt/chrome/chrome' });
+  assert.equal(parseConfig(JSON.stringify(config)).chromium, '/opt/chrome/chrome');
+  assert.equal((await resolveOptions(args, {})).chromium, undefined);
+  await assert.rejects(resolveOptions(args, { PI_DURABLE_CHROMIUM: './chrome' }), /PI_DURABLE_CHROMIUM/);
 });
 
 test('serve settings from --port and the environment, each variable checked', () => {

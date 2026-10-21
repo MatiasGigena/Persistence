@@ -30,6 +30,9 @@ test('an online backup of an open chat opens as the same chat', { timeout: 30_00
   try {
     const submission = await instance.root.submit({ type: 'input', content: 'Count the boats.' }, instance.context);
     assert.equal(await answerText(instance.root, await submission.wait(instance.context), instance.context), 'Three boats.');
+    // An agent's browser profile, with its cookies: never copied.
+    await mkdir(join(memoryDir, 'browser', '7'), { recursive: true });
+    await writeFile(join(memoryDir, 'browser', '7', 'Cookies'), 'secret');
     ({ path, bytes } = await backup({ databasePath, memoryDir, settingsPath }, instance.exclusive, { now: new Date('2026-10-19T03:00:00Z') }));
   } finally {
     await instance.close();
@@ -39,6 +42,7 @@ test('an online backup of an open chat opens as the same chat', { timeout: 30_00
   assert.equal((await stat(path)).mode & 0o777, 0o700);
   assert.ok(bytes > (await stat(join(path, 'chat.sqlite'))).size, 'the size counts the memory too');
   assert.ok((await readdir(join(path, 'chat.unii'))).includes('main'));
+  assert.ok(!(await readdir(join(path, 'chat.unii'))).includes('browser'), 'browser profiles stay out of backups');
 
   const copy = await openInstance({ databasePath: join(path, 'chat.sqlite'), cwd: folder, ...offlineModels() });
   try {
