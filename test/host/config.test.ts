@@ -95,7 +95,7 @@ test('the standing agents: settings.json\'s "agents", else the built-in roster; 
     web_1: { model: { provider: 'openrouter', modelId: 'vendor/model' }, thinkingLevel: 'xhigh', tools: [] },
   };
   assert.deepEqual(await launch(), expected, 'thinkingLevel defaults to high, kits deduplicated');
-  assert.deepEqual((await readSettings(settingsPath)).agents, expected);
+  assert.deepEqual((await readSettings(settingsPath)).agents, agents, 'readSettings leaves "agents" as written');
   await writeFile(settingsPath, '{"agents":{}}');
   assert.deepEqual(await launch(), {}, 'an empty roster: no standing agents');
 
@@ -121,8 +121,15 @@ test('the standing agents: settings.json\'s "agents", else the built-in roster; 
     await writeFile(settingsPath, JSON.stringify({ agents: value }));
     await assert.rejects(launch(), pattern, JSON.stringify(value));
     await assert.rejects(launch(['--model', 'a/b']), pattern, 'with --model too');
-    await assert.rejects(launch(['--status']), pattern, 'an inspection too');
+    // Only work launches read the roster: an inspection and the admin commands resolve, model and all.
+    for (const args of [['--status', '--cwd', folder], ['--history', '--cwd', folder], ['backup']]) {
+      const config = await resolveOptions(parseArgs([...args, '--database', join(folder, 'chat.sqlite')]), {});
+      assert.deepEqual([config.roster, config.modelSource], [DEFAULT_ROSTER, 'default'], `${args.join(' ')} with ${JSON.stringify(value)}`);
+    }
   }
+  await writeFile(settingsPath, JSON.stringify({ model: 'a/b', agents: [] }));
+  const backup = await resolveOptions(parseArgs(['backup', '--database', join(folder, 'chat.sqlite')]), {});
+  assert.deepEqual([backup.model, backup.modelSource], [{ provider: 'a', modelId: 'b' }, 'settings'], 'the model still comes from the file');
   await writeFile(settingsPath, '{"thinkingLevel":"huge"}');
   assert.deepEqual(await launch(['--model', 'a/b']), DEFAULT_ROSTER, '--model skips a file broken elsewhere');
 });
@@ -141,8 +148,12 @@ test('/model and /effort keep "agents" as the user wrote it', async t => {
   assert.deepEqual(Object.keys(saved), ['agents', 'model', 'thinkingLevel'], 'keys keep their places');
   writeSettings(settingsPath, { thinkingLevel: 'low' });
   assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { thinkingLevel: 'low' }, 'a bare write is the given settings only');
+  // "agents" is the roster's to check, at the launch: a write keeps even an invalid one as written.
   await writeFile(settingsPath, JSON.stringify({ agents: { Coder: { tools: [] } } }));
-  await assert.rejects(updateSettings(settingsPath, { thinkingLevel: 'low' }), /"Coder"/, 'an invalid file is not rewritten');
+  await updateSettings(settingsPath, { thinkingLevel: 'low' });
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { agents: { Coder: { tools: [] } }, thinkingLevel: 'low' });
+  await writeFile(settingsPath, JSON.stringify({ agents, thinkingLevel: 'huge' }));
+  await assert.rejects(updateSettings(settingsPath, { model: { provider: 'a', modelId: 'b' } }), /settings\.json/, 'an invalid file is not rewritten');
 });
 
 test('--plain selects the line chat', () => {

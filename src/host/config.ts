@@ -240,12 +240,13 @@ export interface Config extends Options {
 
 /**
  * What settings.json holds: the defaults for launches without --model (or PI_DURABLE_MODEL) and --thinking, and the
- * standing agents' roster (`agents`), which only the user edits.
+ * standing agents' roster (`agents`), which only the user edits. `agents` is as written, unparsed: only `readRoster`
+ * parses it, so the commands that run no agents never fail on it.
  */
 export interface Settings {
   model?: ModelRef;
   thinkingLevel?: ModelThinkingLevel;
-  agents?: Roster;
+  agents?: unknown;
 }
 
 export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -391,7 +392,10 @@ export function parseRoster(value: unknown, path: string): Roster {
   return roster;
 }
 
-/** settings.json, or {} when there is none. Rejects on a file that is not valid settings; an invalid agent by name. */
+/**
+ * settings.json, or {} when there is none. Rejects on a file that is not valid settings; `agents` passes through as
+ * written (`readRoster` parses it).
+ */
 export async function readSettings(path: string): Promise<Settings> {
   const value = await readSettingsJson(path);
   if (!value) return {};
@@ -401,7 +405,7 @@ export async function readSettings(path: string): Promise<Settings> {
   }
   return { ...value.model === undefined ? {} : { model: parseModel(value.model, `"model" in ${path}`) },
     ...isThinkingLevel(value.thinkingLevel) ? { thinkingLevel: value.thinkingLevel } : {},
-    ...value.agents === undefined ? {} : { agents: parseRoster(value.agents, path) } };
+    ...value.agents === undefined ? {} : { agents: value.agents } };
 }
 
 /**
@@ -537,8 +541,9 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
   const agentDir = env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent');
   const paths = statePaths(databasePath, env);
   const serve = options.command === 'serve' ? { serve: serveSettings(options, env) } : {};
-  // The admin commands run no agents; the others read the roster, which an invalid entry makes a launch error.
-  const runsAgents = options.command === 'chat' || options.command === 'serve';
+  // Only work launches run agents and read the roster, which an invalid entry makes a launch error; inspection and the
+  // admin commands never read it.
+  const runsAgents = (options.command === 'chat' || options.command === 'serve') && !inspectOnly;
   const roster = runsAgents ? await readRoster(paths.settings, { lenient: options.model !== undefined }) : DEFAULT_ROSTER;
   const chromium = runsAgents ? chromiumPath(env) : undefined;
   return { ...options, ...await resolveModel(options, env, paths.settings), roster, ...chromium ? { chromium } : {}, cwd, dataDir, databasePath,
