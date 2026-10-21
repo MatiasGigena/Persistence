@@ -3,7 +3,8 @@
 Pi can start background agents, and has a team of standing agents that always exist. Each agent is its own persistent
 pi-durable conversation (a standing agent, one per task), in the same database as Pi. The code is `src/agents/index.ts`
 (the `agents` extension) and `src/agents/roster.ts` (the roster and kit names); the host wiring is in
-`src/runtime/runtime.ts`. The design is [ADR 0027](decisions/0027-standing-agents.md).
+`src/runtime/runtime.ts`. The design is [ADR 0027](decisions/0027-standing-agents.md); archiving and deletion are
+[ADR 0034](decisions/0034-archived-agents.md).
 
 ## Contents
 
@@ -11,6 +12,7 @@ pi-durable conversation (a standing agent, one per task), in the same database a
 - [Standing agents](#standing-agents)
 - [Sessions: one per task](#sessions-one-per-task)
 - [Permissions](#permissions)
+- [Archiving and deletion](#archiving-and-deletion)
 - [The tools](#the-tools)
 - [Messages, reports and entries](#messages-reports-and-entries)
 - [Background execution](#background-execution)
@@ -46,6 +48,8 @@ their finished anchor tasks, and the registry's `deleted` map keeps their ids, s
 (headed `Name was deleted; its chat is kept`). The name is free again for `spawn_agent`; a later delete of the same
 name keeps only the newest chat's ids. Deleting is refused for Pi, a standing agent (or any roster name), and while
 the agent or one of its subs is busy or has an `agents.deliver` input still on its way: `stop_agent` it first.
+The user can also archive an ad-hoc agent, which is then deleted the same way a day later (see
+[Archiving and deletion](#archiving-and-deletion)); Pi cannot archive.
 
 The registry is the session-scoped document `agents.registry`:
 
@@ -53,13 +57,14 @@ The registry is the session-scoped document `agents.registry`:
 { agents: { [name]: { conversationId, role: 'main' | 'sub', parent: 'Pi' | mainName, reported: [answerIds],
                       standing?: true,               // a main agent of the roster
                       past?: [conversationIds],      // a standing agent's earlier sessions, oldest first
-                      session?: conversationId } },  // a standing agent's sub: the session it works for
+                      session?: conversationId,      // a standing agent's sub: the session it works for
+                      archivedAt?: number } },       // when the user archived it, ms since the epoch
   calls: { [toolTaskId]: resultText },
-  deleted?: { [name]: [conversationIds] } }          // agents removed with delete_agent, for zoom
+  deleted?: { [name]: [conversationIds] } }          // agents removed with delete_agent or the archive sweep, for zoom
 ```
 
-`conversationId` is always the agent's current conversation. `standing`, `past` and `session` are absent on agents
-that never had them, so older registries read unchanged.
+`conversationId` is always the agent's current conversation. `standing`, `past`, `session` and `archivedAt` are absent
+on agents that never had them, so older registries read unchanged.
 
 Names match `/^[A-Za-z][A-Za-z0-9_-]{0,31}$/`, must not be `Pi`, and are unique. Lookups ignore case, both for
 uniqueness and for addressing. A name starts with a letter because `zoom()` reads an id of digits as a message id.
@@ -213,6 +218,48 @@ The limits are enforced three times:
 3. **Execute.** Each tool checks the caller's role (and `send_message` the confinement) again and returns a refusal
    text.
 
+## Archiving and deletion
+
+The user clears ad-hoc agents away by archiving them ([ADR 0034](decisions/0034-archived-agents.md)); Pi has no tool for
+it. The host calls these functions of `src/agents/index.ts`, each in the one writer:
+
+- `archiveAgents(source, context, target, now)`: `target` is `{ name }` or `{ adhoc: true }`. A main agent is archived
+  with its sub agents; a sub agent may be archived alone; `{ adhoc: true }` archives every main agent that is not
+  standing and not archived yet, with its subs, and returns `[]` when there is none. A standing agent is refused
+  (`Coder is a standing agent; remove it from the roster first.`), as an unknown name (`No agent named X. The agents are …`). It stops
+  the agents' work as `stopAgents` does (every session, subs first), records `archivedAt = now` on each record in
+  one commit, then stops them again, for a run a pending delivery started in between. An agent already archived keeps
+  its time. A crash before the commit leaves the agents stopped but not archived, and archiving again converges.
+  Returns the names archived.
+- `restoreAgent(source, context, name)` clears `archivedAt`, and its subs' for a main agent; it does not resume stopped
+  work. A sub whose main agent is archived is refused (restore the main), as is an agent that is not archived.
+- `purgeArchived(source, context, now, maxAgeMs = ARCHIVE_TTL_MS)` deletes, in one commit, the registry record of each
+  agent archived for a day (`ARCHIVE_TTL_MS`) or more, and returns their names. The agent's conversations stay in
+  `chat.sqlite`: pi-durable cannot delete a conversation. As with `delete_agent`, the name is free again and the
+  registry's `deleted` map keeps the conversations' ids, so `zoom("Name")` still reads the chat.
+
+A sub agent of an archived main agent counts as archived, from the earlier of its own time and its main's. An archived
+agent:
+
+- is left out of `listAgents()` (unless `{ includeArchived: true }`, whose rows carry `archivedAt`), `list_agents` and
+  the agents at work;
+- is refused by `send_message`, `last_message`, `stop_agent`, `spawn_agent` with its name and `delegate`, with
+  `Helper is archived; it is deleted at <ISO time>.`;
+- receives nothing: an `agents.deliver` task to an archived or deleted agent completes without submitting;
+- reports nothing: its answer creates no report, and a report from it still on its way completes without submitting;
+- can still be read with `zoom("Name")`.
+
+A standing agent is never archived: a roster entry that names an archived agent makes it standing and clears its
+`archivedAt` at the launch.
+
+**The sweeper.** `openInstance()` runs `purgeArchived` at every work launch, after `syncAgents`, so a host closed for a
+day deletes overdue agents at its next launch, and then hourly (`sweepMs`) while it runs; the timer does not keep
+the process alive, and `close()` stops it and waits for a sweep in progress. Each deleted agent's browser profile
+goes with it (`Browser.forget(name)`: its Chromium closed, `chat.unii/browser/<name>/` removed), so a new agent given
+the name does not inherit the sites' logins. Each sweep that deletes agents warns
+through `onWarning` (`Deleted archived agents: Helper, X.`); a failed sweep goes to `onReport`, and the next one
+retries. Inspections do not sweep. Tests inject `clock` and `sweepMs`.
+
 ## The tools
 
 What the model sees (descriptions abridged to their content):
@@ -233,7 +280,7 @@ only `No agent named X.`), `An agent named X
 already exists; use send_message.` (`X is a standing agent: give it a new task with delegate, or steer its current one
 with send_message.` when Pi spawns a standing agent's name),
 `Invalid name: use a letter, then up to 31 letters, digits, _ or -, and not "Pi".`, `Sub agents cannot address Pi;
-message your main agent instead.`, `X is not your sub agent.`
+message your main agent instead.`, `X is not your sub agent.`, `X is archived; it is deleted at <ISO time>.`
 
 "Busy" means one of the agent's conversations (a standing agent's past sessions included) has a run in progress.
 "Last message" is the latest committed assistant text of the agent's current session or, when that has none yet (right
@@ -299,7 +346,8 @@ Agents run in background tasks. Nobody waits for anybody:
 - A report to Pi starts an ordinary Pi run. No host submission waits for it. In chat, the host watches the root and
   prints each new `agents.report` entry and each reply of Pi as it lands.
 - Each Pi run's `<turn>` block lists the agents at work (`agents at work: Lead, A` or `none`), as upstream tells its
-  master. The host wires the `uniichat` extension's `atWork` to the busy agents of `listAgents()`.
+  master. The host wires the `uniichat` extension's `atWork` to the busy agents of `listAgents()`, which leaves archived
+  agents out.
 - Reports flow one level up. A sub's report reaches Pi only if its main agent relays it.
 
 Each agent's conversation is owned by an `agents.anchor` task, created as a background task of the spawner's
@@ -319,7 +367,9 @@ be reported once.
 **Delivery tasks.** Each input is carried by one durable background task, `agents.deliver`, with input
 `{ to, conversationId, content, entry, whenBusy }`:
 
-1. It submits the input to the target conversation with request id `agents:<taskId>`. pi-durable deduplicates by
+1. It completes without submitting when its target (other than Pi) is archived or no longer in the registry, or when
+   it carries a report from such an agent (see [Archiving and deletion](#archiving-and-deletion)). Otherwise it
+   submits the input to the target conversation with request id `agents:<taskId>`. pi-durable deduplicates by
    request id within a conversation, so a resubmission after a restart returns the first submission. A message whose
    target is in the agent's `past` goes to its current session instead (a report there is dropped): unless the
    request already reached the past session, the task picks the current session in a commit, from the registry as it
@@ -477,7 +527,8 @@ The current session's line ends ` (current)`. Pages work as above (`zoom("Coder#
 the first page. An ad-hoc agent has no session line. An unknown session is a plain text, `No session 4: Coder has 3
 sessions.`
 
-`zoom("Pi")` gives Pi's own transcript. An unknown name is an error (`No agent named X`).
+`zoom("Pi")` gives Pi's own transcript. An unknown name is an error (`No agent named X.`), a deleted agent's too. An
+archived agent's chat is still read.
 
 ## Context size
 

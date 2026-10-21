@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -238,6 +238,41 @@ describe('browser helpers', () => {
     await caller(plain, 7 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
     assert.deepEqual(launches, [join(root, 'browser', '5'), join(root, 'browser', '7')]);
     await plain.close();
+  });
+
+  test('forget closes a key\'s browser and deletes its profile, and only that one', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-durable-browser-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    let closed = 0;
+    const page = { isClosed: () => false, on: () => page, goto: () => Promise.resolve(null), url: () => 'http://127.0.0.1:9/' };
+    const fake = {
+      on: () => fake, pages: () => [page], close: () => { closed++; return Promise.resolve(); },
+      route: () => Promise.resolve(), routeWebSocket: () => Promise.resolve(),
+    };
+    const launches: string[] = [];
+    const launch: BrowserOptions['launch'] = async (dir) => {
+      launches.push(dir);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'Cookies'), 'session=secret');
+      return fake as unknown as BrowserContext;
+    };
+    const names: Record<string, string> = { 5: 'Lead', 7: 'Other' };
+    const browser = createBrowserExtension({ profileRoot: root, launch,
+      keyOf: (conversationId) => Promise.resolve(names[String(conversationId)] ?? String(conversationId)) });
+    await caller(browser, 5 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
+    await caller(browser, 7 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
+    await browser.forget('Lead');
+    assert.equal(closed, 1);
+    await assert.rejects(stat(join(root, 'browser', 'Lead')), { code: 'ENOENT' });
+    assert.ok((await stat(join(root, 'browser', 'Other', 'Cookies'))).isFile());
+    // A new agent with the name gets a fresh browser and profile.
+    await caller(browser, 5 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
+    assert.equal(launches.length, 3);
+    // An unsafe key names no folder: nothing outside the profile root is touched.
+    await browser.forget('../Other');
+    assert.ok((await stat(join(root, 'browser', 'Other', 'Cookies'))).isFile());
+    await browser.forget('Nobody');
+    await browser.close();
   });
 
   test('an operation times out, and an abort cancels it', async (t) => {

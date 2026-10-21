@@ -14,7 +14,7 @@ import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { chromium as playwrightChromium } from 'playwright-core';
-import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents, missingKits, syncAgents } from '../agents/index.ts';
+import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents, missingKits, purgeArchived, syncAgents } from '../agents/index.ts';
 import type { AgentRecord, AgentsSetup, Roster, StandingAgent, ToolKits } from '../agents/index.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
@@ -37,6 +37,8 @@ import { userInput } from './models.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;
+// How often a running host deletes agents archived for a day (ADR 0034); also at every work launch.
+const SWEEP_MS = 3_600_000;
 // How long a spawn waits for the view's pending summaries, as a turn does: an agent cannot zoom a placeholder.
 const AGENT_VIEW_SETTLE_MS = 8_000;
 
@@ -84,6 +86,10 @@ export interface InstanceOptions {
   readonly dispatcher?: RoutingDispatcher;
   /** A code mode script's deadline when it sets none; default CODEMODE_TIMEOUT_MS. Tests shorten it. */
   readonly codemodeTimeoutMs?: number;
+  /** The time archived agents' age is measured with (ms since the epoch); default `Date.now`. Tests inject it. */
+  readonly clock?: () => number;
+  /** How often a work launch sweeps archived agents after its launch sweep; default an hour. Tests shorten it. */
+  readonly sweepMs?: number;
 }
 
 /** The opened root; `memory` is undefined when inspecting. */
@@ -323,6 +329,8 @@ export async function openInstance({
   rosterChecks = {},
   dispatcher,
   codemodeTimeoutMs,
+  clock = Date.now,
+  sweepMs = SWEEP_MS,
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Started even with the tools off: /tools on needs no restart. Inspection runs no tools.
@@ -424,6 +432,9 @@ export async function openInstance({
 
   // close() stops the roster checks, and drops what they would still warn.
   const checks = new AbortController();
+  // The archive sweeper (ADR 0034): its timer, and the sweep in progress, which close() waits for.
+  let sweeper: ReturnType<typeof setInterval> | undefined;
+  let sweeping: Promise<void> | undefined;
   let database: HostDatabase | undefined;
   let storage: SqliteStorage | undefined;
   try {
@@ -448,6 +459,19 @@ export async function openInstance({
       await root.configure(agent, context);
       // Agents spawned under an earlier launch must not keep its tool choices; the roster's standing agents exist.
       await syncAgents(harness, context, setup);
+      // Delete agents archived for a day: now, since a closed host deletes nothing, then hourly. A failed sweep is
+      // reported and retried by the next.
+      const sweep = async (): Promise<void> => {
+        try {
+          const deleted = await purgeArchived(harness, context, clock());
+          // A deleted agent's name may be taken again: its browser profile, with the sites' logins, goes with it.
+          for (const name of deleted) await Browser.forget(name);
+          if (deleted.length) onWarning?.(`Deleted archived agents: ${deleted.join(', ')}.`);
+        } catch (error) { onReport?.(error); }
+      };
+      await sweep();
+      sweeper = setInterval(() => { sweeping ??= sweep().finally(() => { sweeping = undefined; }); }, sweepMs);
+      sweeper.unref();
       const missing = missingKits(roster, kits);
       if (missing.length) onWarning?.(`Standing agents run without tool kits this host lacks: ${missing.join('; ')}.`);
       // Not awaited: a credential check may take seconds (claude-cli asks its CLI), and only warns.
@@ -492,6 +516,8 @@ export async function openInstance({
       exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
         checks.abort();
+        clearInterval(sweeper);
+        await sweeping;
         // The harness first, so no tool still runs; then the rest, which share nothing, together.
         try { await harness.close(context); } finally {
           await closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
@@ -499,6 +525,7 @@ export async function openInstance({
       },
     };
   } catch (error) {
+    clearInterval(sweeper);
     try {
       if (opened) await opened.close(context);
       else if (storage) await storage.close(context);

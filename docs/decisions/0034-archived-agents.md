@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted, 2026-10-21, at the user's request. Amends the "Agents are never deleted" rule of
-[agents.md](../agents.md) and [0027](0027-standing-agents.md).
+Accepted, 2026-10-21, at the user's request; numbered 0034 when it was integrated after Pi's `delete_agent`.
+Amends [0027](0027-standing-agents.md).
 
 ## Context
 
@@ -30,12 +30,13 @@ to clear the others away by hand, and have them gone for good a day later.
 ### Deletion after a day
 
 - An agent archived for 24 hours or more is deleted: its registry record (and its subs') is removed, so its name is
-  free again and `zoom("Name")` answers `Name was deleted.` (a deleted-names list is not kept; an unknown name gives
-  the usual `No agent named Name.`).
+  free again. As with Pi's `delete_agent`, the registry's `deleted` map keeps its conversations' ids, so
+  `zoom("Name")` still reads its chat. Its browser profile (`chat.unii/browser/<name>/`) is deleted too, so a new agent given the name does not inherit its
+  logins.
 - The host sweeps at every work launch and then hourly while it runs, in one commit per sweep, under the one writer.
   A host that is closed for longer deletes overdue agents at its next launch.
 - pi-durable has no API to delete a conversation, so the conversation's rows stay in `chat.sqlite`, unreferenced.
-  Deletion is logical: nothing reads them again. Reclaiming the space is left for later.
+  Deletion is logical: only `zoom` reads them again. Reclaiming the space is left for later.
 - Any delivery still pending for a deleted agent completes without submitting, as for an unknown conversation.
 
 ### Where the user archives
@@ -48,7 +49,8 @@ to clear the others away by hand, and have them gone for good a day later.
   `PROTOCOL` stays.
 - Server CLI: `pi-durable serve agents` lists agents; `--archive NAME`, `--archive-adhoc` and `--restore NAME` call
   the ops over the socket.
-- Pi has no tool for it.
+- Pi has no tool for it; its `delete_agent` deletes an idle ad-hoc agent at once, while archiving can be undone for a
+  day.
 
 ### Persisted names
 

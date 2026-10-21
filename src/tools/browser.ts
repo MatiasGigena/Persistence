@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { Agent as HttpAgent, createServer, type IncomingMessage, request as httpRequest, type ServerResponse } from 'node:http';
 import { connect, isIP, type LookupFunction } from 'node:net';
 import { join } from 'node:path';
@@ -367,6 +367,8 @@ export type BrowserExtension = Extension & {
   readonly tools: readonly ToolRegistration[];
   /** Close every browser; the extension relaunches on the next call. */
   close(): Promise<void>;
+  /** Close `key`'s browser and delete its profile, logins included: for a deleted agent, whose name may be reused. */
+  forget(key: string): Promise<void>;
 };
 
 type ConsoleEntry = { ts: number; type: string; text: string; location?: string };
@@ -817,16 +819,26 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     }),
   });
 
+  const shut = async (browser: Browser): Promise<void> => {
+    await teardown(browser);
+    const proxy = browser.proxy;
+    browser.proxy = null;
+    (await proxy?.catch(() => undefined))?.close();
+  };
+
   return {
     name: BROWSER_EXTENSION,
     tools: [goto, evaluate, consoleTool, network, fill, click, screenshot, close],
     close: async () => {
-      await Promise.all([...browsers.values()].map(async (browser) => {
-        await teardown(browser);
-        const proxy = browser.proxy;
-        browser.proxy = null;
-        (await proxy?.catch(() => undefined))?.close();
-      }));
+      await Promise.all([...browsers.values()].map(shut));
+    },
+    forget: async (key) => {
+      // Only a safe key names a folder under the profile root; anything else was never one.
+      if (!BROWSER_KEY.test(key)) return;
+      const browser = browsers.get(key);
+      browsers.delete(key);
+      if (browser) await shut(browser);
+      await rm(join(options.profileRoot, 'browser', key), { recursive: true, force: true });
     },
   };
 }

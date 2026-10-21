@@ -82,9 +82,10 @@ Give each test its own temporary data directory.
   - extension names `uniichat`, `agents`, `browser`, `web-fetch`, `autoreview`, `show-image` and `codemode`;
   - entry kinds `agents.report`, `agents.message`, `host.resume-boundary`;
   - task kinds `agents.anchor` and `agents.deliver`, and their versions;
-  - the doc kind `agents.registry`, and its agents' fields, `standing`, `past` and `session` among them;
+  - the doc kind `agents.registry`, and its agents' fields, `standing`, `past`, `session` and `archivedAt` among them;
   - the `agents.deliver` task memo field `session` (the conversation a message delivery chose);
   - the optional `session` number (from 1) in `agents.report` entry data;
+  - the protocol ops `agents.archive` and `agents.restore` (ADR 0034);
   - tool names `zoom`, `date`, `spawn_agent`, `list_agents`, `send_message`,
     `last_message`, `stop_agent`, `delegate`, `web_fetch`, `autoreview`, and the browser's `browser_goto`,
     `browser_eval`, `browser_console`, `browser_network`, `browser_fill`, `browser_click`,

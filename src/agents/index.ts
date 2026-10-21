@@ -75,6 +75,8 @@ export type AgentRole = 'main' | 'sub';
 export type AgentRecord = {
   conversationId: ConversationId; role: AgentRole; parent: string; reported: EntryId[];
   standing?: boolean; past?: ConversationId[]; session?: ConversationId;
+  /** When the user archived it (ms since the epoch, ADR 0034); absent on every other agent. */
+  archivedAt?: number;
 };
 /**
  * `calls` maps a tool task ID to the result its first run returned. `deleted` maps the name of each agent removed with
@@ -96,6 +98,8 @@ export interface AgentInfo {
   readonly busy: boolean;
   /** A standing agent of the roster. */
   readonly standing: boolean;
+  /** When it was archived, its main agent's time for a sub archived with it (see `archivedSince`); absent when not. */
+  readonly archivedAt?: number;
 }
 /** The Harness or a tool's api: anything with `snapshot()` and `commit(tx => …)`. */
 export type AgentsSource = DocumentReader & Pick<Session, 'commit'>;
@@ -139,6 +143,31 @@ const noAgent = (agents: Readonly<Record<string, AgentRecord>>, name: string): s
   const names = Object.keys(agents);
   return `No agent named ${name}. ${names.length ? `The agents are ${names.join(', ')}.` : 'There are none.'}`;
 };
+
+/** How long an archived agent is kept before `purgeArchived()` deletes it: a day (ADR 0034). */
+export const ARCHIVE_TTL_MS = 86_400_000;
+
+/**
+ * Since when agent `name` counts as archived: its own `archivedAt`, or its main agent's when that is archived, the
+ * earlier of the two; undefined while neither is. A sub of an archived main counts as archived.
+ */
+function archivedSince(agents: Readonly<Record<string, AgentRecord>>, name: string): number | undefined {
+  const agent = agents[name];
+  if (!agent) return undefined;
+  const main = agent.role === 'sub' ? agents[agent.parent]?.archivedAt : undefined;
+  const times = [agent.archivedAt, main].filter((each) => each !== undefined);
+  return times.length ? Math.min(...times) : undefined;
+}
+
+/** The refusal for an archived agent: when it is deleted. */
+const archivedText = (name: string, since: number) =>
+  `${name} is archived; it is deleted at ${new Date(since + ARCHIVE_TTL_MS).toISOString()}.`;
+
+/** The refusal text when agent `name` (a registry spelling) is archived, else undefined. */
+function archivedRefusal(agents: Readonly<Record<string, AgentRecord>>, name: string): string | undefined {
+  const since = archivedSince(agents, name);
+  return since === undefined ? undefined : archivedText(name, since);
+}
 
 /** Who the conversation is: Pi, a registered agent (any of a standing agent's sessions), or undefined for any other. */
 function whoIs(registry: Readonly<AgentsState> | undefined, conversationId: ConversationId): Caller | undefined {
@@ -424,6 +453,8 @@ async function ensureStanding(tx: Tx, registry: Draft<AgentsState>, roster: Rost
       if (record.role !== 'main') record.role = 'main';
       if (record.parent !== PI) record.parent = PI;
       if (record.session !== undefined) delete record.session;
+      // A standing agent is never archived (ADR 0034): an archived one the roster names comes back.
+      if (record.archivedAt !== undefined) delete record.archivedAt;
       continue;
     }
     const anchor = await tx.createTask(Anchor, null, { ...TASK_OPTIONS, conversationId: ROOT_CONVERSATION_ID });
@@ -473,10 +504,17 @@ export type AgentsStopper = DocumentReader & {
  * names stopped, `name` last; an unknown name stops nothing.
  */
 export async function stopAgents(source: AgentsStopper, context: Context = BACKGROUND_CONTEXT, name?: string): Promise<string[]> {
-  const agents = Object.entries((await source.snapshot(AgentsDoc, context))?.agents ?? {});
-  const found = name === undefined ? undefined : find(Object.fromEntries(agents), name);
+  const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
+  const found = name === undefined ? undefined : find(agents, name);
   if (name !== undefined && !found) return [];
-  const chosen = found ? agents.filter(([each, agent]) => agent.parent === found.name || each === found.name) : agents;
+  const chosen = found ? Object.keys(agents).filter((each) => agents[each]?.parent === found.name || each === found.name) : Object.keys(agents);
+  return stopNamed(source, context, agents, chosen);
+}
+
+/** Stop every conversation of the agents `names` of `agents`, subs first; returns them in that order. */
+async function stopNamed(source: AgentsStopper, context: Context, agents: Readonly<Record<string, AgentRecord>>,
+  names: readonly string[]): Promise<string[]> {
+  const chosen = names.flatMap((each): [string, AgentRecord][] => { const agent = agents[each]; return agent ? [[each, agent]] : []; });
   const order = [...chosen.filter(([, agent]) => agent.role === 'sub'), ...chosen.filter(([, agent]) => agent.role === 'main')];
   // Each group's agents stop together, every session at once; the subs are stopped before any main is.
   const abort = async (id: ConversationId) => { await (await source.conversation(id, context))?.abort(context); };
@@ -545,7 +583,7 @@ async function removeAgent(tx: Tx, registry: Draft<AgentsState>, name: string, b
 
 /** The names of the agents with a run in any of their conversations. */
 const busyNames = async (source: DocumentReader, context: Context): Promise<Set<string>> =>
-  new Set((await listAgents(source, context)).filter((agent) => agent.busy).map((agent) => agent.name));
+  new Set((await listAgents(source, context, { includeArchived: true })).filter((agent) => agent.busy).map((agent) => agent.name));
 
 /**
  * Delete agent `name` and its sub agents for the host (see `removeAgent`): never Pi or a standing agent, never a busy
@@ -557,12 +595,124 @@ export async function deleteAgent(source: AgentsSource, context: Context = BACKG
   return source.commit(async (tx) => removeAgent(tx, await tx.doc(AgentsDoc), name, busy, roster), context);
 }
 
-/** Every spawned agent with its role, parent, conversation, and busy state (a run in any of its conversations). */
-export async function listAgents(source: DocumentReader, context: Context = BACKGROUND_CONTEXT): Promise<AgentInfo[]> {
-  const registry = await source.snapshot(AgentsDoc, context);
-  return Promise.all(Object.entries(registry?.agents ?? {}).map(async ([name, agent]) => ({
+/** What to archive: one agent by name, or every ad-hoc (not standing) main agent. */
+export type ArchiveTarget = { readonly name: string } | { readonly adhoc: true };
+
+/**
+ * The agents `target` archives in `agents`: a main agent with its subs, a sub alone, or every ad-hoc main agent with its
+ * subs. Throws the refusal for an unknown name or a standing agent.
+ */
+function archiveSet(agents: Readonly<Record<string, AgentRecord>>, target: ArchiveTarget): string[] {
+  const withSubs = (main: string) => [main, ...Object.keys(agents).filter((each) => agents[each]?.role === 'sub' && agents[each].parent === main)];
+  // Every ad-hoc main agent not archived yet, with its subs.
+  if ('adhoc' in target) {
+    return Object.entries(agents).filter(([, agent]) => agent.role === 'main' && !agent.standing && agent.archivedAt === undefined)
+      .flatMap(([name]) => withSubs(name));
+  }
+  const found = find(agents, target.name);
+  if (!found) throw new Error(noAgent(agents, target.name));
+  if (found.standing) throw new Error(`${found.name} is a standing agent; remove it from the roster first.`);
+  return found.role === 'main' ? withSubs(found.name) : [found.name];
+}
+
+/**
+ * Archive `target` (ADR 0034): stop its work, then record `archivedAt = now` on each agent it names, in one commit, then
+ * stop again whatever a delivery started in between. An agent already archived keeps its time. Returns the names
+ * archived, subs included; `{ adhoc: true }` takes the ad-hoc main agents not archived yet, so may archive nothing. Throws `No agent named X.` or
+ * `X is a standing agent; remove it from the roster first.` A crash before the commit leaves the agents only stopped,
+ * and archiving again converges.
+ */
+export async function archiveAgents(source: AgentsStopper & Pick<Session, 'commit'>, context: Context, target: ArchiveTarget,
+  now: number): Promise<string[]> {
+  const before = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
+  await stopNamed(source, context, before, archiveSet(before, target));
+  const archived = await source.commit(async (tx) => {
+    const registry = await tx.doc(AgentsDoc);
+    // The registry as it is now: a sub spawned since the snapshot goes with its main.
+    const names = archiveSet(registry.agents, target);
+    for (const name of names) {
+      const agent = registry.agents[name];
+      if (agent && agent.archivedAt === undefined) agent.archivedAt = now;
+    }
+    return names;
+  }, context);
+  await stopNamed(source, context, (await source.snapshot(AgentsDoc, context))?.agents ?? {}, archived);
+  return archived;
+}
+
+/**
+ * Restore archived agent `name`: clear its `archivedAt`, and its subs' for a main agent. Stopped work is not resumed.
+ * Returns the names restored, `name` first. Throws for an unknown agent, one not archived, or a sub whose main agent is
+ * archived (restore that one).
+ */
+export async function restoreAgent(source: Pick<Session, 'commit'> & DocumentReader, context: Context, name: string): Promise<string[]> {
+  const check = (agents: Readonly<Record<string, AgentRecord>>): Named => {
+    const found = find(agents, name);
+    if (!found) throw new Error(noAgent(agents, name));
+    if (archivedSince(agents, found.name) === undefined) throw new Error(`${found.name} is not archived.`);
+    if (found.role === 'sub' && agents[found.parent]?.archivedAt !== undefined) {
+      throw new Error(`${found.name}'s main agent ${found.parent} is archived; restore ${found.parent}.`);
+    }
+    return found;
+  };
+  check((await source.snapshot(AgentsDoc, context))?.agents ?? {});
+  return source.commit(async (tx) => {
+    const registry = await tx.doc(AgentsDoc);
+    const found = check(registry.agents);
+    const restored = [found.name];
+    delete registry.agents[found.name]?.archivedAt;
+    if (found.role === 'main') {
+      for (const [each, agent] of Object.entries(registry.agents)) {
+        if (agent.role === 'sub' && agent.parent === found.name && agent.archivedAt !== undefined) {
+          delete agent.archivedAt;
+          restored.push(each);
+        }
+      }
+    }
+    return restored;
+  }, context);
+}
+
+/**
+ * Delete every agent archived for `maxAgeMs` or more at `now` (a sub of an archived main counts from its main's time, so
+ * goes with it): its registry record goes, its name is free again, and its conversations stay unreferenced (pi-durable
+ * cannot delete one). One commit, which changes nothing when nothing is due. Returns the names deleted.
+ */
+export async function purgeArchived(source: Pick<Session, 'commit'>, context: Context, now: number,
+  maxAgeMs: number = ARCHIVE_TTL_MS): Promise<string[]> {
+  return source.commit(async (tx) => {
+    const registry = await tx.doc(AgentsDoc);
+    const due = Object.keys(registry.agents).filter((name) => {
+      const since = archivedSince(registry.agents, name);
+      return since !== undefined && now - since >= maxAgeMs;
+    });
+    // As delete_agent does: the name is free again, and `deleted` keeps its chat for zoom("Name").
+    registry.deleted ??= {};
+    const deleted = registry.deleted;
+    for (const name of due) {
+      const agent = registry.agents[name];
+      if (!agent) continue;
+      for (const key of Object.keys(deleted)) if (key.toLowerCase() === name.toLowerCase()) delete deleted[key];
+      deleted[name] = sessionsOf(agent);
+      delete registry.agents[name];
+    }
+    return due;
+  }, context);
+}
+
+/**
+ * Every spawned agent with its role, parent, conversation, busy state (a run in any of its conversations) and, when
+ * archived, since when. Archived agents are left out unless `includeArchived`.
+ */
+export async function listAgents(source: DocumentReader, context: Context = BACKGROUND_CONTEXT,
+  options: { readonly includeArchived?: boolean } = {}): Promise<AgentInfo[]> {
+  const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
+  const rows = Object.entries(agents).map(([name, agent]) => ({ name, agent, archivedAt: archivedSince(agents, name) }))
+    .filter((row) => options.includeArchived === true || row.archivedAt === undefined);
+  return Promise.all(rows.map(async ({ name, agent, archivedAt }) => ({
     name, role: agent.role, parent: agent.parent, conversationId: agent.conversationId,
     busy: await agentBusy(source, agent, context), standing: agent.standing === true,
+    ...archivedAt === undefined ? {} : { archivedAt },
   })));
 }
 
@@ -762,7 +912,12 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
         // that rule ran.
         const original = task.input.conversationId;
         let conversationId = original;
-        if ((await runtime.snapshot(AgentsDoc, context))?.agents[to]?.past?.includes(original)) {
+        const agents = (await runtime.snapshot(AgentsDoc, context))?.agents ?? {};
+        // An input to an archived or deleted agent completes without submitting, and so does a report from one, even one
+        // on its way before the archive (ADR 0034).
+        const gone = (name: string) => name !== PI && (!agents[name] || archivedSince(agents, name) !== undefined);
+        if (gone(to) || (entry.kind === REPORT_KIND && gone(entry.data.name))) return runtime.commit(done, context);
+        if (agents[to]?.past?.includes(original)) {
           // A report into a past session comes from a sub of a task the agent no longer works on: dropped.
           if (entry.kind === REPORT_KIND) return runtime.commit(done, context);
           // A message goes to the current session instead, so a task that is over never wakes. The choice is made in a
@@ -818,7 +973,8 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
           }
           // A sub of a standing agent's past session reports nowhere: its task is over (delegate switched sessions once the
           // sub was idle), so only a message woke it since, and no session waits for its report.
-          if (report !== undefined && !staleSub(registry.agents, agent)) {
+          // An archived agent's report goes nowhere; the user put it away.
+          if (report !== undefined && !staleSub(registry.agents, agent) && archivedSince(registry.agents, to) === undefined) {
             const parent = agent.parent === PI ? ROOT_CONVERSATION_ID : registry.agents[agent.parent]?.conversationId;
             // A report to Pi names the session it came from, so its link keeps opening that one.
             const session = agent.parent === PI ? sessionNumber(agent, conversationId) : undefined;
@@ -893,7 +1049,10 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
         if (existing?.standing && caller.role === 'root') {
           return `${existing.name} is a standing agent: give it a new task with delegate, or steer its current one with send_message.`;
         }
-        if (existing) return `An agent named ${existing.name} already exists; use send_message.`;
+        if (existing) return archivedRefusal(registry.agents, existing.name) ?? `An agent named ${existing.name} already exists; use send_message.`;
+        // An archived main agent was stopped, so cannot be here; checked anyway, since its subs would be archived too.
+        const own = archivedRefusal(registry.agents, caller.name);
+        if (own !== undefined) return own;
         const anchor = await tx.createTask(Anchor, null, TASK_OPTIONS);
         const child = await tx.createConversation({ ownership: { kind: 'task', taskId: anchor } });
         await onSpawn?.(tx, api.conversationId, child.id);
@@ -927,6 +1086,8 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       if (caller?.role !== 'root') return reply('Only Pi can delegate; use send_message.');
       const found = find(registry?.agents ?? {}, name);
       if (!found) return reply(noAgent(registry?.agents ?? {}, name));
+      const archived = archivedRefusal(registry?.agents ?? {}, found.name);
+      if (archived !== undefined) return once(api, context, () => Promise.resolve(archived));
       if (!found.standing) return reply(`${found.name} is not a standing agent: give it the task with send_message, or spawn_agent a new agent under another name.`);
       const busy = `${found.name} is busy with its current task; send_message to steer it, or stop_agent first.`;
       const subsBusy = (names: readonly string[]) => `${found.name}'s current task is still running (its sub agent${names.length === 1
@@ -985,7 +1146,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       if (!caller) return reply('This conversation is not an agent.');
       const others: { name: string; role: string; conversationId: ConversationId; past?: ConversationId[]; standing?: boolean }[] = [
         ...(caller.role === 'main' ? [{ name: PI, role: 'session agent', conversationId: ROOT_CONVERSATION_ID }] : []),
-        ...Object.entries(registry?.agents ?? {}).filter(([name]) => name !== caller.name)
+        ...Object.entries(registry?.agents ?? {}).filter(([name]) => name !== caller.name && archivedSince(registry?.agents ?? {}, name) === undefined)
           .map(([name, agent]) => ({ name, ...agent, role: `${agent.role}, parent ${agent.parent}${agent.standing ? ', standing' : ''}` })),
       ];
       if (!others.length) return reply('No other agents.');
@@ -1022,6 +1183,8 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
         const found = target(registry, caller, to);
         if ('error' in found) return found.error;
         if (found.name === caller.name) return 'You cannot message yourself.';
+        const archived = found.role === 'root' ? undefined : archivedRefusal(registry.agents, found.name);
+        if (archived !== undefined) return archived;
         const refused = messageRefusal(registry.agents, roster, caller, found.name);
         if (refused !== undefined) return refused;
         if (caller.role === 'sub' && caller.session !== undefined && found.name === caller.parent && caller.session !== found.conversationId) {
@@ -1060,6 +1223,8 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       if (!caller) return reply('This conversation is not an agent.');
       const found = target(registry, caller, name);
       if ('error' in found) return reply(found.error);
+      const archived = found.role === 'root' ? undefined : archivedRefusal(registry?.agents ?? {}, found.name);
+      if (archived !== undefined) return reply(archived);
       const [said, busy] = await Promise.all([api.commit((tx) => latestAnswer(tx, found), context), agentBusy(api, found, context)]);
       const state = busy ? 'busy' : 'idle';
       const from = said?.session === undefined ? '' : ` (session ${said.session}, an earlier task)`;
@@ -1080,6 +1245,8 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       const found = find(registry?.agents ?? {}, name);
       if (!caller || caller.role === 'sub') return reply('Sub agents cannot stop agents.');
       if (!found) return reply(noAgent(registry?.agents ?? {}, name));
+      const archived = archivedRefusal(registry?.agents ?? {}, found.name);
+      if (archived !== undefined) return reply(archived);
       if (caller.role === 'main' && found.parent !== caller.name) return reply(`${found.name} is not your sub agent.`);
       const subs = (await stopAgents(api, context, found.name)).slice(0, -1);
       const also = subs.length ? ` and its sub agents ${subs.join(', ')}` : '';
