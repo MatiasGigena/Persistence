@@ -37,6 +37,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0031](0031-chat-images.md) | Images in the chat: pasted screenshots in, existing image files out |
 | [0032](0032-web-shell-stale-while-revalidate.md) | The web app starts from whole cached versions of its files, revalidated in the background |
 | [0033](0033-code-mode.md) | Code mode: one script coordinates several tool calls, each with its own protections |
+| [0034](0034-archived-agents.md) | Archive ad-hoc agents; archived agents are deleted after a day |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".
