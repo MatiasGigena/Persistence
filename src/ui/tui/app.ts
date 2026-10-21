@@ -9,7 +9,7 @@ import type { ChatItem, SessionStatus, UiSession } from '../types.ts';
 import { ChatView, toolSummary } from './chat.ts';
 import type { NoticeLevel } from './chat.ts';
 import { Footer, spinnerInterval } from './footer.ts';
-import { openAgentsPanel } from './panels/agents.ts';
+import { activeAgents, openAgentsPanel } from './panels/agents.ts';
 import { confirm } from './panels/frame.ts';
 import { openMemoryPanel } from './panels/memory.ts';
 import { openEffortPanel } from './panels/effort.ts';
@@ -133,7 +133,8 @@ export const isCommand = (line: string): boolean => /^\/[^\s/]*(\s|$)/.test(line
 
 /** A compact status block, for /status. */
 export function statusText(status: SessionStatus): string {
-  const { memory, agents } = status;
+  const { memory } = status;
+  const agents = activeAgents(status.agents), archived = status.agents.length - agents.length;
   const lines = [
     `model ${status.model} · thinking ${status.thinkingLevel} · tools ${status.toolsEnabled ? 'on' : 'off'}`,
     ...status.machine ? [`tools run on ${status.machine.label} in ${status.machine.cwd}`] : [],
@@ -145,6 +146,7 @@ export function statusText(status: SessionStatus): string {
   lines.push(agents.length
     ? `agents ${agents.map(agent => `${agent.name} (${agent.role}, ${agent.busy ? 'busy' : 'idle'})`).join(', ')}`
     : 'agents none');
+  if (archived) lines.push(`archived ${archived}`);
   return lines.join('\n');
 }
 
@@ -330,7 +332,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   /** Ctrl+C twice or Ctrl+D: exits at once when idle or attached, and asks first while Pi or an agent works. */
   const leave = (): void => {
     const status = session.status();
-    if (attached || (!status.busy && !status.agents.some(agent => agent.busy))) { void exit(); return; }
+    if (attached || (!status.busy && !activeAgents(status.agents).some(agent => agent.busy))) { void exit(); return; }
     if (confirming) return;
     confirming = true;
     confirm(tui, theme, EXIT_QUESTION).then(

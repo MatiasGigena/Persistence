@@ -5,9 +5,12 @@ import { RemoteError, RemoteSession } from '../../src/client/remote-session.ts';
 import type { RemoteSessionOptions } from '../../src/client/remote-session.ts';
 import { ClientLink } from '../../src/client/unix-link.ts';
 import { CloseCode, ROOT_FEED } from '../../src/protocol/messages.ts';
+import type { ServerMessage } from '../../src/protocol/messages.ts';
+import { Hub } from '../../src/server/hub.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { ChatItem, NoticeLevel } from '../../src/ui/types.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
+import { fakeLink, fakeSession } from '../fixtures/server-fakes.ts';
 import type { FakeServerOptions } from '../fixtures/fake-server.ts';
 import { memoryConnector } from './memory-link.ts';
 import type { MemoryConnector } from './memory-link.ts';
@@ -243,4 +246,39 @@ test('bye 4000 closes for good with a notice; pending requests reject', async ()
   assert.equal(wire.peers.length, 1, 'no reconnect');
   await assert.rejects(session.send('x'), { code: 'disconnected' });
   await session.close();
+});
+
+test('archive and restore go to the real hub as agents.archive and agents.restore, and its refusals come back', async () => {
+  const hub = new Hub({ server: '0.1.0', boot: 'b', assets: 'a', cwd: '/w', tools: { remote: 'confirm' }, pushPreview: false, log: () => {} });
+  const state = fakeSession();
+  state.set({ agents: [{ name: 'Coder', role: 'main', parent: 'Pi', busy: false }, { name: 'Bob', role: 'main', parent: 'Pi', busy: true },
+    { name: 'Kid', role: 'sub', parent: 'Bob', busy: false }] });
+  hub.start(state);
+  // A ServerLink straight onto the hub's PeerLink: what the client sends is delivered, what the hub sends is heard.
+  const peer = fakeLink('socket'), heard = new Set<(message: ServerMessage) => void>();
+  const sent: string[] = [];
+  const realSend = peer.send.bind(peer);
+  peer.send = text => { realSend(text); const message = peer.got.at(-1); if (message) for (const listener of heard) listener(message); };
+  const session = new RemoteSession({
+    state: () => 'open', closedBecause: () => undefined, onChange: () => () => {},
+    onMessage: listener => { heard.add(listener); return () => heard.delete(listener); },
+    send: message => { sent.push(message.t === 'req' ? message.op : message.t); peer.deliver(message); return true; },
+    close: () => {},
+  });
+  const notices: string[] = [];
+  session.onNotice(text => notices.push(text));
+  hub.attach(peer);
+  peer.hello();
+  await session.ready();
+  assert.deepEqual(await session.archiveAgents({ name: 'bob' }), ['Bob']);
+  await until(() => session.status().agents.some(agent => agent.name === 'Bob' && agent.archivedAt !== undefined), 'Bob archived in the status');
+  assert.deepEqual(notices, ['Archived Bob, by terminal.']);
+  await assert.rejects(session.archiveAgents({ name: 'Coder' }), { code: 'failed', message: /standing agent/ });
+  await assert.rejects(session.restoreAgent('Nobody'), { code: 'not_found', message: 'No agent named Nobody.' });
+  assert.deepEqual(await session.restoreAgent('Bob'), ['Bob']);
+  assert.deepEqual(await session.archiveAgents({ adhoc: true }), ['Bob']);
+  assert.deepEqual(sent, ['agents.archive', 'agents.archive', 'agents.restore', 'agents.restore', 'agents.archive']);
+  assert.deepEqual(state.calls, ['archive bob', 'archive Coder', 'restore Nobody', 'restore Bob', 'archive adhoc']);
+  await session.close();
+  await hub.close(CloseCode.restart, 'done');
 });

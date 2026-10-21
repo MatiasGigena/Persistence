@@ -3,7 +3,7 @@
 import { ENABLE_TOOLS, ERROR_CODES, LIMITS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
 import type {
-  AgentStatus, AppendField, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
+  AgentStatus, AppendField, ArchiveTarget, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
   PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, SessionStatus, ToolsPolicy, ViewLine,
 } from './messages.ts';
 
@@ -104,9 +104,34 @@ function memoryStats(x: unknown): MemoryStats {
   };
 }
 
+/** `standing`, when present, is `true`; an ad-hoc agent leaves it out. */
+function standingFlag(o: Obj): true {
+  if (o.standing !== true) throw new Bad('standing must be true when present');
+  return true;
+}
+
 function agentStatus(x: unknown): AgentStatus {
   const o = obj(x, 'agent');
-  return { name: str(o, 'name'), role: oneOf(o, 'role', ['main', 'sub']), parent: str(o, 'parent'), busy: bool(o, 'busy') };
+  const base = withOptional({ name: str(o, 'name'), role: oneOf(o, 'role', ['main', 'sub']), parent: str(o, 'parent'), busy: bool(o, 'busy') },
+    'standing', o.standing === undefined ? undefined : standingFlag(o));
+  return withOptional(base, 'archivedAt', o.archivedAt === undefined ? undefined : int(o, 'archivedAt'));
+}
+
+/** `agents.archive`'s params: exactly one of a nonempty `name` or `adhoc: true`. */
+function archiveTarget(p: Obj): ArchiveTarget {
+  if (p.name !== undefined && p.adhoc !== undefined) throw new Bad('give either name or adhoc, not both');
+  if (p.adhoc !== undefined) {
+    if (p.adhoc !== true) throw new Bad('adhoc must be true');
+    return { adhoc: true };
+  }
+  return { name: agentName(p) };
+}
+
+/** A nonempty `name`. */
+function agentName(p: Obj): string {
+  const v = str(p, 'name');
+  if (!v.trim()) throw new Bad('name must not be empty');
+  return v;
 }
 
 /** A SessionStatus; a missing or null `memory` is undefined (JSON drops undefined). */
@@ -181,6 +206,8 @@ const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
   'machine.list': id => ({ t: 'req', id, op: 'machine.list', params: {} }),
   abort: id => ({ t: 'req', id, op: 'abort', params: {} }),
   stopAgents: (id, p) => ({ t: 'req', id, op: 'stopAgents', params: withOptional({}, 'name', optStr(p, 'name')) }),
+  'agents.archive': (id, p) => ({ t: 'req', id, op: 'agents.archive', params: archiveTarget(p) }),
+  'agents.restore': (id, p) => ({ t: 'req', id, op: 'agents.restore', params: { name: agentName(p) } }),
   'feed.open': (id, p) => ({ t: 'req', id, op: 'feed.open', params: { name: str(p, 'name') } }),
   'feed.close': (id, p) => ({ t: 'req', id, op: 'feed.close', params: { feed: str(p, 'feed') } }),
   'feed.resync': (id, p) => ({ t: 'req', id, op: 'feed.resync', params: { feed: str(p, 'feed') } }),
@@ -209,6 +236,8 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
     result: { machines: list(obj(r, 'result'), 'machines', item => machineShape(() => machineRegistration(item))) } }),
   abort: id => ({ t: 'res', id, op: 'abort', ok: true, result: null }),
   stopAgents: (id, r) => ({ t: 'res', id, op: 'stopAgents', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
+  'agents.archive': (id, r) => ({ t: 'res', id, op: 'agents.archive', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
+  'agents.restore': (id, r) => ({ t: 'res', id, op: 'agents.restore', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
   'feed.open': (id, r) => ({ t: 'res', id, op: 'feed.open', ok: true, result: { feed: str(obj(r, 'result'), 'feed') } }),
   'feed.close': id => ({ t: 'res', id, op: 'feed.close', ok: true, result: null }),
   'feed.resync': id => ({ t: 'res', id, op: 'feed.resync', ok: true, result: null }),

@@ -2,7 +2,7 @@
 // once however many peers watch them, serves the ops, applies the remote tools policy (ADRs 0019, 0025), and tells the
 // push notifier when Pi finishes or an agent reports while no one is looking.
 import { CloseCode, ENABLE_TOOLS, ErrorCode, ROOT_FEED } from '../protocol/messages.ts';
-import type { ChatItem, Device, NoticeLevel, SessionStatus, ToolsPolicy, Welcome } from '../protocol/messages.ts';
+import type { ArchiveTarget, ChatItem, Device, NoticeLevel, SessionStatus, ToolsPolicy, Welcome } from '../protocol/messages.ts';
 import { IMAGE_LIMITS, imageProblem } from '../protocol/images.ts';
 import { PROTOCOL } from '../protocol/version.ts';
 import type { ChatFeed, UiSession } from '../ui/types.ts';
@@ -66,6 +66,8 @@ const reportIds = (items: readonly ChatItem[]): Set<string> => new Set(items.fil
 /** Who made a change, as the other clients' notices say it: the web device, or "terminal". */
 const whoOf = (link: PeerLink): string => link.peer === 'socket' ? 'terminal' : link.device?.name ?? link.who;
 const running = (status: SessionStatus): boolean => status.busy || status.agents.some(agent => agent.busy);
+/** The core's refusal for a name it does not know (src/agents: `No agent named X.`). */
+const UNKNOWN_AGENT = /^No agent named /;
 
 /** The server's PeerHub. Transports `attach` links; `start` brings the session; `close` ends every connection. */
 export class Hub implements PeerHub {
@@ -303,6 +305,27 @@ export class Hub implements PeerHub {
     return null;
   }
 
+  // ---------------------------------------------------------------------------------------------- archive
+
+  /** Archives or restores through the session; a change is told to every client, naming who made it. */
+  private async archive(
+    connection: Connection, change: { readonly archive: ArchiveTarget } | { readonly restore: string },
+  ): Promise<{ names: readonly string[] }> {
+    const session = this.need();
+    let names: readonly string[];
+    try {
+      names = 'archive' in change ? await session.archiveAgents(change.archive) : await session.restoreAgent(change.restore);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new OpError(UNKNOWN_AGENT.test(message) ? ErrorCode.notFound : ErrorCode.failed, message);
+    }
+    if (!names.length) return { names };
+    const { link } = connection, verb = 'archive' in change ? 'Archived' : 'Restored';
+    this.options.log(`${verb.toLowerCase()} ${names.join(', ')}, by ${link.who} (${link.peer})`);
+    this.broadcast(`${verb} ${names.join(', ')}, by ${whoOf(link)}.`, 'info');
+    return { names };
+  }
+
   // ---------------------------------------------------------------------------------------------- push
 
   private piFinished(session: UiSession): void {
@@ -367,6 +390,8 @@ export class Hub implements PeerHub {
       },
       abort: async () => { await this.need().abort(); return null; },
       stopAgents: async ({ name }) => ({ names: await this.need().stopAgents(name) }),
+      'agents.archive': (target, connection) => this.archive(connection, { archive: target }),
+      'agents.restore': ({ name }, connection) => this.archive(connection, { restore: name }),
       'feed.open': async ({ name }, connection) => {
         const feed = await this.openFeed(connection, name);
         if (feed === undefined) throw new OpError(ErrorCode.notFound, `No agent named ${name}.`);

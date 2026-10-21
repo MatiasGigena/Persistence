@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { CloseCode, ERROR_CODES, LIMITS, OPS, ROOT_FEED } from '../../src/protocol/messages.ts';
+import { ARCHIVE_TTL_MS as CORE_TTL } from '../../src/agents/index.ts';
+import { ARCHIVE_TTL_MS, CloseCode, ERROR_CODES, LIMITS, OPS, ROOT_FEED } from '../../src/protocol/messages.ts';
 import type {
   ChatItem, ClientMessage, Op, RequestOf, ResponseOf, ServerMessage, SessionStatus,
 } from '../../src/protocol/messages.ts';
@@ -20,7 +21,9 @@ const ITEMS: readonly ChatItem[] = [
 const STATUS: SessionStatus = {
   model: 'claude-cli/sonnet', thinkingLevel: 'high', toolsEnabled: false, busy: true, queued: 2,
   memory: { messages: 9, unsummarized: 1, active: 0, failed: 1, lastError: 'refused', viewBytes: 300, viewLines: 4 },
-  agents: [{ name: 'Bob', role: 'main', parent: 'Pi', busy: true }, { name: 'Kid', role: 'sub', parent: 'Bob', busy: false }],
+  agents: [{ name: 'Bob', role: 'main', parent: 'Pi', busy: true }, { name: 'Kid', role: 'sub', parent: 'Bob', busy: false },
+    { name: 'Old', role: 'main', parent: 'Pi', busy: false, archivedAt: 1_800_000_000_000 },
+    { name: 'Coder', role: 'main', parent: 'Pi', busy: false, standing: true }],
 };
 
 /** One request per op: the type makes this table list every op. */
@@ -28,6 +31,8 @@ const REQUESTS: { readonly [O in Op]: RequestOf<O> } = {
   send: { t: 'req', id: 1, op: 'send', params: { text: 'hello' } },
   abort: { t: 'req', id: 2, op: 'abort', params: {} },
   stopAgents: { t: 'req', id: 3, op: 'stopAgents', params: { name: 'Bob' } },
+  'agents.archive': { t: 'req', id: 40, op: 'agents.archive', params: { name: 'Bob' } },
+  'agents.restore': { t: 'req', id: 41, op: 'agents.restore', params: { name: 'Bob' } },
   'feed.open': { t: 'req', id: 4, op: 'feed.open', params: { name: 'Bob' } },
   'feed.close': { t: 'req', id: 5, op: 'feed.close', params: { feed: 'agent:Bob' } },
   'feed.resync': { t: 'req', id: 6, op: 'feed.resync', params: { feed: ROOT_FEED } },
@@ -57,6 +62,8 @@ const RESPONSES: { readonly [O in Op]: ResponseOf<O> } = {
   send: { t: 'res', id: 1, op: 'send', ok: true, result: null },
   abort: { t: 'res', id: 2, op: 'abort', ok: true, result: null },
   stopAgents: { t: 'res', id: 3, op: 'stopAgents', ok: true, result: { names: ['Kid', 'Bob'] } },
+  'agents.archive': { t: 'res', id: 40, op: 'agents.archive', ok: true, result: { names: ['Kid', 'Bob'] } },
+  'agents.restore': { t: 'res', id: 41, op: 'agents.restore', ok: true, result: { names: [] } },
   'feed.open': { t: 'res', id: 4, op: 'feed.open', ok: true, result: { feed: 'agent:Bob' } },
   'feed.close': { t: 'res', id: 5, op: 'feed.close', ok: true, result: null },
   'feed.resync': { t: 'res', id: 6, op: 'feed.resync', ok: true, result: null },
@@ -89,6 +96,7 @@ const CLIENT: readonly ClientMessage[] = [
   { t: 'ping', n: 7 },
   ...Object.values(REQUESTS),
   { t: 'req', id: 20, op: 'stopAgents', params: {} },
+  { t: 'req', id: 42, op: 'agents.archive', params: { adhoc: true } },
   { t: 'req', id: 24, op: 'send', params: { text: 'again', requestId: 'tui-1a2b-7' } },
   { t: 'req', id: 25, op: 'send', params: { text: 'not that one', requestId: 'web-1', steer: true } },
   { t: 'req', id: 26, op: 'send', params: { text: '', requestId: 'web-2', images: [{ mimeType: 'image/png', data: 'iVBORw0KGgo=' }] } },
@@ -151,6 +159,10 @@ describe('parsing', () => {
       { t: 'status', status: { model: 'm', thinkingLevel: 'off', toolsEnabled: false, busy: false, queued: 0, memory: undefined, agents: [] } });
   });
 
+  test('the archive TTL clients show is the core\'s', () => {
+    assert.equal(ARCHIVE_TTL_MS, CORE_TTL);
+  });
+
   test('an unknown message type is reported as such, for the receiver to ignore', () => {
     assert.equal(invalid(parseClientMessage('{"t":"subscribe","x":1}')), 'unknown_type');
     assert.equal(invalid(parseServerMessage('{"t":"presence"}')), 'unknown_type');
@@ -182,6 +194,15 @@ describe('parsing', () => {
       ['{"t":"req","id":1,"op":"send","params":{"text":"x","images":{}}}', 'shape'],
       ['{"t":"req","id":1,"op":"send","params":{"text":"x","images":[{"mimeType":"image/png"}]}}', 'shape'],
       ['{"t":"req","id":1,"op":"stopAgents","params":{"name":5}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.archive","params":{}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.archive","params":{"name":""}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.archive","params":{"name":5}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.archive","params":{"adhoc":false}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.archive","params":{"adhoc":"yes"}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.archive","params":{"name":"Bob","adhoc":true}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.restore","params":{}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.restore","params":{"adhoc":true}}', 'shape'],
+      ['{"t":"req","id":1,"op":"agents.restore","params":{"name":"  "}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.open","params":{}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.close","params":{"feed":null}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.resync","params":{"feed":1}}', 'shape'],
@@ -241,6 +262,10 @@ describe('parsing', () => {
       ['{"t":"res","id":1,"ok":true,"op":"unheard.of","result":null}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"feed.open","result":{}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"stopAgents","result":{"names":[1]}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"agents.archive","result":{}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"agents.restore","result":{"names":[null]}}', 'shape'],
+      ['{"t":"status","status":{"model":"m","thinkingLevel":"off","toolsEnabled":false,"busy":false,"queued":0,"agents":[{"name":"B","role":"main","parent":"Pi","busy":false,"archivedAt":"today"}]}}', 'shape'],
+      ['{"t":"status","status":{"model":"m","thinkingLevel":"off","toolsEnabled":false,"busy":false,"queued":0,"agents":[{"name":"B","role":"main","parent":"Pi","busy":false,"standing":false}]}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"memory.view","result":{"lines":[{"id":0,"n":0,"text":"x"}]}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"memory.zoom","result":null}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"models","result":{"models":[{"provider":"p","id":"i","name":"n"}]}}', 'shape'],

@@ -1,6 +1,7 @@
 // Text helpers of the web app with no DOM: tool summaries, the status line, memory zoom parsing, sizes. They
 // mirror the terminal UI's wording (src/ui/tui/), which cannot load in a browser; test/web checks the two agree.
 // Also `inOrder`, which keeps attached images in the order they were picked, here so Node tests reach it.
+import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
 import type { MemoryStats, ModelChoice, SessionStatus, ViewLine } from '../protocol/messages.ts';
 
 // Control characters other than newline and tab, and terminal escapes, never reach the page.
@@ -91,6 +92,57 @@ export interface StatusPart {
   readonly tone: 'busy' | 'dim' | 'error';
 }
 
+/** The agents at work: those not archived. Counts, lists and busy marks read only these. */
+export function activeAgents<T extends { readonly archivedAt?: number }>(agents: readonly T[]): T[] {
+  return agents.filter(agent => agent.archivedAt === undefined);
+}
+
+/** The archived agents, soonest deleted first. */
+export function archivedAgents<T extends { readonly archivedAt?: number }>(agents: readonly T[]): (T & { readonly archivedAt: number })[] {
+  return agents.flatMap(agent => (agent.archivedAt === undefined ? [] : [{ ...agent, archivedAt: agent.archivedAt }]))
+    .sort((a, b) => a.archivedAt - b.archivedAt);
+}
+
+/**
+ * When an agent archived at `archivedAt` (ms) is deleted, from `now`: "deleted in 5 h" (whole hours, rounded down),
+ * "deleted in 12 min" under an hour (rounded up), "deleted soon" once due. As the terminal's `deletionText`.
+ */
+export function deletionText(archivedAt: number, now: number): string {
+  const left = archivedAt + ARCHIVE_TTL_MS - now;
+  if (left <= 0) return 'deleted soon';
+  const hours = Math.floor(left / 3_600_000);
+  return hours >= 1 ? `deleted in ${hours} h` : `deleted in ${Math.ceil(left / 60_000)} min`;
+}
+
+/**
+ * Whether the status marks an agent as standing (ADR 0027). Read structurally, so a status without the field counts
+ * every agent as ad-hoc; the server still refuses to archive a standing one.
+ */
+const isStanding = (agent: object): boolean => 'standing' in agent && Boolean(agent.standing);
+
+/** The main agents "archive all ad-hoc agents" takes: not archived, not standing. */
+export function adhocAgents<T extends { readonly role: string; readonly archivedAt?: number }>(agents: readonly T[]): T[] {
+  return activeAgents(agents).filter(agent => agent.role === 'main' && !isStanding(agent));
+}
+
+/** Asked before archiving one agent; `subs` are its sub agents, which go with it. As the terminal's. */
+export function archiveQuestion(name: string, subs: readonly string[] = []): string {
+  return `Archive ${name}? It stops now and is deleted in 24 h; restore within the day.`
+    + (subs.length ? ` Its sub agents go with it: ${subs.join(', ')}.` : '');
+}
+
+/** Asked before archiving every ad-hoc main agent, named. As the terminal's. */
+export function archiveAdhocQuestion(names: readonly string[]): string {
+  return `Archive all ad-hoc agents: ${names.join(', ')}? They and their sub agents stop now and are deleted in 24 h;`
+    + ' restore within the day. Standing agents stay.';
+}
+
+/** What archiving or restoring did, from the names the server returns. As the terminal's. */
+export function archivedText(names: readonly string[], restored = false): string {
+  if (!names.length) return restored ? 'Nothing to restore.' : 'No agents to archive.';
+  return `${restored ? 'Restored' : 'Archived'} ${names.join(', ')}.`;
+}
+
 /** The compact status under the header: work, queue, memory and agents, in the terminal footer's short forms. */
 export function statusParts(status: SessionStatus): StatusPart[] {
   const parts: StatusPart[] = [{ key: 'work', text: status.busy ? 'working' : 'idle', tone: status.busy ? 'busy' : 'dim' }];
@@ -100,16 +152,18 @@ export function statusParts(status: SessionStatus): StatusPart[] {
     parts.push({ key: 'memory', text: `mem ${size(memory.viewBytes)}`, tone: 'dim' });
     if (memory.failed) parts.push({ key: 'failed', text: `${memory.failed} failed`, tone: 'error' });
   }
-  if (status.agents.length) {
-    const busy = status.agents.filter(agent => agent.busy).length;
-    parts.push({ key: 'agents', text: `${busy}/${status.agents.length} agents`, tone: busy ? 'busy' : 'dim' });
+  const agents = activeAgents(status.agents);
+  if (agents.length) {
+    const busy = agents.filter(agent => agent.busy).length;
+    parts.push({ key: 'agents', text: `${busy}/${agents.length} agents`, tone: busy ? 'busy' : 'dim' });
   }
   return parts;
 }
 
 /** The full status, as the terminal's /status prints it. */
 export function statusText(status: SessionStatus): string {
-  const { memory, agents } = status;
+  const { memory } = status;
+  const agents = activeAgents(status.agents), archived = status.agents.length - agents.length;
   const lines = [
     `model ${status.model} · thinking ${status.thinkingLevel} · tools ${status.toolsEnabled ? 'on' : 'off'}`,
     `work ${status.busy ? 'running' : 'idle'}${status.queued ? ` · ${status.queued} queued` : ''}`,
@@ -120,6 +174,7 @@ export function statusText(status: SessionStatus): string {
   lines.push(agents.length
     ? `agents ${agents.map(agent => `${agent.name} (${agent.role}, ${agent.busy ? 'busy' : 'idle'})`).join(', ')}`
     : 'agents none');
+  if (archived) lines.push(`archived ${archived}`);
   return lines.join('\n');
 }
 

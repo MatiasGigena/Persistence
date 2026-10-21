@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
 import { stripTerminalSequences, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, OverlayHandle, OverlayOptions, Terminal } from '@earendil-works/pi-tui';
-import { openAgentsPanel } from '../../src/ui/tui/panels/agents.ts';
+import { activeAgents, adhocAgents, archivedAgents, deletionText, openAgentsPanel } from '../../src/ui/tui/panels/agents.ts';
 import { confirm } from '../../src/ui/tui/panels/frame.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
 import { openMemoryPanel, parseMessage, parseZoom } from '../../src/ui/tui/panels/memory.ts';
-import type { AgentStatus, ChatFeed, ChatItem, MemoryStats, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import type { AgentStatus, ArchiveTarget, ChatFeed, ChatItem, MemoryStats, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
 
 const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b' };
 const sgr = (on: number, off: number) => (text: string): string => `\x1b[${on}m${text}\x1b[${off}m`;
@@ -75,6 +75,32 @@ class FakeSession implements UiSession {
   abort(): Promise<void> { return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
   stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
+  /** Archive and restore calls, as `name` or `adhoc`; Coder is standing and refused. */
+  readonly archiveCalls: string[] = [];
+  readonly standing = new Set(['Coder']);
+  now = Date.UTC(2026, 9, 21, 12);
+  archiveAgents(target: ArchiveTarget): Promise<readonly string[]> {
+    const key = 'name' in target ? target.name : 'adhoc';
+    this.archiveCalls.push(key);
+    if ('name' in target && this.standing.has(target.name)) {
+      return Promise.reject(new Error(`${target.name} is a standing agent; remove it from the roster first.`));
+    }
+    const hit = (a: AgentStatus): boolean => a.archivedAt === undefined
+      && ('name' in target ? a.name === target.name || a.parent === target.name : !this.standing.has(a.role === 'main' ? a.name : a.parent));
+    const names = this.agents.filter(hit).map(a => a.name);
+    this.setAgents(this.agents.map(a => (names.includes(a.name) ? { ...a, busy: false, archivedAt: this.now } : a)));
+    return Promise.resolve(names);
+  }
+  restoreAgent(name: string): Promise<readonly string[]> {
+    this.archiveCalls.push(`restore ${name}`);
+    const names = this.agents.filter(a => a.archivedAt !== undefined && (a.name === name || a.parent === name)).map(a => a.name);
+    this.setAgents(this.agents.map(a => {
+      if (!names.includes(a.name)) return a;
+      const { archivedAt: _, ...rest } = a;
+      return rest;
+    }));
+    return Promise.resolve(names);
+  }
   agentChat(name: string): Promise<ChatFeed | undefined> { return Promise.resolve(this.feeds.get(name)); }
   memoryView(): Promise<readonly ViewLine[]> { this.viewCalls++; return this.viewResult ?? Promise.resolve(this.view); }
   viewCalls = 0;
@@ -124,6 +150,9 @@ function harness(columns = 80, rows = 20) {
     /** The panel at the width pi-tui gives it (the whole terminal), styles kept. */
     raw: (): string[] => panel().render(columns),
     screen: (): string => panel().render(columns).map(stripTerminalSequences).join('\n'),
+    /** The first overlay (the panel itself, under any confirmation box), as text. */
+    base: (): string => (overlays[0]?.render(columns) ?? []).map(stripTerminalSequences).join('\n'),
+    baseRaw: (): string[] => overlays[0]?.render(columns) ?? [],
   };
 }
 
@@ -189,6 +218,111 @@ describe('agents panel', () => {
     assert.doesNotMatch(h.screen(), /Find the bug/);
     h.press(KEY.esc);
     await closed;
+  });
+});
+
+describe('agents panel: archiving (ADR 0034)', () => {
+  const HOUR = 3_600_000;
+  /** Ada (main) with sub Sub, Coder (standing), Bob (main). */
+  const crew = (): AgentStatus[] => [agent('Ada', true), agent('Sub', false, 'sub', 'Ada'), agent('Coder', false), agent('Bob', false)];
+  const settle = async (): Promise<void> => { for (let i = 0; i < 5; i++) await tick(); };
+  /** A box's text on one line, borders and wrapping gone. */
+  const flat = (screen: string): string => screen.replace(/[│╭╮╰╯─]/g, ' ').replace(/\s+/g, ' ');
+
+  test('a asks first; any key but y keeps the agent, y archives it with its subs and says so', async () => {
+    const session = new FakeSession(), h = harness(100, 24);
+    session.agents = crew();
+    const closed = openAgentsPanel(h.tui, session, theme);
+    assert.match(h.screen(), /4 agents · 1 busy/);
+    assert.match(h.screen(), /a archive · A archive ad-hoc · esc close/);
+    h.press('a');
+    assert.match(flat(h.screen()), /Archive Ada\? It stops now and is deleted in 24 h; restore within the day\. Its sub agents go with it: Sub\./);
+    h.press('n');
+    await settle();
+    assert.deepEqual(session.archiveCalls, []);
+    assert.match(h.base(), /→ ● Ada/);
+    h.press('a', 'y');
+    await settle();
+    assert.deepEqual(session.archiveCalls, ['Ada']);
+    const screen = h.base();
+    assert.match(screen, /Archived Ada, Sub\./);
+    assert.doesNotMatch(screen, /[●○] (Ada|Sub)\b/);
+    assert.match(screen, /Archived \(2\) ›/);
+    h.press(KEY.esc);
+    await closed;
+  });
+
+  test('a refusal (a standing agent) shows as the header error', async () => {
+    const session = new FakeSession(), h = harness(100, 24);
+    session.agents = crew();
+    const closed = openAgentsPanel(h.tui, session, theme);
+    h.press(KEY.down, KEY.down, 'a', 'y');
+    await settle();
+    assert.deepEqual(session.archiveCalls, ['Coder']);
+    assert.ok(h.baseRaw().some(line => line.includes(theme.error('Coder is a standing agent; remove it from the roster first.'))), h.base());
+    h.press(KEY.esc);
+    await closed;
+  });
+
+  test('A names the ad-hoc agents and archives them; the archived list shows deletion times and Enter restores', async () => {
+    const session = new FakeSession(), h = harness(100, 24);
+    session.standing.clear();
+    session.agents = [agent('Ada', false), agent('Bob', false)];
+    const closed = openAgentsPanel(h.tui, session, theme, () => session.now + 19 * HOUR);
+    h.press('A');
+    assert.match(flat(h.screen()), /Archive all ad-hoc agents: Ada, Bob\?/);
+    h.press('y');
+    await settle();
+    assert.deepEqual(session.archiveCalls, ['adhoc']);
+    assert.match(h.base(), /Archived Ada, Bob\./);
+    assert.match(h.base(), /→ {3}Archived \(2\) ›/);
+    assert.doesNotMatch(h.base(), /a archive/, 'no archive keys without agents');
+    h.press(KEY.down, KEY.enter);
+    const archived = h.base();
+    assert.match(archived, /Agents › Archived/);
+    assert.match(archived, /→ − Ada\s+main\s+parent Pi\s+deleted in 5 h/);
+    assert.match(archived, /enter restore · esc back/);
+    h.press(KEY.enter);
+    await settle();
+    assert.deepEqual(session.archiveCalls, ['adhoc', 'restore Ada']);
+    assert.match(h.base(), /Restored Ada\./);
+    assert.doesNotMatch(h.base(), /− Ada/);
+    h.press(KEY.esc);
+    assert.match(h.base(), /○ Ada/);
+    assert.match(h.base(), /Archived \(1\) ›/);
+    h.press(KEY.esc);
+    await closed;
+  });
+
+  test('A with no ad-hoc agents says so without asking', async () => {
+    const session = new FakeSession(), h = harness(100, 24);
+    session.agents = [{ ...agent('Old', false), archivedAt: session.now }];
+    const closed = openAgentsPanel(h.tui, session, theme);
+    h.press('A');
+    await settle();
+    assert.match(h.screen(), /No ad-hoc agents to archive\./);
+    assert.deepEqual(session.archiveCalls, []);
+    h.press(KEY.esc);
+    await closed;
+  });
+});
+
+describe('archive helpers', () => {
+  test('deletion times count down in whole hours, then minutes', () => {
+    const at = 1_000_000, hour = 3_600_000;
+    assert.equal(deletionText(at, at), 'deleted in 24 h');
+    assert.equal(deletionText(at, at + 18.5 * hour), 'deleted in 5 h');
+    assert.equal(deletionText(at, at + 23 * hour), 'deleted in 1 h');
+    assert.equal(deletionText(at, at + 23.5 * hour), 'deleted in 30 min');
+    assert.equal(deletionText(at, at + 24 * hour - 1), 'deleted in 1 min');
+    assert.equal(deletionText(at, at + 25 * hour), 'deleted soon');
+  });
+
+  test('active, archived and ad-hoc agents', () => {
+    const list = [agent('Ada', true), { ...agent('Old', false), archivedAt: 5 }, { ...agent('Older', false), archivedAt: 2 }, agent('Sub', false, 'sub', 'Ada')];
+    assert.deepEqual(activeAgents(list).map(a => a.name), ['Ada', 'Sub']);
+    assert.deepEqual(archivedAgents(list).map(a => a.name), ['Older', 'Old']);
+    assert.deepEqual(adhocAgents(list).map(a => a.name), ['Ada']);
   });
 });
 
@@ -342,7 +476,7 @@ describe('panels on a phone', () => {
       const screen = h.screen();
       assert.equal(/parent Ada/.test(screen), !narrow, screen);
       assert.match(screen, narrow ? /○ Bob {2}sub {3}idle/ : /○ Bob\s+sub\s+parent Ada\s+idle/);
-      assert.match(screen, narrow ? /╰─ enter open · esc close ─/ : /╰─ ↑↓ move · enter open · esc close ─/);
+      assert.match(screen, narrow ? /╰─ enter open · a archive · esc close ─/ : /╰─ ↑↓ move · enter open · a archive · A archive ad-hoc · esc close ─/);
       h.press(KEY.esc);
       await closed;
       stop?.();

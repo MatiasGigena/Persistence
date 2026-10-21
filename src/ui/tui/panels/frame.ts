@@ -164,6 +164,13 @@ export interface ListOptions {
   readonly root?: boolean;
   /** What a narrow screen shows of the selected row besides its compact form. */
   readonly detail?: (row: Row) => string | undefined;
+  /**
+   * More keys, as printable characters (`a`, `A`), with the selected row if any; returns true when it took the key.
+   * Not offered while filtering.
+   */
+  readonly keys?: (key: string, row: Row | undefined) => boolean;
+  /** Hints for `keys`, shown before Esc's; `narrow` asks for a short one, and an empty string shows none. */
+  readonly keyHint?: (narrow: boolean) => string;
   readonly dispose?: () => void;
 }
 
@@ -191,7 +198,8 @@ export class ListView implements PanelView {
     if (this.typing) return narrow ? 'enter keep · esc clear' : 'type to filter · enter keep · esc clear';
     const enter = `enter ${this.options.verb ?? 'open'}`, esc = `esc ${this.options.root ? 'close' : 'back'}`;
     if (this.options.typeToFilter) return narrow ? `type to filter · ${esc}` : `type to filter · ↑↓ move · ${enter} · ${esc}`;
-    return `${narrow ? '' : '↑↓ move · '}${enter}${this.options.filterable ? ' · / filter' : ''} · ${esc}`;
+    const more = this.options.keyHint?.(narrow) ?? '';
+    return `${narrow ? '' : '↑↓ move · '}${enter}${this.options.filterable ? ' · / filter' : ''}${more ? ` · ${more}` : ''} · ${esc}`;
   }
 
   detail(): string | undefined {
@@ -232,6 +240,7 @@ export class ListView implements PanelView {
       if (row) { this.select(rows, index); this.options.onOpen(row); }
     } else if (this.options.typeToFilter) return this.handleFilter(data);
     else if (data === '/' && this.options.filterable) this.typing = true;
+    else if (this.options.keys?.(decodeKittyPrintable(data) ?? data, rows[index])) return true;
     else return false;
     return true;
   }

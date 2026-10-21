@@ -427,6 +427,23 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     assert.ok(after.every(each => each.startsWith('claude-cli/')), JSON.stringify(after));
   });
 
+  test('archiveAgents and restoreAgent: the status keeps archived agents with archivedAt, and refusals are readable', async (t) => {
+    const { instance, session } = await openRoutes(t);
+    await spawnBob(instance, session);
+    const before = Date.now();
+    assert.deepEqual(await session.archiveAgents({ name: 'bob' }), ['Bob']);
+    const archived = session.status().agents.find(agent => agent.name === 'Bob');
+    assert.ok(archived?.archivedAt !== undefined && archived.archivedAt >= before && archived.archivedAt <= Date.now(), JSON.stringify(archived));
+    assert.deepEqual(await listAgents(instance.harness, instance.context), [], 'hidden from the default list');
+    assert.ok(await session.agentChat('Bob'), 'an archived agent\'s chat still opens');
+    await assert.rejects(session.restoreAgent('Nobody'), /No agent named Nobody/);
+    assert.deepEqual(await session.restoreAgent('Bob'), ['Bob']);
+    assert.deepEqual(session.status().agents.map(agent => [agent.name, agent.archivedAt]), [['Bob', undefined]]);
+    await assert.rejects(session.restoreAgent('Bob'), /Bob is not archived/);
+    assert.deepEqual(await session.archiveAgents({ adhoc: true }), ['Bob']);
+    assert.ok(session.status().agents[0]?.archivedAt !== undefined);
+  });
+
   test('setTools on then off: Pi\'s tools, an agent\'s tools, the instructions, and the status', async (t) => {
     const { instance, session } = await openRoutes(t);
     const bob = await spawnBob(instance, session);

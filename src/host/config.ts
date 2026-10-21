@@ -17,6 +17,8 @@ Usage: pi-durable [options] [prompt]
        pi-durable serve [--cwd DIR] [--port N]   Run the chat as a server
        pi-durable serve pair                     One-time code to pair a web device
        pi-durable serve devices [--revoke NAME]  List paired web devices, or revoke one
+       pi-durable serve agents [--archive NAME | --archive-adhoc | --restore NAME]
+                                                 List agents, archive or restore them
        pi-durable backup [--out DIR]             Online backup of the chat
        pi-durable connect SSH_HOST [options]     Save the default remote server
        pi-durable bridge                        Proxy the local server socket over stdio
@@ -51,6 +53,10 @@ A prompt whose first word is serve, backup, connect or bridge needs -p.
   --attach               Attach to the running server, or fail
   --port N               serve: loopback TCP port for the web app (default 7433)
   --revoke NAME          serve devices: forget a device and disconnect it
+  --archive NAME         serve agents: archive an agent (and its sub agents); it is
+                         deleted a day later unless restored
+  --archive-adhoc        serve agents: archive every ad-hoc main agent
+  --restore NAME         serve agents: restore an archived agent
   --out DIR              backup: where to write it (default: backups/ beside the chat)
   --auth-file PATH       Pi-compatible credentials (default: Pi auth.json)
   --request-id ID        Deduplicate a one-shot prompt, including after restart
@@ -98,26 +104,27 @@ Server environment:
                              (local launches too); default: Playwright's own
 `;
 
-type Flag = 'help' | 'version' | 'allowTools' | 'noTools' | 'resume' | 'history' | 'status' | 'plain' | 'local' | 'attach';
+type Flag = 'help' | 'version' | 'allowTools' | 'noTools' | 'resume' | 'history' | 'status' | 'plain' | 'local' | 'attach'
+  | 'archiveAdhoc';
 type Value = 'database' | 'dataDir' | 'cwd' | 'modelSpec' | 'thinkingLevel' | 'authFile' | 'requestId' | 'prompt'
-  | 'portSpec' | 'revoke' | 'out' | 'remote' | 'remoteBin' | 'remoteDataDir';
+  | 'portSpec' | 'revoke' | 'out' | 'archive' | 'restore' | 'remote' | 'remoteBin' | 'remoteDataDir';
 const FLAGS = new Map<string, Flag>([['--help', 'help'], ['-h', 'help'], ['--version', 'version'], ['-v', 'version'],
   ['--allow-tools', 'allowTools'], ['--no-tools', 'noTools'], ['--resume', 'resume'], ['--history', 'history'], ['--status', 'status'], ['--plain', 'plain'],
-  ['--local', 'local'], ['--attach', 'attach']]);
+  ['--local', 'local'], ['--attach', 'attach'], ['--archive-adhoc', 'archiveAdhoc']]);
 const VALUES = new Map<string, Value>([
   ['--database', 'database'], ['--data-dir', 'dataDir'],
   ['--cwd', 'cwd'], ['--model', 'modelSpec'], ['--thinking', 'thinkingLevel'],
   ['--auth-file', 'authFile'], ['--request-id', 'requestId'], ['--print', 'prompt'], ['-p', 'prompt'],
-  ['--port', 'portSpec'], ['--revoke', 'revoke'], ['--out', 'out'],
+  ['--port', 'portSpec'], ['--revoke', 'revoke'], ['--out', 'out'], ['--archive', 'archive'], ['--restore', 'restore'],
   ['--remote', 'remote'], ['--remote-bin', 'remoteBin'], ['--remote-data-dir', 'remoteDataDir'],
 ]);
 
 /**
  * What a launch does: `chat` is every launch without a subcommand (interactive chat, a prompt, --status, …);
- * `serve` runs the server; `serve-pair`, `serve-devices` and `backup` are its admin commands.
+ * `serve` runs the server; `serve-pair`, `serve-devices`, `serve-agents` and `backup` are its admin commands.
  */
-export type Command = 'chat' | 'serve' | 'serve-pair' | 'serve-devices' | 'backup' | 'connect' | 'bridge';
-const COMMANDS: readonly Command[] = ['chat', 'serve', 'serve-pair', 'serve-devices', 'backup', 'connect', 'bridge'];
+export type Command = 'chat' | 'serve' | 'serve-pair' | 'serve-devices' | 'serve-agents' | 'backup' | 'connect' | 'bridge';
+const COMMANDS: readonly Command[] = ['chat', 'serve', 'serve-pair', 'serve-devices', 'serve-agents', 'backup', 'connect', 'bridge'];
 type Key = Flag | Value;
 const LOCATION: readonly Key[] = ['help', 'version', 'database', 'dataDir'];
 /** The options each command takes; any other is an error. A prompt is the `prompt` key. */
@@ -127,15 +134,19 @@ const ALLOWED: Readonly<Record<Command, ReadonlySet<Key>>> = {
   serve: new Set<Key>([...LOCATION, 'cwd', 'portSpec', 'modelSpec', 'thinkingLevel', 'authFile', 'allowTools', 'noTools']),
   'serve-pair': new Set<Key>(LOCATION),
   'serve-devices': new Set<Key>([...LOCATION, 'revoke']),
+  'serve-agents': new Set<Key>([...LOCATION, 'archive', 'archiveAdhoc', 'restore']),
   backup: new Set<Key>([...LOCATION, 'out']),
   connect: new Set<Key>(['help', 'version', 'remoteBin', 'remoteDataDir']),
   bridge: new Set<Key>(LOCATION),
 };
+/** Options of one subcommand, which a chat launch refuses, with the subcommand's name. */
+const ONLY_FOR: readonly (readonly [Key, string])[] = [['portSpec', 'serve'], ['revoke', 'serve devices'], ['out', 'backup'],
+  ['archive', 'serve agents'], ['archiveAdhoc', 'serve agents'], ['restore', 'serve agents']];
 /** Options that set up a local launch, so an attached chat (which uses the server's) refuses them. */
 const LAUNCH_ONLY: readonly Key[] = ['allowTools', 'noTools', 'cwd', 'modelSpec', 'thinkingLevel', 'authFile', 'plain'];
 const COMMAND_NAMES: Readonly<Record<Command, string>> = {
-  chat: 'chat', serve: 'serve', 'serve-pair': 'serve pair', 'serve-devices': 'serve devices', backup: 'backup',
-  connect: 'connect', bridge: 'bridge',
+  chat: 'chat', serve: 'serve', 'serve-pair': 'serve pair', 'serve-devices': 'serve devices', 'serve-agents': 'serve agents',
+  backup: 'backup', connect: 'connect', bridge: 'bridge',
 };
 /** Every reasoning effort (thinking level), lowest first. */
 export const THINKING: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -191,6 +202,12 @@ export interface Options {
   port?: number;
   /** `serve devices --revoke NAME`. */
   revoke?: string;
+  /** `serve agents --archive NAME`. */
+  archive?: string;
+  /** `serve agents --archive-adhoc`. */
+  archiveAdhoc?: boolean;
+  /** `serve agents --restore NAME`. */
+  restore?: string;
   /** `backup --out DIR`. */
   out?: string;
 }
@@ -281,6 +298,7 @@ function command(words: readonly string[]): { command: Command; rest: readonly s
   if (first !== 'serve') return { command: 'chat', rest: words };
   if (second === 'pair') return { command: 'serve-pair', rest: words.slice(2) };
   if (second === 'devices') return { command: 'serve-devices', rest: words.slice(2) };
+  if (second === 'agents') return { command: 'serve-agents', rest: words.slice(2) };
   return { command: 'serve', rest: words.slice(1) };
 }
 
@@ -337,9 +355,9 @@ export function parseArgs(args: readonly string[]): Options {
   } else {
     if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
     options.allowTools = !options.noTools;
-    for (const key of ['portSpec', 'revoke', 'out'] as const) {
+    for (const [key, owner] of ONLY_FOR) {
       const spelling = given.get(key);
-      if (spelling) throw new Error(`${spelling} applies only to ${key === 'portSpec' ? 'serve' : key === 'revoke' ? 'serve devices' : 'backup'}`);
+      if (spelling) throw new Error(`${spelling} applies only to ${owner}`);
     }
     if (options.local && options.attach) throw new Error('Choose either --local or --attach');
     if (options.local && options.remote !== undefined) throw new Error('Choose either --local or --remote');
@@ -353,6 +371,11 @@ export function parseArgs(args: readonly string[]): Options {
   options.remoteAllowTools = chosen === 'chat' && given.has('allowTools') && !options.noTools;
   if (options.portSpec !== undefined) options.port = parsePort(options.portSpec, '--port');
   if (options.revoke !== undefined && !options.revoke.trim()) throw new Error('--revoke requires a device name');
+  if (options.archive !== undefined && !options.archive.trim()) throw new Error('--archive requires an agent name');
+  if (options.restore !== undefined && !options.restore.trim()) throw new Error('--restore requires an agent name');
+  if ([options.archive !== undefined, options.archiveAdhoc, options.restore !== undefined].filter(Boolean).length > 1) {
+    throw new Error('Choose only one of --archive, --archive-adhoc, or --restore');
+  }
   if (prompts.length && options.prompt !== undefined) throw new Error('Use either --print or a positional prompt, not both');
   if (prompts.length) options.prompt = prompts.join(' ');
   if (options.prompt !== undefined && !options.prompt.trim()) throw new Error('Prompt cannot be empty');
@@ -624,10 +647,10 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
 }
 
 const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'settingsPath', 'serveDir', 'authFile'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out', 'launchOption', 'chromium',
+const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'archive', 'restore', 'out', 'launchOption', 'chromium',
   'remote', 'remoteBin', 'remoteDataDir', 'remoteUnsupported'] as const satisfies readonly (keyof Config)[];
 const BOOLEANS = ['allowTools', 'exists', 'inspectOnly'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_BOOLEANS = ['help', 'version', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'thinkingFlag', 'remoteAllowTools'] as const satisfies readonly (keyof Config)[];
+const OPTIONAL_BOOLEANS = ['help', 'version', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'archiveAdhoc', 'thinkingFlag', 'remoteAllowTools'] as const satisfies readonly (keyof Config)[];
 const isPort = (x: unknown): boolean => typeof x === 'number' && Number.isInteger(x) && x >= 1 && x <= 65535;
 
 function isServeSettings(x: unknown): x is ServeSettings {

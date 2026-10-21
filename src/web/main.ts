@@ -3,7 +3,7 @@
 import { imageUrl, toChatImage } from './attach.ts';
 import { ChatView, el, initViewer, play } from './chat-view.ts';
 import { announce } from './copy.ts';
-import { errorText, guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
+import { activeAgents, errorText, guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
@@ -541,7 +541,7 @@ function start(): void {
     if (!status) return;
     modelName.textContent = `${shortModel(status.model)} · ${status.thinkingLevel}`;
     drawSend();
-    pulse.classList.toggle('is-busy', status.busy || status.agents.some(a => a.busy));
+    pulse.classList.toggle('is-busy', status.busy || activeAgents(status.agents).some(a => a.busy));
     statusLine.replaceChildren(...statusParts(status).map(part => {
       const opens = part.key === 'agents' ? agentsView : part.key === 'memory' || part.key === 'failed' ? memoryView : undefined;
       const node = opens ? el('button', `status-part tone-${part.tone}`, part.text) : el('span', `status-part tone-${part.tone}`, part.text);

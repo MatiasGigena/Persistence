@@ -66,7 +66,7 @@ agents, and each agent is another conversation in the same database.
   (`footer.ts`) and the editor; `theme.ts` is its palette, and `panels/` holds the
   `/agents`, `/mem`, `/model` and `/effort` overlays (`panels/model.ts` is the model picker, `panels/effort.ts` the
   reasoning effort picker;
-`panels/frame.ts` also has the one-key confirmation `/tools on` asks). It knows the
+`panels/frame.ts` also has the one-key confirmation `/tools on` and archiving in `/agents` ask). It knows the
 host only through `src/ui/types.ts`.
   Below 60 columns (`NARROW` in `theme.ts`) every part switches to a compact layout
   for phones (ADR 0014).

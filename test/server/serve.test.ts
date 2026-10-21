@@ -11,6 +11,7 @@ import type { ChatItem, ServerMessage } from '../../src/protocol/messages.ts';
 import { applyOps } from '../../src/protocol/mirror.ts';
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
+import { agentLine } from '../../src/server/admin.ts';
 import { lineSplitter } from '../../src/server/transport-unix.ts';
 import { serve } from '../../src/server/serve.ts';
 import { Devices } from '../../src/server/auth.ts';
@@ -95,6 +96,14 @@ test('serve end to end: a socket client sends, watches the reply stream in, and 
   const [dir] = await readdir(backups);
   assert.deepEqual((await readdir(join(backups, dir ?? ''))).sort(), ['chat.sqlite', 'chat.unii'], 'no settings.json yet');
 
+  // serve agents, over the socket: the standing agents are listed and refuse to be archived.
+  const cli = (...args: string[]) => exec(process.execPath, [resolve('src/cli.ts'), 'serve', 'agents', '--database', join(folder, 'chat.sqlite'), ...args]);
+  const { stdout: listed } = await cli();
+  assert.match(listed, /^Coder {2}main {2}(idle|busy)$/m, listed);
+  await assert.rejects(cli('--archive', 'Coder'), { code: 1, stderr: /Coder is a standing agent; remove it from the roster first\./ });
+  await assert.rejects(cli('--restore', 'Nobody'), { code: 1, stderr: /No agent named Nobody\./ });
+  assert.match((await cli('--archive-adhoc')).stdout, /^No ad-hoc agents to archive\.$/m);
+
   const ended = new Promise<void>(resolve => socket.once('end', () => resolve()));
   child.kill('SIGTERM');
   await ended;
@@ -170,4 +179,12 @@ test('an already-aborted server does not start web initialization', async t => {
   await serve(config, { models, signal: AbortSignal.abort(), log: () => {} });
   assert.equal(devices.mock.callCount(), 0);
   await assert.rejects(stat(statePaths(databasePath).vapid), { code: 'ENOENT' });
+});
+
+test('serve agents lines: role, parent of a sub, busy or idle, and an archived agent\'s deletion time', () => {
+  assert.equal(agentLine({ name: 'Bob', role: 'main', parent: 'Pi', busy: true }, 1000), 'Bob  main  busy');
+  assert.equal(agentLine({ name: 'Kid', role: 'sub', parent: 'Bob', busy: false }, 1000), 'Kid  sub of Bob  idle');
+  const at = new Date(2026, 9, 21, 9, 5).getTime();
+  assert.equal(agentLine({ name: 'Old', role: 'main', parent: 'Pi', busy: false, archivedAt: at }, 86_400_000),
+    'Old  main  archived, deleted at 2026-10-22 09:05');
 });

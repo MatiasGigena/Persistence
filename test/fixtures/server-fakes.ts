@@ -57,6 +57,25 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
     },
     abort() { calls.push('abort'); return Promise.resolve(); },
     stopAgents(name) { calls.push(`stop ${name ?? '*'}`); return Promise.resolve(name ? [name] : []); },
+    // Agents in the status archive and restore; `Coder` is standing, and an unknown name is refused as the core does.
+    archiveAgents(target) {
+      calls.push(`archive ${'name' in target ? target.name : 'adhoc'}`);
+      if ('name' in target && target.name === 'Coder') return Promise.reject(new Error('Coder is a standing agent; remove it from the roster first.'));
+      const hit = status.agents.filter(agent => agent.archivedAt === undefined
+        && ('name' in target ? agent.name.toLowerCase() === target.name.toLowerCase() : agent.role === 'main' && agent.name !== 'Coder'));
+      if ('name' in target && !hit.length) return Promise.reject(new Error(`No agent named ${target.name}.`));
+      const archivedAt = Date.now();
+      set({ agents: status.agents.map(agent => hit.includes(agent) ? { ...agent, archivedAt } : agent) });
+      return Promise.resolve(hit.map(agent => agent.name));
+    },
+    restoreAgent(name) {
+      calls.push(`restore ${name}`);
+      const hit = status.agents.find(agent => agent.name.toLowerCase() === name.toLowerCase());
+      if (!hit) return Promise.reject(new Error(`No agent named ${name}.`));
+      if (hit.archivedAt === undefined) return Promise.reject(new Error(`${hit.name} is not archived.`));
+      set({ agents: status.agents.map(agent => agent === hit ? { name: agent.name, role: agent.role, parent: agent.parent, busy: agent.busy } : agent) });
+      return Promise.resolve([hit.name]);
+    },
     agentChat(name) {
       calls.push(`agentChat ${name}`);
       return Promise.resolve(agents.get(name.toLowerCase()));

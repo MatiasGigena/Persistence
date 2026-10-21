@@ -174,7 +174,12 @@ stops them; the checks hold only together. The VPS is assumed to have one user.
 `SessionStatus`, `AgentStatus`, `MemoryStats`, `ChatItem`, `ViewLine` and `ModelChoice` are the types of
 [src/ui/types.ts](../src/ui/types.ts). `user` and `tool` items may carry `images: {mimeType, data}[]`; an image larger
 than `IMAGE_LIMITS.wireBytes` goes with empty `data`, and clients show a placeholder. JSON drops `undefined`: a missing `status.memory` or `memory.lastError`
-reads as `undefined`, and `memory` may also be `null`.
+reads as `undefined`, and `memory` may also be `null`. `status.agents` lists archived agents too (ADR 0034), each
+with `archivedAt` (milliseconds since the epoch; a sub agent of an archived main agent carries its main's): clients
+show them apart, in an "Archived" section with their deletion time (`archivedAt + ARCHIVE_TTL_MS`, a day, from
+[messages.ts](../src/protocol/messages.ts)), and leave them out of counts and busy checks. An active agent has no
+`archivedAt` key. A standing agent (ADR 0027) carries `standing: true`, which an ad-hoc one leaves out, so a client
+knows which agents "archive all ad-hoc agents" would take.
 
 ## Ops
 
@@ -186,6 +191,8 @@ reads as `undefined`, and `memory` may also be `null`.
 | `machine.list` | — | `{machines: MachineRegistration[]}` | both | |
 | `abort` | — | `null` | both | |
 | `stopAgents` | `name?` | `{names}` | both | |
+| `agents.archive` | `name` or `adhoc: true` | `{names}` | both | `not_found`, `failed` |
+| `agents.restore` | `name` | `{names}` | both | `not_found`, `failed` |
 | `feed.open` | `name` | `{feed}` | both | `not_found` |
 | `feed.close` | `feed` | `null` | both | `not_found` |
 | `feed.resync` | `feed` | `null` | both | `not_found` |
@@ -222,6 +229,18 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   See [Machine routing and execution](#machine-routing-and-execution).
 - **`abort`**, **`stopAgents`**: as the session's `abort` and `stopAgents`; `names` lists the agents stopped,
   sub agents first, and is empty for an unknown name.
+- **`agents.archive`** is `UiSession.archiveAgents` (ADR 0034). Its params are exactly one of `{name}` (a
+  nonempty string, case-insensitive) and `{adhoc: true}` (every main agent that is not a standing one); anything else
+  is `bad_request`. It stops the agents' work and records `archivedAt`; archiving a main agent archives its sub
+  agents. `names` lists the agents archived; `{adhoc: true}` with none to archive is `{names: []}`. An agent archived
+  for a day is deleted by the server. **`agents.restore`** is `UiSession.restoreAgent`: it clears `archivedAt` (a main
+  agent's subs' too) without resuming stopped work, and `names` lists the agents restored, `name` first.
+  - An unknown name is `not_found` (`No agent named X.`); the other refusals are `failed` with the readable
+    reason: a standing agent (`Coder is a standing agent; remove it from the roster first.`), restoring an agent
+    that is not archived, or a sub agent whose main agent is archived.
+  - Every change that names an agent is broadcast as an `info` `notice` naming who made it (`Archived Helper, by
+    phone.`), and written to the server's log, as tool switches are. Both peers may call them, so `pi-durable serve
+    agents` uses them over the socket.
 - **`feed.open`** opens an agent's conversation by name (case-insensitive) and returns its feed id, an opaque
   string (`ROOT_FEED`, `"root"`, is Pi's). A `snapshot` of it follows the `res`. Opening an open feed again returns
   the same id and sends a fresh snapshot. The server ends the feed with `feed.end` if the agent disappears: once

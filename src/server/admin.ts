@@ -1,12 +1,13 @@
-// The admin commands' side of the socket: `pi-durable backup`, `serve pair` and `serve devices [--revoke NAME]`
-// send one `admin.*` request to the running server and print its answer. Kept apart from serve.ts so the CLI loads
+// The admin commands' side of the socket: `pi-durable backup`, `serve pair`, `serve devices [--revoke NAME]` and
+// `serve agents [--archive NAME | --archive-adhoc | --restore NAME]` send one request to the running server and print its answer. Kept apart from serve.ts so the CLI loads
 // no runtime for them.
 import { lstat } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
 import type { Config } from '../host/config.ts';
 import { errorCode, VERSION } from '../host/config.ts';
-import type { ClientMessage, Device, Request, Response } from '../protocol/messages.ts';
+import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
+import type { AgentStatus, ClientMessage, Device, Request, Response, ServerMessage } from '../protocol/messages.ts';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
 import { PROTOCOL } from '../protocol/version.ts';
 import { lineSplitter } from './transport-unix.ts';
@@ -16,6 +17,12 @@ export class NoServer extends Error {}
 
 type Ok = Extract<Response, { ok: true }>;
 
+export interface AdminRequestOptions {
+  readonly timeoutMs?: number;
+  /** Sees every server message, before the answer settles the request. */
+  readonly onMessage?: (message: ServerMessage) => void;
+}
+
 /** How long an admin request may take; a backup of a large chat takes a while. */
 const ADMIN_TIMEOUT_MS = 10 * 60_000;
 
@@ -24,7 +31,7 @@ const ADMIN_TIMEOUT_MS = 10 * 60_000;
  * not owned by this user. Rejects with NoServer when nothing listens there, and with the server's message when the
  * request fails.
  */
-export async function adminRequest(path: string, request: Request, { timeoutMs = ADMIN_TIMEOUT_MS } = {}): Promise<Ok> {
+export async function adminRequest(path: string, request: Request, { timeoutMs = ADMIN_TIMEOUT_MS, onMessage }: AdminRequestOptions = {}): Promise<Ok> {
   try {
     const info = await lstat(path);
     if (!info.isSocket()) throw new NoServer(`${path} is not a socket`);
@@ -58,6 +65,7 @@ export async function adminRequest(path: string, request: Request, { timeoutMs =
     socket.on('data', lineSplitter(Number.MAX_SAFE_INTEGER, text => {
       const message = parseServerMessage(text);
       if (isParseError(message)) return;
+      onMessage?.(message);
       if (message.t === 'bye') finish(new Error(`The server ended the connection: ${message.reason}`));
       else if (message.t === 'res' && message.id === request.id) {
         if (message.ok) finish(undefined, message);
@@ -113,6 +121,55 @@ export async function devicesCommand(config: Pick<Config, 'socketPath' | 'revoke
   for (const device of devices) {
     console.log(`${device.name}  paired ${when(device.pairedAt)}${device.lastSeen === undefined ? '' : `  last seen ${when(device.lastSeen)}`}`);
   }
+}
+
+/**
+ * The agents the server reports in its first `status` (archived ones included), from a connection on `path`. The
+ * status comes before `ready`, so `ready` without one means no agents.
+ */
+async function agentsOverSocket(path: string): Promise<readonly AgentStatus[]> {
+  // A cheap op to wait on: the status and `ready` both come before its answer.
+  let agents: readonly AgentStatus[] = [];
+  await adminRequest(path, { t: 'req', id: 1, op: 'thinking.levels', params: {} }, {
+    onMessage: (message: ServerMessage) => { if (message.t === 'status') agents = message.status.agents; },
+  });
+  return agents;
+}
+
+/** A local time, readably: `2026-10-22 14:05`. */
+const localTime = (ms: number): string => {
+  const date = new Date(ms), two = (n: number): string => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+};
+
+/** One agent's line for `serve agents`. */
+export function agentLine(agent: AgentStatus, ttlMs: number): string {
+  const state = agent.archivedAt === undefined ? agent.busy ? 'busy' : 'idle'
+    : `archived, deleted at ${localTime(agent.archivedAt + ttlMs)}`;
+  return `${agent.name}  ${agent.role}${agent.role === 'sub' ? ` of ${agent.parent}` : ''}  ${state}`;
+}
+
+/** `pi-durable serve agents [--archive NAME | --archive-adhoc | --restore NAME]`: lists the agents, or changes one. */
+export async function agentsCommand(config: Pick<Config, 'socketPath' | 'archive' | 'archiveAdhoc' | 'restore'>): Promise<void> {
+  const path = socketOf(config);
+  if (config.restore !== undefined) {
+    const response = await adminRequest(path, { t: 'req', id: 1, op: 'agents.restore', params: { name: config.restore } }).catch(serverNeeded);
+    if (response.op !== 'agents.restore') throw new Error('The server answered another request.');
+    console.log(`Restored ${response.result.names.join(', ')}.`);
+    return;
+  }
+  if (config.archive !== undefined || config.archiveAdhoc) {
+    const params = config.archive === undefined ? { adhoc: true } as const : { name: config.archive };
+    const response = await adminRequest(path, { t: 'req', id: 1, op: 'agents.archive', params }).catch(serverNeeded);
+    if (response.op !== 'agents.archive') throw new Error('The server answered another request.');
+    const { names } = response.result;
+    console.log(names.length ? `Archived ${names.join(', ')}; deleted in a day unless restored (--restore NAME).` : 'No ad-hoc agents to archive.');
+    return;
+  }
+  const agents = await agentsOverSocket(path).catch(serverNeeded);
+  if (!agents.length) { console.log('No agents.'); return; }
+  const active = agents.filter(agent => agent.archivedAt === undefined), archived = agents.filter(agent => agent.archivedAt !== undefined);
+  for (const agent of [...active, ...archived]) console.log(agentLine(agent, ARCHIVE_TTL_MS));
 }
 
 /** A size in bytes, readably. */

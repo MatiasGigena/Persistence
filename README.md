@@ -118,7 +118,8 @@ Chat commands: `/help`, `/model` (pick a model; type to filter, Enter switches),
 `/model provider/id` (switch directly), `/model WORD` (the picker, filtered by WORD), `/effort` (pick the reasoning effort: `low` to `max`,
 as the model takes; `/effort xhigh` sets it directly; saved as the default), `/tools` (show), `/tools on` (asks first:
 `y` enables read, write, edit and bash for this launch), `/tools off`, `/agents` (list
-agents, open any agent's live chat), `/mem` (browse the memory view and zoom down to
+agents, open any agent's live chat; `a` archives the selected one, `A` every ad-hoc one, and the Archived row
+restores them within the day), `/mem` (browse the memory view and zoom down to
 any message), `/status`, `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
 applies from the next message and becomes the default for launches without `--model`.
 Keys: Enter sends, Shift+Enter or Alt+Enter adds a line, Esc interrupts Pi, Ctrl+L

@@ -37,7 +37,14 @@ export interface AgentStatus {
   /** "Pi", or the main agent that spawned this sub agent. */
   readonly parent: string;
   readonly busy: boolean;
+  /** A standing agent (ADR 0027): never archived. Absent for ad-hoc agents. */
+  readonly standing?: true;
+  /** When it was archived (milliseconds since the epoch); absent while active. Deleted a day later (ADR 0034). */
+  readonly archivedAt?: number;
 }
+
+/** What to archive: one agent by name, or every ad-hoc main agent (not the standing ones). */
+export type ArchiveTarget = { readonly name: string } | { readonly adhoc: true };
 
 /** The memory's counters, as src/memory's `Memory.status()` reports them. */
 export interface MemoryStats {
@@ -71,6 +78,7 @@ export interface SessionStatus {
   readonly queued: number;
   /** Undefined while the memory is not open (inspection only). */
   readonly memory: MemoryStats | undefined;
+  /** Every agent, archived ones included (with `archivedAt`): UIs list those apart and leave them out of counts. */
   readonly agents: readonly AgentStatus[];
 }
 
@@ -130,6 +138,14 @@ export interface UiSession {
    * Resolves with the names stopped, sub agents first; empty for an unknown name.
    */
   stopAgents(name?: string): Promise<readonly string[]>;
+  /**
+   * Archives one agent (with a main agent's sub agents), or every ad-hoc main agent: their work stops, and they are
+   * deleted a day later unless restored. Resolves with the names archived; rejects with a readable refusal (a
+   * standing agent, an unknown or already archived one).
+   */
+  archiveAgents(target: ArchiveTarget): Promise<readonly string[]>;
+  /** Restores an archived agent (with a main agent's sub agents). Resolves with the names restored; rejects readably. */
+  restoreAgent(name: string): Promise<readonly string[]>;
   /** Opens one agent's conversation as a live feed, or undefined for an unknown name. */
   agentChat(name: string): Promise<ChatFeed | undefined>;
   /** The memory view, oldest first, as Pi sees it; empty while the memory is not open. */

@@ -709,6 +709,14 @@ dialog::backdrop { background: var(--scrim); }
 .rows-dense .row { min-height: 48px; }
 .row-line .row-label { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 0.9375rem; }
 
+/* Agents: archiving (ADR 0034). Restore buttons keep a full tap target. */
+.agents-actions { margin: 16px 0 4px; }
+.agents-actions .btn { width: 100%; }
+.section-title { margin: 22px 0 2px; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; }
+.archived-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px var(--gutter); border-top: 1px solid var(--line); }
+.rows li:first-child .archived-row { border-top: 0; }
+.archived-row .row-label { color: var(--muted); }
+.archived-row .btn { flex: none; min-height: var(--tap); }
 .agent-chat { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); border-top: 1px solid var(--line); }
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 1rem/1.6 var(--serif); }
 .skeleton-lines { padding: 2px 0; }

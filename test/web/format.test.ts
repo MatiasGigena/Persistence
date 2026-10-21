@@ -2,11 +2,16 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { SessionStatus } from '../../src/protocol/messages.ts';
 import {
+  activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText,
   base64UrlBytes, guessDeviceName, normalizeCode, pairErrorText, parseMessage, parseZoom, sortModels, statusParts, statusText, toolCommand, toolSummary,
 } from '../../src/web/format.ts';
 import { parseMessage as tuiParseMessage, parseZoom as tuiParseZoom } from '../../src/ui/tui/panels/memory.ts';
 import { toolSummary as tuiToolSummary } from '../../src/ui/tui/chat.ts';
 import { statusText as tuiStatusText } from '../../src/ui/tui/app.ts';
+import { footerText } from '../../src/ui/tui/footer.ts';
+import * as tui from '../../src/ui/tui/panels/agents.ts';
+import { theme } from '../../src/ui/tui/theme.ts';
+import { stripTerminalSequences } from '@earendil-works/pi-tui';
 
 const STATUS: SessionStatus = {
   model: 'claude-cli/sonnet', thinkingLevel: 'high', toolsEnabled: false, busy: true, queued: 2,
@@ -44,6 +49,42 @@ test('statusParts is the compact header line', () => {
   assert.deepEqual(statusParts(STATUS).map(p => p.text), ['working', '2 queued', 'mem 37 KB', '1 failed', '1/2 agents']);
   assert.deepEqual(statusParts({ ...STATUS, busy: false, memory: undefined, agents: [] }).map(p => p.text), ['idle']);
   assert.equal(statusParts(STATUS).find(p => p.key === 'failed')?.tone, 'error');
+});
+
+test('archived agents are left out of counts and lists, on the web and in the terminal alike', () => {
+  const archived = { ...STATUS, agents: [...STATUS.agents, { name: 'Old', role: 'main' as const, parent: 'Pi', busy: true, archivedAt: 1 }] };
+  assert.equal(statusText(archived), tuiStatusText(archived));
+  assert.match(statusText(archived), /agents Scout \(main, busy\), Quill \(sub, idle\)\narchived 1$/);
+  assert.equal(statusParts(archived).find(p => p.key === 'agents')?.text, '1/2 agents');
+  assert.match(stripTerminalSequences(footerText(archived, theme)), / · 1\/2 agents busy$/);
+  const gone = { ...STATUS, busy: false, agents: [{ name: 'Old', role: 'main' as const, parent: 'Pi', busy: false, archivedAt: 1 }] };
+  assert.equal(statusText(gone), tuiStatusText(gone));
+  assert.deepEqual(statusParts(gone).map(p => p.key), ['work', 'memory', 'failed']);
+  assert.doesNotMatch(stripTerminalSequences(footerText(gone, theme)), /agents/);
+  assert.deepEqual(activeAgents(archived.agents), tui.activeAgents(archived.agents));
+  assert.deepEqual(archivedAgents(archived.agents), tui.archivedAgents(archived.agents));
+  assert.deepEqual(adhocAgents(archived.agents).map(a => a.name), ['Scout']);
+  assert.deepEqual(adhocAgents(archived.agents), tui.adhocAgents(archived.agents));
+});
+
+test('deletion times and archive wording match the terminal', () => {
+  const at = Date.UTC(2026, 9, 21), hour = 3_600_000;
+  const cases: [number, string][] = [
+    [0, 'deleted in 24 h'], [18.5 * hour, 'deleted in 5 h'], [23 * hour, 'deleted in 1 h'], [23.25 * hour, 'deleted in 45 min'],
+    [24 * hour - 1, 'deleted in 1 min'], [24 * hour, 'deleted soon'], [30 * hour, 'deleted soon'],
+  ];
+  for (const [since, text] of cases) {
+    assert.equal(deletionText(at, at + since), text, `${since}`);
+    assert.equal(tui.deletionText(at, at + since), text, `${since}`);
+  }
+  assert.equal(archiveQuestion('Helper'), 'Archive Helper? It stops now and is deleted in 24 h; restore within the day.');
+  assert.equal(archiveQuestion('Helper', ['A', 'B']), tui.archiveQuestion('Helper', ['A', 'B']));
+  assert.match(archiveQuestion('Helper', ['A', 'B']), / Its sub agents go with it: A, B\.$/);
+  assert.equal(archiveAdhocQuestion(['A', 'B']), tui.archiveAdhocQuestion(['A', 'B']));
+  for (const [names, restored] of [[[], false], [[], true], [['A', 'B'], false], [['A'], true]] as const) {
+    assert.equal(archivedText(names, restored), tui.archivedText(names, restored));
+  }
+  assert.equal(archivedText(['A', 'B']), 'Archived A, B.');
 });
 
 test('models sort current first, then available, then unavailable', () => {

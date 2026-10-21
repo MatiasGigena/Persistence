@@ -8,7 +8,7 @@ import type {
 } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
 import type { AttachedLink, LinkState } from '../ui/tui/app.ts';
-import type { ChatFeed, ChatImage, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
+import type { ArchiveTarget, ChatFeed, ChatImage, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
 
 /** What the session needs of its link; `ClientLink` (unix-link.ts) is one. */
@@ -179,6 +179,14 @@ export class RemoteSession implements UiSession {
 
   async stopAgents(name?: string): Promise<readonly string[]> {
     return (await this.request('stopAgents', name === undefined ? {} : { name })).names;
+  }
+
+  async archiveAgents(target: ArchiveTarget): Promise<readonly string[]> {
+    return (await this.request('agents.archive', target)).names;
+  }
+
+  async restoreAgent(name: string): Promise<readonly string[]> {
+    return (await this.request('agents.restore', { name })).names;
   }
 
   async agentChat(name: string): Promise<ChatFeed | undefined> {

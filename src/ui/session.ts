@@ -2,7 +2,7 @@
 import { InboxDoc } from '@earendil-works/pi-durable';
 import type { AgentEvent, AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { listAgents, stopAgents } from '../agents/index.ts';
+import { archiveAgents, listAgents, restoreAgent, stopAgents } from '../agents/index.ts';
 import { errorMessage, isThinkingLevel, updateSettings } from '../host/config.ts';
 import type { Config } from '../host/config.ts';
 import { start } from '../memory/view.ts';
@@ -36,7 +36,8 @@ const REFRESHING: ReadonlySet<AgentEvent['type']> = new Set(['message_end', 'too
 
 /**
  * Open the UI's view of `instance`: a live feed of Pi's conversation, its status, and the memory view. Agents' feeds
- * open on demand. Nothing here writes except `send()`, `abort()`, `setModel()`, `setTools()` and `setThinkingLevel()`.
+ * open on demand. Nothing here writes except `send()`, `abort()`, the agent controls, `setModel()`, `setTools()` and
+ * `setThinkingLevel()`.
  */
 export async function createUiSession(
   instance: Instance, config: UiSessionConfig, { refreshMs = 1500 }: UiSessionOptions = {},
@@ -110,15 +111,25 @@ export async function createUiSession(
   function refreshAgents(): void {
     if (closed) return;
     if (reading) { again = true; return; }
-    reading = listAgents(harness, context)
+    reading = listAgents(harness, context, { includeArchived: true })
       // Clients see the contract's shape only: no conversation IDs.
-      .then(list => { agents = list.map(({ name, role, parent, busy }) => ({ name, role, parent, busy })); },
+      .then(list => {
+        agents = list.map(({ name, role, parent, busy, standing, archivedAt }) => ({ name, role, parent, busy,
+          ...standing ? { standing: true as const } : {}, ...archivedAt === undefined ? {} : { archivedAt } }));
+      },
         () => { /* the next poll retries */ })
       .finally(() => {
         reading = undefined;
         refresh();
         if (again) { again = false; refreshAgents(); }
       });
+  }
+
+  /** A fresh registry read, settled: the status shows the change once this resolves. */
+  async function agentsRead(): Promise<void> {
+    while (reading) await reading;
+    refreshAgents();
+    await reading;
   }
 
   chat.onState(events => {
@@ -155,8 +166,19 @@ export async function createUiSession(
       await root.abort(context);
     },
     stopAgents: name => stopAgents(harness, context, name),
+    async archiveAgents(target) {
+      const names = await archiveAgents(harness, context, target, Date.now());
+      await agentsRead();
+      return names;
+    },
+    async restoreAgent(name) {
+      const names = await restoreAgent(harness, context, name);
+      await agentsRead();
+      return names;
+    },
     async agentChat(name) {
-      const found = (await listAgents(harness, context)).find(agent => agent.name.toLowerCase() === name.toLowerCase());
+      // Archived agents too: their conversation stays readable until it is deleted.
+      const found = (await listAgents(harness, context, { includeArchived: true })).find(agent => agent.name.toLowerCase() === name.toLowerCase());
       if (!found || closed) return undefined;
       const feed = await ConversationFeed.open(harness, found.conversationId, context);
       const tracked: ChatFeed = { items: () => feed.items(), subscribe: listener => feed.subscribe(listener),

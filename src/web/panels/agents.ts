@@ -1,33 +1,112 @@
-// Agents: the live list from the status, and each agent's conversation as a read-only feed (`feed.open`).
+// Agents: the live list from the status, and each agent's conversation as a read-only feed (`feed.open`). Agents can
+// be archived (ADR 0034): one from its conversation, or every ad-hoc one from the list, after a confirmation; the
+// list's "Archived" section shows when each is deleted and restores it.
 import { ChatView, el } from '../chat-view.ts';
-import { errorText } from '../format.ts';
+import {
+  activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText, errorText,
+} from '../format.ts';
 import { RequestError } from '../link.ts';
-import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
+import { byId, fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 
 export const NO_AGENTS = 'No agents yet. Ask Pi to spawn one.';
+/** Deletion times are redrawn this often while the list is open. */
+const CLOCK_MS = 60_000;
+
+/** Asks `question` in the archive dialog; resolves true for "Archive". */
+export function confirmArchive(question: string): Promise<boolean> {
+  const dialog = byId('agents-confirm', HTMLDialogElement);
+  byId('agents-confirm-text', HTMLParagraphElement).textContent = question;
+  dialog.returnValue = '';
+  dialog.showModal();
+  return new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'archive'), { once: true }));
+}
+
+/** Archives one agent (with its subs) after asking; says the outcome in the chat, and a refusal in `say`. */
+async function archiveOne(ctx: PanelContext, name: string, say: (text: string, error?: boolean) => void): Promise<void> {
+  const subs = activeAgents(ctx.store.status?.agents ?? []).filter(a => a.role === 'sub' && a.parent === name).map(a => a.name);
+  if (!await confirmArchive(archiveQuestion(name, subs))) return;
+  try {
+    const { names } = await ctx.link.request('agents.archive', { name });
+    ctx.notice(archivedText(names));
+    say('');
+  } catch (error) {
+    say(errorText(error), true);
+  }
+}
+
+async function restore(ctx: PanelContext, name: string, say: (text: string, error?: boolean) => void): Promise<void> {
+  try {
+    const { names } = await ctx.link.request('agents.restore', { name });
+    ctx.notice(archivedText(names, true));
+    say('');
+  } catch (error) {
+    say(errorText(error), true);
+  }
+}
 
 export function agentsView(ctx: PanelContext): View {
   let unsubscribe = (): void => undefined;
+  let clock: ReturnType<typeof setInterval> | undefined;
   return {
     title: 'Agents',
     render(body) {
       const list = el('ul', 'rows');
       const empty = el('p', 'sheet-note', NO_AGENTS);
-      const note = el('p', 'sheet-note', 'Tap an agent to read its conversation.');
-      body.append(note, list, empty);
+      const note = el('p', 'sheet-note', 'Tap an agent to read its conversation, and to stop or archive it.');
+      const actions = el('div', 'agents-actions');
+      const adhoc = el('button', 'btn', 'Archive all ad-hoc agents');
+      adhoc.type = 'button';
+      actions.append(adhoc);
+      const state = el('p', 'sheet-note');
+      state.hidden = true;
+      const archivedTitle = el('h3', 'section-title', 'Archived');
+      const archivedNote = el('p', 'sheet-note', 'Deleted a day after archiving. Restoring keeps the chat; stopped work stays stopped.');
+      const archivedList = el('ul', 'rows');
+      body.append(note, list, empty, actions, state, archivedTitle, archivedNote, archivedList);
+
+      const say = (text: string, error = false): void => {
+        state.hidden = !text;
+        state.textContent = text;
+        state.classList.toggle('is-error', error);
+      };
+      let pending = false;
+      const run = (work: Promise<void>): void => {
+        pending = true;
+        draw();
+        void work.finally(() => { pending = false; draw(); });
+      };
+      adhoc.addEventListener('click', () => {
+        const names = adhocAgents(ctx.store.status?.agents ?? []).map(a => a.name);
+        if (pending || !names.length) return;
+        run(confirmArchive(archiveAdhocQuestion(names)).then(async yes => {
+          if (!yes) return;
+          try {
+            const result = await ctx.link.request('agents.archive', { adhoc: true });
+            ctx.notice(archivedText(result.names));
+            say('');
+          } catch (error) {
+            say(errorText(error), true);
+          }
+        }));
+      });
+
       // Rows known when the level opens ride in with it; rows that wait for the first status stagger in.
       let entered = ctx.store.status !== undefined;
       const draw = (): void => {
         const status = ctx.store.status;
         if (!status) {
-          note.hidden = empty.hidden = true;
+          note.hidden = empty.hidden = actions.hidden = true;
+          archivedTitle.hidden = archivedNote.hidden = archivedList.hidden = true;
           skeletonRows(list, 3, { mark: true, detail: true });
           return;
         }
-        const agents = status.agents;
+        const all = status.agents;
+        const agents = activeAgents(all), archived = archivedAgents(all), now = Date.now();
         empty.hidden = agents.length > 0;
         note.hidden = agents.length === 0;
+        actions.hidden = adhocAgents(all).length === 0;
+        adhoc.disabled = pending;
         renderRows(list, agents.map(agent => ({
           key: agent.name,
           label: agent.name,
@@ -36,16 +115,34 @@ export function agentsView(ctx: PanelContext): View {
           mark: agent.busy ? 'busy' : 'idle',
         })), name => ctx.sheet.push(agentChatView(ctx, name)), entered ? undefined : 'top');
         if (!entered) { entered = true; fadeIn(note); fadeIn(empty); }
+        archivedTitle.hidden = archivedNote.hidden = archivedList.hidden = archived.length === 0;
+        archivedList.replaceChildren(...archived.map(agent => {
+          const li = el('li');
+          const row = el('div', 'archived-row');
+          const text = el('span', 'row-text');
+          const role = agent.role === 'main' ? `main agent of ${agent.parent}` : `sub agent of ${agent.parent}`;
+          text.append(el('span', 'row-label', agent.name), el('span', 'row-detail', `${role} · ${deletionText(agent.archivedAt, now)}`));
+          const button = el('button', 'btn btn-quiet', 'Restore');
+          button.type = 'button';
+          button.disabled = pending;
+          button.setAttribute('aria-label', `Restore ${agent.name}`);
+          button.addEventListener('click', () => { if (!pending) run(restore(ctx, agent.name, say)); });
+          row.append(text, button);
+          li.append(row);
+          return li;
+        }));
       };
       draw();
-      // Redraw only when the agents changed, not on every status (busy, memory) update.
+      // Redraw only when the agents changed, not on every status (busy, memory) update; and each minute, for the
+      // deletion times.
       let shown = JSON.stringify(ctx.store.status?.agents ?? null);
       unsubscribe = ctx.store.subscribe(() => {
         const now = JSON.stringify(ctx.store.status?.agents ?? null);
         if (now !== shown) { shown = now; draw(); }
       });
+      clock = setInterval(draw, CLOCK_MS);
     },
-    dispose() { unsubscribe(); },
+    dispose() { unsubscribe(); clearInterval(clock); },
   };
 }
 
@@ -75,7 +172,19 @@ export function agentChatView(ctx: PanelContext, name: string): View {
           },
         ).finally(() => { stop.disabled = false; draw(); });
       });
-      bar.append(state, stop);
+      // Archive, or Restore while archived; a refusal (a standing agent) shows in the state line until the next tap.
+      const archive = el('button', 'btn btn-quiet', 'Archive');
+      archive.type = 'button';
+      let archiveError = '';
+      const say = (text: string): void => { archiveError = text; draw(); };
+      archive.addEventListener('click', () => {
+        const archived = ctx.store.status?.agents.find(a => a.name === name)?.archivedAt !== undefined;
+        archive.disabled = true;
+        archiveError = '';
+        draw();
+        void (archived ? restore(ctx, name, say) : archiveOne(ctx, name, say)).finally(() => { archive.disabled = false; });
+      });
+      bar.append(state, stop, archive);
       const scroller = el('div', 'agent-chat');
       const list = el('ol', 'feed feed-agent');
       list.setAttribute('aria-label', `${name}'s conversation`);
@@ -127,9 +236,14 @@ export function agentChatView(ctx: PanelContext, name: string): View {
           fadeIn(list);
         }
         const agent = ctx.store.status?.agents.find(a => a.name === name);
-        state.textContent = found?.agent.ended ?? (stopError || (found && !found.feed ? 'Reconnecting…' : agent ? (agent.busy ? 'Working' : 'Idle') : ''));
-        state.classList.toggle('is-error', Boolean(stopError) && found?.agent.ended === undefined);
-        stop.hidden = !agent || found?.agent.ended !== undefined;
+        const archived = agent?.archivedAt !== undefined;
+        const error = stopError || archiveError;
+        state.textContent = found?.agent.ended ?? (error || (found && !found.feed ? 'Reconnecting…'
+          : agent ? (archived ? `Archived · ${deletionText(agent.archivedAt ?? 0, Date.now())}` : agent.busy ? 'Working' : 'Idle') : ''));
+        state.classList.toggle('is-error', Boolean(error) && found?.agent.ended === undefined);
+        stop.hidden = !agent || archived || found?.agent.ended !== undefined;
+        archive.hidden = !agent;
+        archive.textContent = archived ? 'Restore' : 'Archive';
       };
       unsubscribe = ctx.store.subscribe(draw);
       follow();

@@ -357,6 +357,41 @@ test('tools policy: confirm needed, web refused when off, every change noticed a
   assert.deepEqual(logged, ['coding tools on, by socket (socket)', 'coding tools off, by me@example.com/phone (web)']);
 });
 
+test('agents.archive and agents.restore: forwarded from both peers, refusals mapped, every change noticed', async t => {
+  const { hub, session, logged, tick, connect, request } = setup(t);
+  session.set({ agents: [{ name: 'Coder', role: 'main', parent: 'Pi', busy: false }, { name: 'Helper', role: 'main', parent: 'Pi', busy: true },
+    { name: 'Kid', role: 'sub', parent: 'Helper', busy: false }, { name: 'Temp', role: 'main', parent: 'Pi', busy: false }] });
+  hub.start(session);
+  const web = connect('web'), socket = connect('socket');
+  const archived = await request(web, 'agents.archive', { name: 'helper' });
+  assert.equal(archived?.t === 'res' && archived.ok && archived.op === 'agents.archive' && archived.result.names.join(), 'Helper');
+  for (const link of [web, socket]) assert.ok(link.got.some(m => m.t === 'notice' && m.text === 'Archived Helper, by phone.' && m.level === 'info'));
+  await tick(1_000);
+  const status = socket.got.findLast(m => m.t === 'status');
+  assert.equal(status?.t === 'status' && status.status.agents.find(agent => agent.name === 'Helper')?.archivedAt, 1_000_000,
+    'archived agents stay in the status, with archivedAt');
+  const standing = await request(socket, 'agents.archive', { name: 'Coder' });
+  assert.deepEqual(standing?.t === 'res' && !standing.ok && standing.error,
+    { code: 'failed', message: 'Coder is a standing agent; remove it from the roster first.' });
+  const unknown = await request(socket, 'agents.restore', { name: 'Nobody' });
+  assert.deepEqual(unknown?.t === 'res' && !unknown.ok && unknown.error, { code: 'not_found', message: 'No agent named Nobody.' });
+  const notArchived = await request(socket, 'agents.restore', { name: 'Temp' });
+  assert.equal(notArchived?.t === 'res' && !notArchived.ok && notArchived.error.code, 'failed');
+  const adhoc = await request(socket, 'agents.archive', { adhoc: true });
+  assert.equal(adhoc?.t === 'res' && adhoc.ok && adhoc.op === 'agents.archive' && adhoc.result.names.join(), 'Temp');
+  const restored = await request(socket, 'agents.restore', { name: 'Helper' });
+  assert.equal(restored?.t === 'res' && restored.ok && restored.op === 'agents.restore' && restored.result.names.join(), 'Helper');
+  assert.ok(web.got.some(m => m.t === 'notice' && m.text === 'Restored Helper, by terminal.'));
+  const again = await request(socket, 'agents.archive', { adhoc: true });
+  assert.equal(again?.t === 'res' && again.ok && again.op === 'agents.archive' && again.result.names.join(), 'Helper', 'standing agents are left');
+  const none = await request(socket, 'agents.archive', { adhoc: true });
+  assert.equal(none?.t === 'res' && none.ok && none.op === 'agents.archive' && none.result.names.length, 0);
+  assert.deepEqual(session.calls, ['archive helper', 'archive Coder', 'restore Nobody', 'restore Temp', 'archive adhoc', 'restore Helper', 'archive adhoc',
+    'archive adhoc']);
+  assert.deepEqual(logged, ['archived Helper, by me@example.com/phone (web)', 'archived Temp, by socket (socket)', 'restored Helper, by socket (socket)',
+    'archived Helper, by socket (socket)'], 'an archive of nothing is not logged');
+});
+
 test('without idleMinutes (the default) the tools stay on however long nothing runs', async t => {
   const { hub, session, logged, wait, connect, request } = setup(t, { tools: { remote: 'confirm' } });
   hub.start(session);

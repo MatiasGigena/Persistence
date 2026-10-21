@@ -6,7 +6,7 @@ import { bridge } from './client/bridge.ts';
 import { remoteChat } from './client/remote.ts';
 import { errorCode, errorMessage, HELP, VERSION, parseArgs, resolveOptions, resolveSocketPath, statePaths } from './host/config.ts';
 import type { Config } from './host/config.ts';
-import { backupOverSocket, devicesCommand, formatBytes, NoServer, pairCommand } from './server/admin.ts';
+import { agentsCommand, backupOverSocket, devicesCommand, formatBytes, NoServer, pairCommand } from './server/admin.ts';
 
 /** `backup` through the running server; false when none answers (then the backup takes the flock itself). */
 async function backupViaServer(config: Config): Promise<boolean> {
@@ -41,6 +41,7 @@ try {
       if (attached !== undefined) process.exitCode = attached;
       else if (config.command === 'serve-pair') await pairCommand(config);
       else if (config.command === 'serve-devices') await devicesCommand(config);
+      else if (config.command === 'serve-agents') await agentsCommand(config);
       else if (config.command === 'backup' && !config.exists) throw new Error(`No saved chat to back up at ${config.databasePath}`);
       else if (config.command === 'backup' && await backupViaServer(config)) { /* done by the server */ }
       else if (config.inspectOnly && !config.exists) {

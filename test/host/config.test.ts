@@ -278,6 +278,10 @@ test('subcommands: serve, serve pair, serve devices, backup, with options before
   assert.equal(parseArgs(['serve', 'pair']).command, 'serve-pair');
   assert.equal(parseArgs(['serve', 'devices']).command, 'serve-devices');
   assert.equal(parseArgs(['serve', 'devices', '--revoke', 'phone']).revoke, 'phone');
+  assert.equal(parseArgs(['serve', 'agents']).command, 'serve-agents');
+  assert.equal(parseArgs(['serve', 'agents', '--archive', 'Helper']).archive, 'Helper');
+  assert.equal(parseArgs(['serve', 'agents', '--archive-adhoc']).archiveAdhoc, true);
+  assert.equal(parseArgs(['--data-dir', '/d', 'serve', 'agents', '--restore', 'Helper']).restore, 'Helper');
   assert.deepEqual([parseArgs(['backup']).command, parseArgs(['backup', '--out', '/b']).out], ['backup', '/b']);
   assert.deepEqual([parseArgs(['--', 'serve']).command, parseArgs(['--', 'serve']).prompt], ['chat', 'serve'], '-- makes it a prompt');
   assert.deepEqual([parseArgs(['-p', 'serve dinner']).command, parseArgs(['serve dinner']).prompt], ['chat', 'serve dinner']);
@@ -290,12 +294,18 @@ test('each subcommand refuses what does not apply to it', () => {
     ['serve', '--revoke', 'x'], ['serve', '--out', '/b'], ['serve', '--request-id', 'r'], ['serve', 'pair', '--port', '1'],
     ['serve', 'pair', '--cwd', '/'], ['serve', 'devices', '--out', '/b'], ['serve', 'devices', 'phone'], ['backup', '--port', '1'],
     ['backup', '--allow-tools'], ['backup', 'now'], ['serve', '--port', '0'], ['serve', '--port', '65536'], ['serve', '--port', 'http'],
-    ['serve', 'devices', '--revoke', ' ']]) {
+    ['serve', 'devices', '--revoke', ' '], ['serve', 'agents', 'Helper'], ['serve', 'agents', '--archive', ' '], ['serve', 'agents', '--restore', ''],
+    ['serve', 'agents', '--archive', 'A', '--restore', 'B'], ['serve', 'agents', '--archive-adhoc', '--archive', 'A'],
+    ['serve', 'agents', '--revoke', 'x'], ['serve', 'devices', '--archive', 'x'], ['serve', '--archive-adhoc'], ['serve', 'agents', '--cwd', '/']]) {
     assert.throws(() => parseArgs(args), Error, JSON.stringify(args));
   }
   assert.throws(() => parseArgs(['--port', '7433']), /--port applies only to serve/);
   assert.throws(() => parseArgs(['--revoke', 'x']), /--revoke applies only to serve devices/);
   assert.throws(() => parseArgs(['--out', '/b']), /--out applies only to backup/);
+  assert.throws(() => parseArgs(['--archive', 'x']), /--archive applies only to serve agents/);
+  assert.throws(() => parseArgs(['--archive-adhoc']), /--archive-adhoc applies only to serve agents/);
+  assert.throws(() => parseArgs(['--restore', 'x']), /--restore applies only to serve agents/);
+  assert.throws(() => parseArgs(['serve', 'agents', '--archive', 'A', '--archive-adhoc']), /Choose only one of --archive, --archive-adhoc, or --restore/);
 });
 
 test('--local and --attach: one or the other, and --attach takes no launch settings or one-shot mode', () => {

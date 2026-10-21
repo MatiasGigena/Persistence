@@ -1,13 +1,19 @@
 // Wire protocol v3: every message between the server (src/server/) and its clients (src/client/, src/web/).
 // docs/protocol.md is the prose spec; this file is its types and constants. Shared by Node and the browser, so it
 // holds plain types and constants only: no Node or DOM imports, and no runtime imports at all.
-import type { ChatImage, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+import type { ArchiveTarget, ChatImage, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult } from './machines.ts';
 
-export type { AgentStatus, ChatImage, ChatItem, MemoryStats, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+export type { AgentStatus, ArchiveTarget, ChatImage, ChatItem, MemoryStats, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
 
 /** Pi's feed, open on every connection from `ready` on. Agent feeds get their id from `feed.open`. */
 export const ROOT_FEED = 'root';
+
+/**
+ * An archived agent is deleted this long after its `archivedAt` (ADR 0034), so clients can show when. The same as
+ * src/agents' ARCHIVE_TTL_MS, which this file cannot import (test/protocol checks they agree).
+ */
+export const ARCHIVE_TTL_MS = 86_400_000;
 
 /** Sizes and timings both sides rely on. Lengths are in UTF-16 code units (JavaScript string length). */
 export const LIMITS = {
@@ -120,6 +126,14 @@ export interface Ops {
   readonly abort: { readonly params: NoParams; readonly result: null };
   /** Stops one agent and its sub agents, or all agents without `name`. Names stopped, sub agents first. */
   readonly stopAgents: { readonly params: { readonly name?: string }; readonly result: { readonly names: readonly string[] } };
+  /**
+   * Archives one agent (and a main agent's sub agents), or every ad-hoc main agent with `adhoc: true` (ADR 0034): stops
+   * their work; they are deleted a day later unless restored. Names archived. `failed` with a readable refusal (a
+   * standing agent, an archived one); `not_found` for no such agent.
+   */
+  readonly 'agents.archive': { readonly params: ArchiveTarget; readonly result: { readonly names: readonly string[] } };
+  /** Restores an archived agent (and a main agent's sub agents); stopped work stays stopped. Names restored. */
+  readonly 'agents.restore': { readonly params: { readonly name: string }; readonly result: { readonly names: readonly string[] } };
   /** Opens an agent's conversation as a feed; a `snapshot` for it follows the `res`. `not_found` for no such agent. */
   readonly 'feed.open': { readonly params: { readonly name: string }; readonly result: { readonly feed: string } };
   /** Closes an agent feed this peer opened. The root feed cannot be closed. */
@@ -159,7 +173,7 @@ export type Result<O extends Op> = Ops[O]['result'];
 
 /** Every op, in the order of `Ops`. */
 export const OPS: readonly Op[] = [
-  'send', 'abort', 'stopAgents', 'feed.open', 'feed.close', 'feed.resync', 'memory.view', 'memory.zoom', 'models',
+  'send', 'abort', 'stopAgents', 'agents.archive', 'agents.restore', 'feed.open', 'feed.close', 'feed.resync', 'memory.view', 'memory.zoom', 'models',
   'model.set', 'tools.set', 'thinking.levels', 'thinking.set', 'push.subscribe', 'push.unsubscribe', 'admin.backup', 'admin.pair', 'admin.devices',
   'admin.revoke', 'machine.register', 'machine.set', 'machine.list',
 ];

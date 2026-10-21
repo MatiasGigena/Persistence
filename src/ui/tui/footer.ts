@@ -3,6 +3,7 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import type { SessionStatus } from '../types.ts';
+import { activeAgents } from './panels/agents.ts';
 import { NARROW } from './theme.ts';
 import type { Theme } from './theme.ts';
 
@@ -21,11 +22,12 @@ const size = (bytes: number): string => bytes < 1024 ? `${bytes} B`
   : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 /**
- * What the footer reads of a SessionStatus: of the agents, only whether each is busy. `reconnecting` is set by an
+ * What the footer reads of a SessionStatus: of the agents, only whether each is busy and archived (archived ones are
+ * not counted). `reconnecting` is set by an
  * attached TUI while its link to the server is down; the status shown is then the last one received.
  */
 export type FooterStatus = Omit<SessionStatus, 'agents'> & {
-  readonly agents: readonly { readonly busy: boolean }[];
+  readonly agents: readonly { readonly busy: boolean; readonly archivedAt?: number }[];
   readonly reconnecting?: boolean;
   /** The tool call running now, as "name summary" on one line; shown next to the spinner while busy. */
   readonly step?: string;
@@ -80,9 +82,10 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
     if (memory.active) list.push({ text: dim(compact ? `${memory.active} sum` : `${memory.active} summarizing`), rank: 8 });
     if (memory.failed) list.push({ text: theme.error(`${memory.failed} failed`), rank: 5 });
   }
-  if (status.agents.length) {
-    const busy = status.agents.filter(agent => agent.busy).length;
-    list.push({ text: dim(compact ? `${busy}/${status.agents.length} ag` : `${busy}/${status.agents.length} agents busy`), rank: 3 });
+  const agents = activeAgents(status.agents);
+  if (agents.length) {
+    const busy = agents.filter(agent => agent.busy).length;
+    list.push({ text: dim(compact ? `${busy}/${agents.length} ag` : `${busy}/${agents.length} agents busy`), rank: 3 });
   }
   return list;
 }

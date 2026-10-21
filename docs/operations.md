@@ -377,7 +377,7 @@ currently refused; the connector supports coding/read kits and autoreview's fixe
 | `<data dir>/chat.sqlite-wal`, `chat.sqlite-shm` | SQLite WAL files |
 | `<data dir>/chat.sqlite.lock` | the flock file |
 | `<data dir>/chat.unii/` | memory: `main/` (log), `tree/` (summaries), `view.json` |
-| `<data dir>/chat.unii/browser/<agent name>/` | a browser profile (cookies, localStorage) per agent that used the browser tools, shared by all its sessions (a standing agent's tasks); a conversation the agents registry does not name (Pi) uses its conversation ID; mode 700; not backed up |
+| `<data dir>/chat.unii/browser/<agent name>/` | a browser profile (cookies, localStorage) per agent that used the browser tools, shared by all its sessions (a standing agent's tasks); a conversation the agents registry does not name (Pi) uses its conversation ID; mode 700; not backed up; deleted with its agent, a day after archiving (ADR 0034) |
 | `<data dir>/settings.json` | the default model and effort chosen with `/model` and `/effort`, and the standing agents: `{"model": "PROVIDER/ID", "thinkingLevel": "high", "agents": {…}}`, each key optional (`agents`: see [agents.md](agents.md)) |
 | `<data dir>/chat.sqlite.sock` | `pi-durable serve`'s Unix socket, mode 600, there only while it runs; in `$XDG_RUNTIME_DIR` (as `pi-durable-<hash>.sock`) when the path is over 107 bytes |
 | `<data dir>/backups/` | `pi-durable backup`'s backups, one directory each, mode 700; kept 14 days |
@@ -549,7 +549,30 @@ A malformed value stops the server at start with a message naming the variable (
   workstations instead use [the SSH connector](#remote-workstations-over-ssh).
   Local one-shot launches (`-p`, `--status`, `--history`, `--resume`) and `--local` need the chat's
   flock, which the server holds: they exit with 75 until it stops.
-- `pi-durable serve pair`, `serve devices [--revoke NAME]` and `backup` talk to it over the socket.
+- `pi-durable serve pair`, `serve devices [--revoke NAME]`, `serve agents` and `backup` talk to it over the socket.
+- Once an hour, and at every start, it deletes the agents archived a day or more ago (see
+  [Archiving agents](#archiving-agents)).
+
+### Archiving agents
+
+Agents Pi spawned stay in `/agents`, the web app's Agents panel and Pi's `list_agents` until you archive them (ADR
+0034). The terminal UI's `/agents` panel and the web app's Agents sheet archive and restore them; so does the server's
+CLI:
+
+```sh
+pi-durable serve agents                   # every agent: role, parent, busy or idle; archived ones with their deletion time
+pi-durable serve agents --archive Helper  # stop Helper (and its sub agents) and archive it
+pi-durable serve agents --archive-adhoc   # archive every main agent that is not a standing one
+pi-durable serve agents --restore Helper  # bring it back within the day (its stopped work stays stopped)
+```
+
+- An archived agent is stopped and hidden, and nothing reaches it: messages to it are refused, and its reports go
+  nowhere. `zoom("Helper")` still reads it.
+- A day after it was archived it is deleted: its registry record goes, so its name is free again. The server
+  checks at every start and then hourly, so an agent of a server that was down is deleted at its next start. Its
+  conversation stays in `chat.sqlite`, and `zoom("Helper")` still reads it: the space is not reclaimed.
+- The standing agents (Coder, Reviewer, Researcher) cannot be archived; remove one from the roster first.
+- Every archive and restore is shown to every client and written to the journal, naming who did it.
 
 ### Logs
 
@@ -714,7 +737,7 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `--request-id` returns an old answer | That ID was used before. Use a new ID for a new task. |
 | The server keeps restarting | `journalctl --user -u pi-durable -b` shows why: often missing credentials (sign in on the VPS as the same user), a model that cannot run, a malformed `PI_DURABLE_*` value, or `node`/`claude` not on the service's `PATH` (set it in `~/.config/pi-durable/env`). |
 | Exit 75 from `serve`, `-p`, `--status` or `--local` while the server runs | The server holds the chat's flock. Use the attached terminal UI, or `systemctl --user stop pi-durable` first. |
-| `No server is running for this chat` | `serve pair` and `serve devices` need the server: `systemctl --user start pi-durable` (or `pi-durable serve`). `backup` works without one. |
+| `No server is running for this chat` | `serve pair`, `serve devices` and `serve agents` need the server: `systemctl --user start pi-durable` (or `pi-durable serve`). `backup` works without one. |
 | `The socket path … is over 107 bytes and XDG_RUNTIME_DIR is unset` | Use a shorter `--database` or `--data-dir` path, or run under a login session or systemd, which set `XDG_RUNTIME_DIR`. |
 | `… exists and is not a socket; move it away` | Something else sits at `<db>.sock`. Move it; the server replaces only a stale socket. |
 | `web devices unavailable: …/devices.json is damaged` | The server runs without web pairing. Fix the file, or delete it and pair the devices again. |

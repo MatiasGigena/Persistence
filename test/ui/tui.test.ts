@@ -52,6 +52,8 @@ class FakeSession implements UiSession {
   abort(): Promise<void> { this.aborts++; return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
   stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
+  archiveAgents(): Promise<readonly string[]> { return Promise.resolve([]); }
+  restoreAgent(): Promise<readonly string[]> { return Promise.resolve([]); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
   zoom(): Promise<string> { return Promise.resolve(''); }

@@ -3,7 +3,7 @@
 // or effort applies to Pi and its agents from the next request and is saved as the default; the tools are for this
 // server run only, and turning them on asks first.
 import { el } from '../chat-view.ts';
-import { errorText, memoryHeader, modelRef, sortModels } from '../format.ts';
+import { activeAgents, errorText, memoryHeader, modelRef, sortModels } from '../format.ts';
 import { RequestError } from '../link.ts';
 import { disablePush, enablePush, pushState } from '../push.ts';
 import type { PushState } from '../push.ts';
@@ -371,10 +371,11 @@ export function chatSettingsView(ctx: PanelContext): View {
       // ---------------------------------------------------------- agents and memory
       const drawRows = (): void => {
         const status = ctx.store.status;
-        const agents = status?.agents ?? [];
+        const all = status?.agents ?? [], agents = activeAgents(all), archived = all.length - agents.length;
         const busy = agents.filter(agent => agent.busy).length;
+        const detail = `${agents.length ? `${busy} busy · ${agents.length} in all` : 'None at work'}${archived ? ` · ${archived} archived` : ''}`;
         renderRows(list, [
-          { key: 'agents', label: 'Agents', detail: agents.length ? `${busy} busy · ${agents.length} in all` : 'None yet', aside: '›' },
+          { key: 'agents', label: 'Agents', detail: all.length ? detail : 'None yet', aside: '›' },
           { key: 'memory', label: 'Memory', detail: memoryHeader(status?.memory), aside: '›' },
         ], key => ctx.sheet.push(key === 'agents' ? agentsView(ctx) : memoryView(ctx)));
       };
