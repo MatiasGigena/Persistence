@@ -72,10 +72,12 @@ commit (`syncAgents`), with registry field `standing: true`. The built-in roster
 
 `settings.json` may replace it with an `"agents"` object keyed by name: `model` and `tools` (kits) are required,
 `thinkingLevel` defaults to `high`, and `instructions` (added to the agent's role text), `subModel` and
-`subThinkingLevel` are optional. An invalid entry is a launch error naming it.
+`subThinkingLevel` are optional. An invalid entry is a launch error naming it. Only work launches read `agents`:
+`--status`, `--history` and the admin commands (`backup`, `serve pair`, `serve devices`) ignore it, so a broken roster
+never blocks a backup; writing `settings.json` (`/model`, `/effort`) keeps it as written.
 
 - A name already taken by an ad-hoc agent makes that agent the standing one: it becomes a main agent of Pi, keeping its
-  conversation.
+  conversation. A sub agent of a standing agent also drops its `session`, so its reports and messages reach Pi.
 - An agent removed from the roster stays, as an ordinary agent: `standing` is cleared and it follows Pi again.
 - Pi may still `spawn_agent` other main agents ("ad-hoc agents"), for work no standing agent fits.
 
@@ -99,20 +101,29 @@ Only standing agents have sessions; an ad-hoc agent keeps one conversation.
   own `agents.anchor` task of Pi's conversation, like a spawn. The registry's `conversationId` becomes the new session;
   the previous one is appended to `past`. The new conversation is derived (`deriveAgent`) before its first input,
   which carries Pi's view and `[from Pi] task`, exactly as a spawned agent's first input.
-- The first delegate to a standing agent whose conversation was never used takes that conversation as session 1
-  instead of leaving it empty in `past`; `past` becomes `[]`. From then on `past` is present, and a current session
-  that has not yet received its task counts as busy, so two delegates in one turn cannot both start one.
-- `delegate` refuses while the agent is busy (`Coder is busy with its current task; send_message to steer it, or
-  stop_agent first.`), for an agent that is not standing (`Lead is not a standing agent; use spawn_agent or
-  send_message.`), for an unknown name, and for any caller but Pi.
+- A current session that holds no entry yet takes the task itself instead of being left empty in `past`: the launch's
+  never-used first conversation (`past` becomes `[]`, session 1), or a session whose delegated task never arrived
+  because its delivery failed or was aborted before submitting. So no empty session locks `delegate` out.
+- `delegate` refuses while the agent's task is still going on:
+  - a run in any of its sessions, current or past (`Coder is busy with its current task; send_message to steer it,
+    or stop_agent first.`);
+  - an unfinished `agents.deliver` task to its current session, such as the task of a delegate earlier in the same Pi
+    turn or a `send_message` not yet answered (the same text), so two delegates in one turn cannot both start one;
+  - a run in, or an unfinished delivery to, a sub agent of its current session: a main agent routinely hands work to
+    a sub and ends its run, so it is idle while its task is not (`Coder's current task is still running (its sub
+    agents Helper, Tester are busy); send_message to steer it, or stop_agent first.`).
+
+  It also refuses for an agent that is not standing (`Lead is not a standing agent; use spawn_agent or
+  send_message.`), for an unknown name, and for any caller but Pi. `stop_agent` clears every one of these: it stops
+  the agent's sessions and its subs, and a stopped run's delivery ends.
 - **`send_message`** to a standing agent goes to its current session: corrections, questions and steering of the task
   at hand. Its reports reach Pi as `[Coder] ...`, as any main agent's.
 - Pi's role text says: a new request is `delegate`; a change to, or question about, the work in progress is
   `send_message`. Continuity between tasks comes from Pi's memory: each session starts with Pi's view.
 
 **The previous task's sub agents.** A sub spawned by a standing agent records the session it works for (`session`).
-Before switching, `delegate` stops (aborts) the subs of the current session; they stay in the registry, stopped, with
-their `session`. A stopped run reports nothing, and later:
+`delegate` switches only when none of them is busy, so a task is never cut off; the subs stay in the registry with
+their `session`, and later, if something wakes one:
 
 - A sub whose `session` is not its main agent's current one reports nowhere: the commit that would create its report
   delivery sees the mismatch and creates none. Reports are routed by the parent's name when that commit runs, so this
@@ -124,8 +135,12 @@ their `session`. A stopped run reports nothing, and later:
 - A later session that messages the sub (`send_message` from the main agent's current session) takes it on: its
   `session` becomes that one, and its reports come there.
 
-A past session is still the same agent (its role text and tools work), so input already on its way, such as a
-`send_message` sent just before the delegate, is answered there and reported to Pi as `[Coder] ...`.
+**Past sessions stay quiet.** A message whose delivery finds its target in the agent's `past` goes to the agent's
+current session instead, so a task that is over is not woken; since `delegate` waits for unfinished deliveries, that
+happens only to deliveries from before that rule. Defensively, everything that reaches an agent reaches its past
+sessions too: a run in one counts as busy (`list_agents`, `last_message`, `/agents`, the `<turn>` block's agents at
+work), `stop_agent` and `stopAgents` abort them, and `syncAgents` re-derives them, so `/tools off` strips their local
+kits as well. A past session is still the same agent (its role text and tools work).
 
 ## Permissions
 
@@ -167,7 +182,8 @@ Refusals are plain texts such as `No agent named X.`, `An agent named X already 
 `Invalid name: use a letter, then up to 31 letters, digits, _ or -, and not "Pi".`, `Sub agents cannot address Pi;
 message your main agent instead.`, `X is not your sub agent.`
 
-"Busy" means the agent's conversation has a run in progress. "Last message" is the latest committed assistant text.
+"Busy" means one of the agent's conversations (a standing agent's past sessions included) has a run in progress.
+"Last message" is the latest committed assistant text.
 
 Each conversation also gets an `agents` system section with its role text, adapted from upstream UniiChat's subagent
 prompt:
@@ -232,8 +248,8 @@ Each agent's conversation is owned by an `agents.anchor` task, created as a back
 conversation. So `root.waitForIdle()` and `root.abort()` do not reach agents; only
 `root.abort(ctx, { background: true })` does.
 
-`stop_agent` aborts the agent's conversation through `stopAgents(source, context, name)`. Stopping a main agent
-first stops each of its sub agents, since a sub's report would otherwise wake the stopped main again. Without a name,
+`stop_agent` aborts the agent's conversations (a standing agent's past sessions too) through
+`stopAgents(source, context, name)`. Stopping a main agent first stops each of its sub agents, since a sub's report would otherwise wake the stopped main again. Without a name,
 `stopAgents` stops every agent, subs first, and leaves Pi alone: it is the agent half of upstream's stop of all work,
 for a host command. The terminal UI's `/stop` and Esc still interrupt only Pi.
 
@@ -246,7 +262,10 @@ be reported once.
 `{ to, conversationId, content, entry, whenBusy }`:
 
 1. It submits the input to the target conversation with request id `agents:<taskId>`. pi-durable deduplicates by
-   request id, so a resubmission after a restart returns the first submission.
+   request id within a conversation, so a resubmission after a restart returns the first submission. A message whose
+   target is in the agent's `past` goes to its current session instead (a report there is dropped): unless the
+   request already reached the past session, the task stores the current session in its memo `session` before it
+   submits, and a rerun reads the memo, so a replay submits to the same conversation and the input arrives once.
 2. If the target is Pi, it completes right after the submit (the admission is durable) and calls `onReport` at most
    once. It does not wait for Pi's answer.
 3. Otherwise it waits for the submission to settle. Then **one commit** records the answer id in the agent's
@@ -261,9 +280,9 @@ be reported once.
 `replay: 'safe'`. The three that create deliveries run their change through `once()`: the result is stored in
 `registry.calls` under the tool call's task id, in the same commit as the change. A replayed call returns the stored
 result and creates nothing. The last 256 results are kept. `spawn_agent` and `delegate` also skip `initialContext` on a
-replay. `delegate` stops the previous task's subs before its commit, and a replay with a stored result stops nothing;
-a rerun after a crash before the commit stops the same subs again, since the switch has not happened. `stop_agent` is
-`replay: 'unsafe'`: rerunning it after a crash could stop newer work.
+replay. `delegate` decides busy again inside its commit (unfinished deliveries, an empty session, the current
+session unchanged), so a rerun after a crash before the commit decides afresh, and one after it returns the stored
+result. `stop_agent` is `replay: 'unsafe'`: rerunning it after a crash could stop newer work.
 
 The tests in `test/agents/agents.test.ts` close and reopen, and SIGKILL and reopen, with a delivery in flight, and
 check that each message and report appears exactly once. `test/agents/sessions.test.ts` reopens with a delegated task
@@ -301,8 +320,8 @@ five agent tools (three offered to a sub), plus `read`, `write`, `edit` and `bas
 standing agent and its subs keep the roster's model and effort through `/model` and `/effort`, which change Pi and its
 ad-hoc agents only; `--no-tools` and `/tools off` remove their local kits. The terminal UI's `/model`, `/effort` and
 `/tools` take the same two steps mid-launch (`Instance.setModel`, `setThinkingLevel`, `setTools`), so agents follow
-them from their next request. Only a standing agent's current session is re-derived; past sessions keep the choices
-they last had.
+them from their next request. A standing agent's past sessions are re-derived with its current one, since a past
+session can still run: `/tools off` reaches them too.
 
 ## Reading an agent's chat
 

@@ -80,6 +80,7 @@ Give each test its own temporary data directory.
   - entry kinds `agents.report`, `agents.message`, `host.resume-boundary`;
   - task kinds `agents.anchor` and `agents.deliver`, and their versions;
   - the doc kind `agents.registry`, and its agents' fields, `standing`, `past` and `session` among them;
+  - the `agents.deliver` task memo field `session` (the conversation a message delivery chose);
   - tool names `zoom`, `date`, `spawn_agent`, `list_agents`, `send_message`,
     `last_message`, `stop_agent`, `delegate`, `web_fetch`, and the browser's `browser_goto`,
     `browser_eval`, `browser_console`, `browser_network`, `browser_fill`, `browser_click`,

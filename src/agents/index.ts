@@ -159,6 +159,43 @@ async function lastAnswer(tx: Tx, conversationId: ConversationId): Promise<strin
 
 const busyOf = async (source: DocumentReader, conversationId: ConversationId, context: Context) =>
   (await source.snapshot(LiveDoc, conversationId, context))?.run !== undefined;
+/** Every conversation of an agent: a standing agent's past sessions, oldest first, then its current one. */
+const sessionsOf = (agent: Pick<AgentRecord, 'conversationId' | 'past'>): ConversationId[] => [...agent.past ?? [], agent.conversationId];
+/** Whether any of an agent's conversations has a run: a past session can still run (input that reached it before). */
+async function agentBusy(source: DocumentReader, agent: Pick<AgentRecord, 'conversationId' | 'past'>, context: Context): Promise<boolean> {
+  for (const id of sessionsOf(agent).reverse()) if (await busyOf(source, id, context)) return true;
+  return false;
+}
+
+const DELIVER_KIND = 'agents.deliver';
+/** The memo of an `agents.deliver` task that fixes where its message goes once it was redirected (see Deliver). */
+const SESSION_MEMO = 'session';
+/**
+ * The conversations an unfinished `agents.deliver` task still carries an input to (its redirected session, else its
+ * input's), read in the commit of `tx`. A delivery stays unfinished until its input was answered.
+ */
+async function deliveryTargets(tx: Tx): Promise<ReadonlySet<unknown>> {
+  const targets = new Set<unknown>();
+  for (const status of ['pending', 'running', 'waiting'] as const) {
+    let cursor: Cursor | undefined;
+    do {
+      const page = await tx.scanTasks({ kind: DELIVER_KIND, status }, 64, cursor);
+      for (const task of page.items) {
+        const input = task.input;
+        const to = task.memos?.[SESSION_MEMO]
+          ?? (typeof input === 'object' && input !== null && !Array.isArray(input) ? input.conversationId : undefined);
+        if (to !== undefined) targets.add(to);
+      }
+      cursor = page.next;
+    } while (cursor !== undefined);
+  }
+  return targets;
+}
+
+/** The subs of standing agent `main`'s session `current`: those that work for it, or for no session yet. */
+const subsOf = (agents: Readonly<Record<string, AgentRecord>>, main: string, current: ConversationId): [string, AgentRecord][] =>
+  Object.entries(agents).filter(([, agent]) => agent.role === 'sub' && agent.parent === main
+    && (agent.session === undefined || agent.session === current));
 
 // Owner of an agent's conversation: finishes at once; background, so Pi's Esc never reaches it.
 const Anchor = defineTask<null, { phase: 'done' }, null>({
@@ -216,11 +253,14 @@ const rosterEntry = (roster: Roster, name: string): StandingAgent | undefined =>
  * tools; the local kits only while Pi's coding tools are on), and a sub its `subModel` and `subThinkingLevel`. Then the
  * role's tool offer (subs are not offered spawn_agent or stop_agent), then the host's `childAgent` change.
  */
-async function deriveAgent(tx: Tx, agents: Readonly<Record<string, AgentRecord>>, name: string, { childAgent, roster, kits = {} }: AgentsSetup) {
+async function deriveAgent(tx: Tx, agents: Readonly<Record<string, AgentRecord>>, name: string, { childAgent, roster, kits = {} }: AgentsSetup,
+  conversationId?: ConversationId) {
   const agent = agents[name];
   if (!agent) return;
+  // One of the agent's conversations: its current one by default, or a standing agent's past session.
+  const id = conversationId ?? agent.conversationId;
   const root = await tx.doc(AgentDoc, ROOT_CONVERSATION_ID);
-  const state = await tx.doc(AgentDoc, agent.conversationId);
+  const state = await tx.doc(AgentDoc, id);
   // The same draft, field by field.
   const fields: Record<string, unknown> = state;
   for (const key of Object.keys(fields)) if (!(key in root)) delete fields[key];
@@ -250,11 +290,11 @@ async function deriveAgent(tx: Tx, agents: Readonly<Record<string, AgentRecord>>
     state.modelTools = Array.isArray(offered) ? offered.filter((each) => !hidden.includes(each))
       : { ...offered, remove: [...new Set([...(offered?.remove ?? []), ...hidden])] };
   }
-  if (childAgent) await configure(tx, agent.conversationId, childAgent);
+  if (childAgent) await configure(tx, id, childAgent);
   if (!added.length) return;
   // The kits' extensions are selected last, so the host's change cannot drop them. An object selection edits the host
   // default, which already holds every installed extension: only a `remove` of one could leave it out.
-  const after = await tx.doc(AgentDoc, agent.conversationId);
+  const after = await tx.doc(AgentDoc, id);
   const selected = after.extensions;
   if (Array.isArray(selected)) {
     const missing = added.filter((each) => !selected.includes(each));
@@ -275,10 +315,12 @@ async function ensureStanding(tx: Tx, registry: Draft<AgentsState>, roster: Rost
     const record = existing && registry.agents[existing.name];
     if (record) {
       // A name collision with an agent Pi (or a main agent) spawned earlier: rather than refuse the launch, that agent
-      // becomes the standing one, a main agent of Pi, keeping its conversation and its registry spelling.
+      // becomes the standing one, a main agent of Pi, keeping its conversation and its registry spelling. A sub's
+      // `session` goes with its old parent: kept, it would mark every report to Pi stale.
       if (!record.standing) record.standing = true;
       if (record.role !== 'main') record.role = 'main';
       if (record.parent !== PI) record.parent = PI;
+      if (record.session !== undefined) delete record.session;
       continue;
     }
     const anchor = await tx.createTask(Anchor, null, { ...TASK_OPTIONS, conversationId: ROOT_CONVERSATION_ID });
@@ -292,8 +334,9 @@ async function ensureStanding(tx: Tx, registry: Draft<AgentsState>, roster: Rost
 
 /**
  * Create the roster's standing agents that do not exist yet, clear `standing` from those no longer in it (only when
- * `roster` is given), and re-derive every spawned agent's choices from Pi's and the roster, all in one commit. Call on
- * every work launch after `root.configure()`, and after each change to Pi's model, effort or tools.
+ * `roster` is given), and re-derive every spawned agent's choices from Pi's and the roster, all in one commit: every
+ * conversation of each, a standing agent's past sessions too, since one can still run. Call on every work launch after
+ * `root.configure()`, and after each change to Pi's model, effort or tools.
  */
 export async function syncAgents(
   harness: Pick<Session, 'commit'>, context: Context = BACKGROUND_CONTEXT, setup: AgentsSetup = {},
@@ -301,7 +344,9 @@ export async function syncAgents(
   await harness.commit(async (tx) => {
     const registry = await tx.doc(AgentsDoc);
     if (setup.roster) await ensureStanding(tx, registry, setup.roster);
-    for (const name of Object.keys(registry.agents)) await deriveAgent(tx, registry.agents, name, setup);
+    for (const [name, agent] of Object.entries(registry.agents)) {
+      for (const id of sessionsOf(agent)) await deriveAgent(tx, registry.agents, name, setup, id);
+    }
   }, context);
 }
 
@@ -320,8 +365,9 @@ export type AgentsStopper = DocumentReader & {
 
 /**
  * Stop agent `name` and its sub agents, or every agent without a name (upstream UniiChat's stop of all work); Pi is
- * not touched. Sub agents go first, since a sub's report would otherwise wake its stopped main again. A stopped run
- * reports nothing. Returns the names stopped, `name` last; an unknown name stops nothing.
+ * not touched. Sub agents go first, since a sub's report would otherwise wake its stopped main again. Each agent's
+ * every conversation is stopped, a standing agent's past sessions too. A stopped run reports nothing. Returns the
+ * names stopped, `name` last; an unknown name stops nothing.
  */
 export async function stopAgents(source: AgentsStopper, context: Context = BACKGROUND_CONTEXT, name?: string): Promise<string[]> {
   const agents = Object.entries((await source.snapshot(AgentsDoc, context))?.agents ?? {});
@@ -329,16 +375,18 @@ export async function stopAgents(source: AgentsStopper, context: Context = BACKG
   if (name !== undefined && !found) return [];
   const chosen = found ? agents.filter(([each, agent]) => agent.parent === found.name || each === found.name) : agents;
   const order = [...chosen.filter(([, agent]) => agent.role === 'sub'), ...chosen.filter(([, agent]) => agent.role === 'main')];
-  for (const [, agent] of order) await (await source.conversation(agent.conversationId, context))?.abort(context);
+  for (const [, agent] of order) {
+    for (const id of sessionsOf(agent)) await (await source.conversation(id, context))?.abort(context);
+  }
   return order.map(([each]) => each);
 }
 
-/** Every spawned agent with its role, parent, conversation, and busy state. */
+/** Every spawned agent with its role, parent, conversation, and busy state (a run in any of its conversations). */
 export async function listAgents(source: DocumentReader, context: Context = BACKGROUND_CONTEXT): Promise<AgentInfo[]> {
   const registry = await source.snapshot(AgentsDoc, context);
   return Promise.all(Object.entries(registry?.agents ?? {}).map(async ([name, agent]) => ({
     name, role: agent.role, parent: agent.parent, conversationId: agent.conversationId,
-    busy: await busyOf(source, agent.conversationId, context), standing: agent.standing === true,
+    busy: await agentBusy(source, agent, context), standing: agent.standing === true,
   })));
 }
 
@@ -511,22 +559,42 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
   const { initialContext, onReport, roster = {} } = options;
   // Carries one input to one agent, then that agent's answer to its parent.
   const Deliver = defineTask<DeliveryInput, DeliverState, null>({
-    name: 'agents.deliver',
+    name: DELIVER_KIND,
     version: 1,
     initial: () => ({ phase: 'deliver' }),
     phases: {
       deliver: async (task, runtime, context) => {
-        const { to, conversationId, content, entry, whenBusy } = task.input;
+        const { to, content, entry, whenBusy } = task.input;
+        const requestId = `agents:${task.id}`;
         const done = (): NextTaskState<DeliverState, null> => ({ status: 'terminal', outcome: { status: 'completed', result: null } });
         // A report into a standing agent's past session comes from a sub of a task it no longer works on: dropped.
         const target = (await runtime.snapshot(AgentsDoc, context))?.agents[to];
-        if (entry.kind === REPORT_KIND && target?.past?.includes(conversationId)) return runtime.commit(done, context);
+        if (entry.kind === REPORT_KIND && target?.past?.includes(task.input.conversationId)) return runtime.commit(done, context);
+        // A message bound for a standing agent's past session goes to its current one, so a task that is over never
+        // wakes. delegate refuses while a delivery to the current session is unfinished, so a target turns past only
+        // under a delivery from before that rule; the choice is kept in a memo before the submit, so a replay after a
+        // crash submits to the same conversation, where the request id returns the first submission.
+        let conversationId = task.input.conversationId;
+        if (entry.kind === MESSAGE_KIND && target?.past?.includes(conversationId)) {
+          const original = conversationId;
+          let chosen = await runtime.memo<ConversationId>(SESSION_MEMO, context);
+          if (chosen === undefined) {
+            // One that already reached the past session (before a crash) stays there: it must not arrive twice.
+            const reached: { submitted?: boolean } = {};
+            await runtime.commit(async (tx) => {
+              reached.submitted = await tx.submissionByRequest(original, requestId) !== undefined;
+              return undefined;
+            }, context);
+            chosen = await runtime.memo(SESSION_MEMO, reached.submitted ? original : target.conversationId, context);
+          }
+          conversationId = chosen;
+        }
         const conversation = await runtime.conversation(conversationId, context);
         if (!conversation) return runtime.commit(done, context);
         // A report carries its delivery's id, so memory logs each report once, even identical ones.
         const placed = entry.kind === REPORT_KIND ? { ...entry, data: { ...entry.data, id: task.id } } : entry;
         const submission = await conversation.submit({
-          type: 'input', content, entry: placed, whenBusy, requestId: `agents:${task.id}`,
+          type: 'input', content, entry: placed, whenBusy, requestId,
         }, context);
         if (conversationId === ROOT_CONVERSATION_ID) {
           await runtime.commit(done, context);
@@ -636,7 +704,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
   const delegate = defineTool({
     name: 'delegate',
     description: 'Give a standing agent a new task. It starts in a fresh conversation (a new session) that begins with '
-      + 'your view; its earlier sessions stay readable with zoom("Name#n"). Refused while the agent is busy: steer or '
+      + 'your view; its earlier sessions stay readable with zoom("Name#n"). Refused while the agent or a sub agent of its task is busy: steer or '
       + 'question the work in progress with send_message instead. Returns at once: never wait or poll for it. Its final '
       + 'reply arrives later as a message starting with [Name]. It knows what you want only from its task, so say all it needs.',
     parameters: Type.Object({
@@ -654,22 +722,31 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       if (!found) return reply(`No agent named ${name}.`);
       if (!found.standing) return reply(`${found.name} is not a standing agent; use spawn_agent or send_message.`);
       const busy = `${found.name} is busy with its current task; send_message to steer it, or stop_agent first.`;
-      if (await busyOf(api, found.conversationId, context)) return once(api, context, () => Promise.resolve(busy));
-      // The previous task's sub agents belong to it: stopped first, so their reports cannot reach the new session.
-      const subs = Object.values(registry?.agents ?? {}).filter((agent) => agent.role === 'sub' && agent.parent === found.name
-        && (agent.session === undefined || agent.session === found.conversationId));
-      for (const sub of subs) await (await api.conversation(sub.conversationId, context))?.abort(context);
+      const subsBusy = (names: readonly string[]) => `${found.name}'s current task is still running (its sub agent${names.length === 1
+        ? ` ${names.join('')} is` : `s ${names.join(', ')} are`} busy); send_message to steer it, or stop_agent first.`;
+      // Busy: a run in any of its sessions, or in a sub of its current one (the task goes on while its main is idle).
+      if (await agentBusy(api, found, context)) return once(api, context, () => Promise.resolve(busy));
+      const running: string[] = [];
+      for (const [each, sub] of subsOf(registry?.agents ?? {}, found.name, found.conversationId)) {
+        if (await busyOf(api, sub.conversationId, context)) running.push(each);
+      }
+      if (running.length) return once(api, context, () => Promise.resolve(subsBusy(running)));
       const preamble = initialContext
         ? await initialContext({ name: found.name, role: 'main', parent: PI, task }, api, context) : undefined;
       const content = `${preamble ? `${preamble}\n\n` : ''}[from ${PI}] ${task}`;
       return once(api, context, async (tx, draft) => {
         const agent = draft.agents[found.name];
         if (!agent?.standing) return `${found.name} is not a standing agent; use spawn_agent or send_message.`;
-        // `past` is set once a delegate started the current session; until its task lands there, it counts as busy
-        // (two delegates in one turn). A never-used first conversation takes the first task itself.
+        if (agent.conversationId !== found.conversationId) return busy;
+        // An input still on its way counts as work: to the current session (such as a delegate earlier in this turn, or
+        // a send_message), or to one of its subs.
+        const targets = await deliveryTargets(tx);
+        if (targets.has(agent.conversationId)) return busy;
+        const queued = subsOf(draft.agents, found.name, agent.conversationId).filter(([, sub]) => targets.has(sub.conversationId));
+        if (queued.length) return subsBusy(queued.map(([each]) => each));
+        // A session that holds nothing yet (never used, or its task's delivery ended before submitting) takes the task.
         const empty = (await tx.scanEntries({ conversationId: agent.conversationId }, 1)).items.length === 0;
-        if (agent.conversationId !== found.conversationId || (agent.past !== undefined && empty)) return busy;
-        if (agent.past === undefined && empty) agent.past = [];
+        if (empty) agent.past ??= [];
         else {
           const previous = agent.conversationId;
           for (const each of Object.values(draft.agents)) {
@@ -697,7 +774,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       const registry = await api.snapshot(AgentsDoc, context);
       const caller = whoIs(registry, api.conversationId);
       if (!caller) return reply('This conversation is not an agent.');
-      const others: { name: string; role: string; conversationId: ConversationId }[] = [
+      const others: { name: string; role: string; conversationId: ConversationId; past?: ConversationId[] }[] = [
         ...(caller.role === 'main' ? [{ name: PI, role: 'session agent', conversationId: ROOT_CONVERSATION_ID }] : []),
         ...Object.entries(registry?.agents ?? {}).filter(([name]) => name !== caller.name)
           .map(([name, agent]) => ({ name, ...agent, role: `${agent.role}, parent ${agent.parent}${agent.standing ? ', standing' : ''}` })),
@@ -709,7 +786,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
         return answers;
       }, context);
       const lines = await Promise.all(others.map(async (agent) => {
-        const state = await busyOf(api, agent.conversationId, context) ? 'busy' : 'idle';
+        const state = await agentBusy(api, agent, context) ? 'busy' : 'idle';
         const answer = last[agent.name];
         const said = answer === undefined ? 'no message yet' : `last: ${brief(answer)}`;
         return `- ${agent.name} (${agent.role}) ${state} — ${said}`;
@@ -764,7 +841,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       const found = target(registry, caller, name);
       if ('error' in found) return reply(found.error);
       const said = await api.commit((tx) => lastAnswer(tx, found.conversationId), context);
-      const state = await busyOf(api, found.conversationId, context) ? 'busy' : 'idle';
+      const state = await agentBusy(api, found, context) ? 'busy' : 'idle';
       return reply(`${found.name} is ${state}. ${said === undefined ? 'No message yet.' : `Last message:\n${said}`}`);
     },
   });

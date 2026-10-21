@@ -39,8 +39,9 @@ This is the built-in roster. `settings.json` may replace it with an `"agents"` o
 ```
 
 `model` and `tools` are required; `thinkingLevel` defaults to `high`; `instructions`, `subModel` and
-`subThinkingLevel` are optional. Names follow the agent name rules. An invalid entry is a launch error naming it.
-Writing `settings.json` (`/model`, `/effort`) keeps the `agents` key as it is.
+`subThinkingLevel` are optional. Names follow the agent name rules. An invalid entry is a launch error naming it; only
+work launches read `agents`, so inspection (`--status`, `--history`) and the admin commands (`backup`, `serve pair`,
+`serve devices`) never fail on it. Writing `settings.json` (`/model`, `/effort`) keeps the `agents` key as it is.
 
 Each launch that runs work creates the standing agents that do not exist yet (role `main`, parent `Pi`, registry
 field `standing: true`) in one idempotent commit, then re-derives them like every agent. Removing one from the
@@ -73,8 +74,16 @@ Only for standing agents; ad-hoc agents keep one conversation.
 - Pi gets a new tool, **`delegate(agent, task)`**: it starts a new task for a standing agent in a **new
   conversation**, whose first input carries Pi's view, as `spawn_agent` does. The registry's `conversationId` is the
   current session; the ones before it are kept, oldest first, in a new field `past`.
-- `delegate` refuses while the agent is busy (`Coder is busy with its current task; send_message to steer it, or
-  stop_agent first.`). It first stops the previous task's sub agents, so their reports cannot reach the new session.
+- `delegate` refuses while the agent's task is still going on (`Coder is busy with its current task; send_message to
+  steer it, or stop_agent first.`): a run in any of its sessions, or an unfinished delivery to its current session. A
+  main agent often hands its work to a sub and goes idle, so a busy sub of the current session (a run, or an
+  unfinished delivery) refuses too (`Coder's current task is still running (its sub agents Helper, X are busy);
+  send_message to steer it, or stop_agent first.`): a task is never cut off silently. A current session that holds
+  nothing yet takes the new task itself, so a delivery that ended before submitting cannot lock `delegate` out.
+- The previous task's subs keep their `session`; one woken later reports nowhere and cannot message its main agent.
+- Past sessions stay quiet: a message whose delivery finds its target in `past` goes to the current session (the choice
+  kept in the delivery task's memo before it submits, so a replay goes to the same place). A past session that runs
+  anyway counts as busy, is stopped by `stop_agent`, and is re-derived with the current one, so `/tools off` reaches it.
 - **`send_message`** to a standing agent goes to its current session: corrections, questions and steering of the
   task at hand. Pi's prompt says: a new request is `delegate`; a change to, or question about, the work in progress
   is `send_message`.
@@ -103,7 +112,7 @@ the same for every redirect (at most 5).
 ### Persisted names
 
 New and frozen once shipped: the tool names `delegate`, `web_fetch` and the eight `browser_*`; the extension names of
-the two new extensions; the registry fields `standing` and `past`, and `session` on a standing agent's sub (the session it belongs to); the `settings.json` key `agents` and its fields.
+the two new extensions; the registry fields `standing` and `past`, and `session` on a standing agent's sub (the session it belongs to); the `agents.deliver` memo `session` (where a redirected message goes); the `settings.json` key `agents` and its fields.
 
 ## Consequences
 
