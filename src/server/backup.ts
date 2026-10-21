@@ -1,6 +1,8 @@
 // Online backups (ADR 0022): the database through `VACUUM INTO`, then the memory directory and settings.json copied,
 // all in one synchronous step of the writer, so no commit or memory append lands between them. The running server
 // does it for `admin.backup`; without a server, `pi-durable backup` takes the flock and does it itself.
+// Browser profiles (`<memory>/browser/`, src/tools/browser.ts) are left out: they hold the agents' login cookies, and
+// Chromium writes them outside the writer's queue, so a copy could be torn; a lost one costs a login.
 import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, statSync } from 'node:fs';
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
@@ -48,8 +50,14 @@ function fsyncPath(path: string): void {
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
-/** Copies `from` (a directory or a file) to `to`, fsyncing every file and directory; returns the bytes copied. */
-function copyDurably(from: string, to: string): number {
+/** The memory directory's entry that holds the browser profiles (src/tools/browser.ts): never backed up. */
+export const BROWSER_PROFILES = 'browser';
+
+/**
+ * Copies `from` (a directory or a file) to `to`, fsyncing every file and directory, except the entries of `from`
+ * named in `skip`; returns the bytes copied.
+ */
+function copyDurably(from: string, to: string, skip: ReadonlySet<string> = new Set()): number {
   const info = lstatSync(from);
   if (info.isFile()) {
     copyFileSync(from, to);
@@ -59,21 +67,21 @@ function copyDurably(from: string, to: string): number {
   if (!info.isDirectory()) return 0;
   mkdirSync(to, { mode: 0o700 });
   let bytes = 0;
-  for (const name of readdirSync(from)) bytes += copyDurably(join(from, name), join(to, name));
+  for (const name of readdirSync(from)) if (!skip.has(name)) bytes += copyDurably(join(from, name), join(to, name));
   fsyncPath(to);
   return bytes;
 }
 
 /**
- * The synchronous step: `VACUUM INTO <dir>/<database name>`, then the memory directory and settings.json copied
- * beside it. `dir` must exist and be empty.
+ * The synchronous step: `VACUUM INTO <dir>/<database name>`, then the memory directory (without its browser profiles)
+ * and settings.json copied beside it. `dir` must exist and be empty.
  */
 export function snapshotInto(database: DatabaseSync, source: BackupSource, dir: string): number {
   const target = join(dir, basename(source.databasePath));
   database.prepare('VACUUM INTO ?').run(target);
   fsyncPath(target);
   let bytes = statSync(target).size;
-  if (existsSync(source.memoryDir)) bytes += copyDurably(source.memoryDir, join(dir, basename(source.memoryDir)));
+  if (existsSync(source.memoryDir)) bytes += copyDurably(source.memoryDir, join(dir, basename(source.memoryDir)), new Set([BROWSER_PROFILES]));
   if (existsSync(source.settingsPath)) bytes += copyDurably(source.settingsPath, join(dir, basename(source.settingsPath)));
   fsyncPath(dir);
   return bytes;

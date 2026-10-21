@@ -10,7 +10,7 @@ export const oneLine = (text: string): string => clean(text).replace(/\s+/g, ' '
 /** The argument that says what a call does, by tool name; zoom is handled on its own (as src/ui/tui/chat.ts). */
 const SUMMARY_KEY: Readonly<Record<string, string>> = {
   bash: 'command', read: 'path', write: 'path', edit: 'path',
-  spawn_agent: 'name', send_message: 'to', last_message: 'name', stop_agent: 'name',
+  spawn_agent: 'name', send_message: 'to', last_message: 'name', stop_agent: 'name', delegate: 'agent',
 };
 /** Longest compact-JSON summary, for tools without a known argument. */
 const SUMMARY_JSON = 60;

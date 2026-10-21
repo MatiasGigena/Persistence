@@ -47,7 +47,7 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
   if (!config.socketPath) throw new Error(`The socket path for ${config.databasePath} is over 107 bytes and XDG_RUNTIME_DIR is unset; use a shorter --database path`);
   const paths = statePaths(config.databasePath);
   // Coding tools are on unless --no-tools (ADR 0025), held to the protected folders like a local launch's.
-  const instance = await openInstance({ ...config, models, protection: protection(config),
+  const instance = await openInstance({ ...config, models, protection: protection(config), onWarning: log,
     onReport: report => log(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   let unix: UnixListener | undefined, web: WebListener | undefined, session: UiSessionHandle | undefined, hub: Hub | undefined;
   const { error: consoleError, warn: consoleWarn } = console;

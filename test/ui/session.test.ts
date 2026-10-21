@@ -401,7 +401,7 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     assert.deepEqual([coding(await pi()), coding(await bob.agent(instance.context))], [[], []]);
     assert.match((await pi()).instructions ?? '', /Coding tools \(read, write, edit, bash\) are off/);
     assert.deepEqual((await pi()).tools.map(tool => tool.name).sort(),
-      ['date', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
+      ['date', 'delegate', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
   });
 
   test('setThinkingLevel: Pi and its agents take it from the next request, and later launches default to it', async (t) => {

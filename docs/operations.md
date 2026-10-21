@@ -15,10 +15,17 @@ How to install, run, back up, move, and remove a Persistence host.
     && dpkg-deb -x bubblewrap_*.deb x && cp x/usr/bin/bwrap ~/.local/bin/ \
     && ~/.local/bin/bwrap --dev-bind / / -- true && echo ok
   ```
+- Chromium, for the `browser` kit's tools (the Reviewer's, ADR 0027): Playwright's build, installed after `npm ci`
+  (see the install sections), or `PI_DURABLE_CHROMIUM` set to the absolute path of another Chromium or Chrome
+  executable, not a snap one (see [Troubleshooting](#troubleshooting)). Chromium refuses to start its sandbox as
+  root, so run the host as an ordinary user (the systemd unit is a user service). Without Chromium only the browser
+  tools fail, each call saying why, and a work launch warns which standing agents cannot browse; everything else
+  works.
 - Node.js 22.19 or newer. The launcher uses `PI_DURABLE_NODE` if set, else `node`
   on PATH. If that `node` is older than 22.19, it falls back to Pi's private Node at
   `~/.local/share/pi-node/current/bin/node` when present.
-- No root privileges, Docker, open inbound port, or public web server.
+- No root privileges, Docker, open inbound port, or public web server. Root helps only with system packages:
+  bubblewrap, and Chromium's shared libraries if they are missing (the optional `install-deps` step below).
 
 ## Install locally
 
@@ -26,9 +33,18 @@ How to install, run, back up, move, and remove a Persistence host.
 git clone git@github.com:MatiasGigena/Persistence.git ~/pi-durable-instance
 cd ~/pi-durable-instance
 npm ci --ignore-scripts
+npx --no-install playwright-core install chromium   # the browser tools' Chromium, into ~/.cache/ms-playwright/
 npm run check && npm test
 mkdir -p ~/.local/bin
 ln -s "$HOME/pi-durable-instance/bin/pi-durable" "$HOME/.local/bin/pi-durable"
+```
+
+`--no-install` runs the `playwright-core` that `npm ci` installed, so the browser matches the pinned version (a bare
+`npx` could fetch the latest one, with a different browser). Run it as the user the host runs as. If Chromium then
+fails for missing shared libraries, install them; this optional step needs root and works on Debian and Ubuntu only:
+
+```sh
+sudo "$(command -v node)" node_modules/playwright-core/cli.js install-deps chromium
 ```
 
 If that link already exists, inspect it instead of overwriting it. Make sure
@@ -48,6 +64,7 @@ ssh USER@VPS
 # On the VPS:
 cd ~/pi-durable-instance
 npm ci --ignore-scripts
+npx --no-install playwright-core install chromium   # the browser tools' Chromium, into ~/.cache/ms-playwright/
 npm run check && npm test
 mkdir -p ~/.local/bin
 ln -s "$HOME/pi-durable-instance/bin/pi-durable" "$HOME/.local/bin/pi-durable"
@@ -156,7 +173,7 @@ Coding tools are on by default, for Pi and every agent, local or `serve` (ADR 00
 
 | Kind | Paths | The tools |
 |---|---|---|
-| The chat's state | the data directory; the database, its WAL, lock and socket; `chat.unii/`; `settings.json`; `serve/`; `backups/` | cannot read or change |
+| The chat's state | the data directory; the database, its WAL, lock and socket; `chat.unii/` (with the browser profiles); `settings.json`; `serve/`; `backups/` | cannot read or change |
 | Credentials | Pi's `auth.json`, `~/.ssh`, `~/.gnupg`, `~/.claude`, `~/.claude.json`, `~/.config/gh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc` | cannot read or change |
 | System | `/etc`, `/usr`, `/boot`, `/opt`, `/bin`, `/sbin`, `/lib*`, `/srv`, `/var/lib` | can read, not change |
 
@@ -170,6 +187,19 @@ Both take `:`-separated paths, `~` for the home directory; set them in the servi
 shell, then restart. If bubblewrap is missing or cannot run, the host says so at start ("Coding tools: bash is off")
 and bash answers the same way.
 
+## Standing agents' network tools
+
+The standing agents (ADR 0027, [agents.md](agents.md)) are held to more than the protected folders:
+
+- `web_fetch` (the Researcher's) refuses loopback, private, link-local, CGNAT (Tailscale) and unique-local addresses,
+  on every redirect too.
+- The `browser` (the Reviewer's) may open loopback and private addresses, to debug your apps, but always refuses
+  link-local ones (cloud metadata such as `169.254.169.254`) and CGNAT (your tailnet). An agent that also reads local
+  files, through the `read` or `coding` kit (the Reviewer, and its subs), gets a local-only browser: loopback and
+  private addresses only, so it cannot carry your files to the internet. The policy follows the roster, so a custom
+  `agents` entry with `browser` and `read` gets the same.
+- An agent without coding tools may message only Pi and its own subs, so it cannot steer one that has them.
+
 ## State locations
 
 | Path | What |
@@ -179,7 +209,8 @@ and bash answers the same way.
 | `<data dir>/chat.sqlite-wal`, `chat.sqlite-shm` | SQLite WAL files |
 | `<data dir>/chat.sqlite.lock` | the flock file |
 | `<data dir>/chat.unii/` | memory: `main/` (log), `tree/` (summaries), `view.json` |
-| `<data dir>/settings.json` | the default model chosen with `/model`: `{"model": "PROVIDER/ID"}` |
+| `<data dir>/chat.unii/browser/<agent name>/` | a browser profile (cookies, localStorage) per agent that used the browser tools, shared by all its sessions (a standing agent's tasks); a conversation the agents registry does not name (Pi) uses its conversation ID; mode 700; not backed up |
+| `<data dir>/settings.json` | the default model and effort chosen with `/model` and `/effort`, and the standing agents: `{"model": "PROVIDER/ID", "thinkingLevel": "high", "agents": {…}}`, each key optional (`agents`: see [agents.md](agents.md)) |
 | `<data dir>/chat.sqlite.sock` | `pi-durable serve`'s Unix socket, mode 600, there only while it runs; in `$XDG_RUNTIME_DIR` (as `pi-durable-<hash>.sock`) when the path is over 107 bytes |
 | `<data dir>/backups/` | `pi-durable backup`'s backups, one directory each, mode 700; kept 14 days |
 | `<data dir>/serve/` | `pi-durable serve`'s state, mode 700: `vapid.json` and `push.json` (see [Push notifications](#push-notifications)), `devices.json`; files mode 600 |
@@ -189,8 +220,9 @@ and bash answers the same way.
   `PATH` with `.sqlite` replaced by `.unii`, or with `.unii` appended if `PATH` does
   not end in `.sqlite`. Its lock is `PATH.lock`.
 - `settings.json` sits beside the database, so with `--database PATH` it is in `PATH`'s
-  directory. Only a work launch's `/model` writes it, under the database's lock: mode 600,
-  written to a temporary file, fsynced and renamed. Launches only read it, and
+  directory. Only a work launch's `/model` and `/effort` write it, under the database's lock: mode 600,
+  written to a temporary file, fsynced and renamed, keeping the keys they do not set (`agents` among them) as
+  written. Launches only read it, and
   `--status`, `--history` and `--help` never create it. `/tools` is not saved.
 - Older per-project databases in subfolders of the data dir are left untouched and
   are not imported.
@@ -233,6 +265,9 @@ pi-durable backup --out /srv/bak   # into /srv/bak/<UTC time>/
 
 - Each backup is a new directory named for the UTC time, like `2026-10-19T03-00-00Z`, holding `chat.sqlite`,
   `chat.unii/` and `settings.json` (when there is one): the whole chat, restorable by copying back.
+- Browser profiles (`chat.unii/browser/`) are left out: they hold the sites' login cookies, which should not sit in
+  14 days of copies, and Chromium writes them outside the writer's step, so a copy could be torn. After a restore,
+  an agent's browser starts with a fresh profile; log in again where needed.
 - `chat.sqlite` comes from SQLite's `VACUUM INTO`, a consistent copy. It and the `.unii` copy are made in one
   synchronous step of the one writer, so the memory is never ahead of or behind the database (ADR 0022). Every
   file is fsynced.
@@ -314,6 +349,7 @@ PI_DURABLE_ALLOW_LOGIN=me@github
 # PI_DURABLE_PROTECT=~/secrets     # hide more paths from the tools (':'-separated)
 # PI_DURABLE_PUSH_PREVIEW=off      # on: notifications show the reply's first words
 # PI_DURABLE_DATA_DIR=/home/me/.local/state/pi-durable
+# PI_DURABLE_CHROMIUM=/opt/google/chrome/chrome  # the browser tools' Chromium, not a snap; default: Playwright's, in ~/.cache/ms-playwright
 ```
 
 A malformed value stops the server at start with a message naming the variable (see the journal).
@@ -350,6 +386,7 @@ The server logs its start (`listening on …`, `ready: …`, whether the web app
 ```sh
 cd ~/pi-durable-instance
 git pull --ff-only && npm ci --ignore-scripts && npm run check && npm test
+npx --no-install playwright-core install chromium   # after a playwright-core bump: its matching Chromium
 systemctl --user restart pi-durable
 ```
 
@@ -472,8 +509,12 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `No Claude Code login for claude-cli` | Run `claude auth login` (or `claude`, then `/login`). More `claude-cli` symptoms are in [models.md](models.md#troubleshooting). |
 | `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key in `ANTHROPIC_API_KEY` after removing any stored Pi `anthropic` login. |
 | `Unknown model … in pinned Pi 1.3.0 catalog` | Pick a model from the Pi 1.3.0 catalog. Check `PI_DURABLE_MODEL` and `settings.json`. |
-| A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run. Pass `--model`, sign in again, or delete `settings.json`. |
-| `…/settings.json is not valid JSON` | Fix or delete the file. `--model` or `PI_DURABLE_MODEL` skip it meanwhile. |
+| A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run. Pass `--model`, sign in again, or remove the `model` key from `settings.json`. Do not delete the file: it may also hold `thinkingLevel` and a custom `agents` roster. |
+| `…/settings.json is not valid JSON` | Fix the file; it may hold a custom `agents` roster, so delete it only if it has none. `--model` or `PI_DURABLE_MODEL` skip it meanwhile. |
+| "Standing agent … cannot browse: Playwright's Chromium is not installed" | Run `npx --no-install playwright-core install chromium` in the install dir, as the host's user, or set `PI_DURABLE_CHROMIUM`. |
+| "Standing agent … cannot run: …", or "could not verify the credentials" | The roster's model for that agent is not in the catalog or its provider has no usable login. Sign in to that provider, or set another `model` for the agent in `settings.json`'s `agents`. Only that agent's tasks fail. |
+| A browser tool fails with "No usable sandbox" (Ubuntu 24.04) | AppArmor restricts unprivileged user namespaces, which Chromium's sandbox needs. Add an AppArmor profile for Playwright's Chromium binary (`~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome`) that allows `userns`, then `sudo apparmor_parser -r` it; or set `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`, which lifts the restriction for every program. Never run the host as root to get around it. |
+| A browser tool cannot create its profile, with `PI_DURABLE_CHROMIUM=/usr/bin/chromium` | That is a snap Chromium, which cannot write under dot-directories such as `~/.local/state`. Use Playwright's Chromium (unset the variable) or a non-snap build such as Google Chrome's `/opt/google/chrome/chrome`. |
 | `Node.js >=22.19.0 is required` | Install a newer Node, or set `PI_DURABLE_NODE` to one. |
 | An `ExperimentalWarning` about SQLite | Expected on Node 22. Harmless. |
 | You want to see what is pending | `pi-durable --status` prints the database, conversation ID, memory dir, scheduler state, and pending tasks and submissions. Each agent keeps one `agents.anchor` task, so the count is not zero while agents exist. |

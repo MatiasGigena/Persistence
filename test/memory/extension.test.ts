@@ -134,9 +134,9 @@ describe('unii extension in a real Harness (faux model)', { concurrency: false, 
     const seen: Message[][] = [];
     const { root, memory } = await open(t, scratch(t), ['ok 1', 'ok 2'].map(a => capture(seen, fauxAssistantMessage(a))));
     memory.report({ name: 'Bob', text: 'built it', id: 'r1' }); // the agents extension's onReport
-    const bob = '[Bob]\nbuilt it\n\nFull chat: zoom("Bob")', ann = '[Ann]\nfound the bug\n\nFull chat: zoom("Ann")'; // piReportText
+    const bob = '[Bob]\nbuilt it\n\nFull chat: zoom("Bob")', ann = '[Ann]\nfound the bug\n\nFull chat: zoom("Ann#2")'; // piReportText; Ann is a standing agent, session 2
     await ask(root, bob, { entry: { kind: 'agents.report', data: { name: 'Bob', text: 'built it', id: 'r1' } } });
-    await ask(root, ann, { entry: { kind: 'agents.report', data: { name: 'Ann', text: 'found the bug', id: 'r2' } } });
+    await ask(root, ann, { entry: { kind: 'agents.report', data: { name: 'Ann', text: 'found the bug', id: 'r2', session: 2 } } });
     assert.deepEqual(memory.log.map(r => `${r.kind}: ${r.text}`), [`work: ${bob}`, 'pi: ok 1', `work: ${ann}`, 'pi: ok 2'], 'logged as Pi saw it');
     assert.deepEqual(texts(seen[0]?.[1]).at(0), '<chat>\n</chat>', 'the report itself comes whole after the view');
     assert.equal(texts(seen[0]?.[1]).at(-1), `${TURN_HEAD}${bob}`);

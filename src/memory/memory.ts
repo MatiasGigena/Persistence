@@ -25,8 +25,13 @@ export type TreeNode = Pos & { text: string; size: number };
 /** View budgets in bytes: past `hi` a batch merges down to at most `lo`. */
 export type Budget = { hi: number; lo: number };
 export type AppendInput = { kind: Kind; text: string; date?: Date | number | string; src?: string };
-/** A subagent's report; `id` (the delivery task's ID) keys it. */
-export type ReportInput = { name: string; text: string; id?: string | number | undefined; date?: Date | number | string };
+/**
+ * A subagent's report; `id` (the delivery task's ID) keys it. `session` (from 1) is the standing agent's session it came
+ * from, so its link opens that one (`zoom("Name#n")`) even after a later delegate.
+ */
+export type ReportInput = {
+  name: string; text: string; id?: string | number | undefined; date?: Date | number | string; session?: number | undefined;
+};
 /** The prompt and tools of the latest turn, so compactions share the turns' cached prefix. */
 export type CompactionPrompt = { system?: string; tools?: readonly Tool[] };
 export type MemoryStatus = {
@@ -302,12 +307,12 @@ export class Memory {
 
   /**
    * Log a subagent's report as a `work` message as Pi sees it (upstream Call.ts `report_text`, Apache-2.0):
-   * `[Name]\ntext\n\nFull chat: zoom("Name")`. Plug into the agents extension's `onReport`.
+   * `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with a `session`. Plug into the agents extension's `onReport`.
    * `id` keys it (pass the same `id` as `data.id` of the report's input entry so neither path logs it twice);
    * without one, the same name and text are logged once.
    */
-  report({ name: agent, text, id, date }: ReportInput): MemoryRecord[] {
-    const body = `[${agent}]\n${text}\n\nFull chat: zoom("${agent}")`;
+  report({ name: agent, text, id, date, session }: ReportInput): MemoryRecord[] {
+    const body = `[${agent}]\n${text}\n\nFull chat: zoom("${agent}${session === undefined ? '' : `#${session}`}")`;
     return this.append({ kind: 'work', text: body, date, src: reportSrc({ name: agent, text, id }) });
   }
 

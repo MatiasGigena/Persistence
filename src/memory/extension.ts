@@ -96,7 +96,8 @@ function logResult(memory: Memory, { toolCallId, toolName, content, isError, tim
 function reportOf(entry: ContextEntries['entries'][number]): ReportInput | undefined {
   const { data } = entry;
   if (entry.kind !== REPORT_KIND || !isObject(data) || typeof data.name !== 'string' || typeof data.text !== 'string') return undefined;
-  return { name: data.name, text: data.text, id: typeof data.id === 'string' || typeof data.id === 'number' ? data.id : undefined };
+  return { name: data.name, text: data.text, id: typeof data.id === 'string' || typeof data.id === 'number' ? data.id : undefined,
+    session: typeof data.session === 'number' ? data.session : undefined };
 }
 const userSrc = (entry: { readonly id: number }, n: number): string => `e:${entry.id}${n ? `:${n}` : ''}`;
 

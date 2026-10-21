@@ -140,3 +140,32 @@ test('through the Harness: Pi\'s own read and bash tools are held to the protect
   assert.match(results.join('\n'), /is protected/);
   assert.match(results.join('\n'), /notes\.txt/, 'bash itself ran');
 });
+
+test('browser profiles (in the memory directory) are hidden from the tools, with --database outside the data dir too', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-durable-guard-browser-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const chat = join(root, 'elsewhere'), work = join(root, 'work'), memoryDir = join(chat, 'chat.unii');
+  const profile = join(memoryDir, 'browser', '7');
+  for (const dir of [profile, work]) await mkdir(dir, { recursive: true });
+  await writeFile(join(profile, 'Cookies'), 'session=secret');
+  const guarded = protection({ dataDir: join(root, 'data'), databasePath: join(chat, 'chat.sqlite'), memoryDir,
+    settingsPath: join(chat, 'settings.json'), serveDir: join(chat, 'serve'), authFile: join(root, 'auth.json') }, {}, join(root, 'home'));
+  const env = new GuardedEnv({ cwd: work, protection: guarded });
+  for (const [what, result] of [
+    ['read', env.readTextFile(join(profile, 'Cookies'), context)],
+    ['list', env.listDir(join(memoryDir, 'browser'), context)],
+    ['write', env.writeFile(join(profile, 'Cookies'), 'session=forged', context)],
+    ['remove', env.remove(join(memoryDir, 'browser'), { recursive: true }, context)],
+  ] as const) {
+    const value = await result;
+    assert.equal(value.ok, false, what);
+    assert.match(String(!value.ok && value.error), /is protected/, what);
+  }
+  assert.equal(await readFile(join(profile, 'Cookies'), 'utf8'), 'session=secret');
+  if (!hasBwrap) return;
+  let out = '';
+  const listed = await env.exec(`ls -A ${memoryDir} | wc -l; cat ${join(profile, 'Cookies')} 2>&1`, { onOutput: text => { out += text; } }, context);
+  assert.ok(listed.ok);
+  assert.doesNotMatch(out, /secret/);
+  assert.equal(out.trim().split('\n')[0], '0', 'bash sees an empty memory directory');
+});

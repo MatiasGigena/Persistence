@@ -8,13 +8,22 @@ import { describe, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import type { Serializable } from 'node:child_process';
 import type { Message } from '@earendil-works/pi-ai';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
+import type { ConversationId } from '@earendil-works/pi-durable';
+import type { ToolExecutionApi } from '@earendil-works/pi-durable';
+import type { BrowserContext } from 'playwright-core';
 import type { Agent, EntryRecord } from '@earendil-works/pi-durable';
 import {
   fauxAssistantMessage, fauxThinking, fauxText, fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { isRecord } from '../../src/host/config.ts';
-import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
+import { AgentsDoc } from '../../src/agents/index.ts';
+import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
+import { answerText, browserKey, localOnlyBrowser, openInstance, rosterWarnings, transcript } from '../../src/runtime/runtime.ts';
+import type { Access } from '../../src/runtime/models.ts';
+import type { Roster } from '../../src/agents/roster.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
 import { resumeInstance } from '../../src/runtime/recovery.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
@@ -235,7 +244,7 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       const agent = await instance.root.agent(instance.context);
       assert.deepEqual(coding(agent), []);
       assert.deepEqual(agent.tools.map((tool) => tool.name).sort(),
-        ['date', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
+        ['date', 'delegate', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
     } finally {
       await instance.close();
     }
@@ -256,11 +265,76 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       const agent = await instance.root.agent(instance.context);
       assert.deepEqual(coding(agent), []);
       assert.deepEqual(agent.tools.map((tool) => tool.name).sort(),
-        ['date', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
+        ['date', 'delegate', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
       assert.equal((await ask(instance, 'Which tools can you use?', 'tools-off')).text,
         'No tools are available.');
       const history = await transcript(instance.root, instance.context);
       assert.equal(history.filter((entry) => entry.kind === 'pi.tool-result').length, 1);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('supplies every kit the built-in roster names, and closing the instance closes its browsers', async (t) => {
+    const options = await temporaryInstance(t);
+    const warnings: string[] = [];
+    const launches: string[] = [];
+    let closed = 0;
+    // Just enough of a Playwright context for browser_goto: one page that navigates nowhere.
+    const page = { isClosed: () => false, on: () => page, goto: () => Promise.resolve(null), url: () => 'http://127.0.0.1:9/' };
+    const fake = {
+      on: () => fake, pages: () => [page], close: () => { closed++; return Promise.resolve(); },
+      route: () => Promise.resolve(), routeWebSocket: () => Promise.resolve(),
+    };
+    const instance = await openInstance({ ...options, ...offlineModels(), roster: DEFAULT_ROSTER,
+      onWarning: (message) => warnings.push(message), rosterChecks: false,
+      launchBrowser: (dir) => { launches.push(dir); return Promise.resolve(fake as unknown as BrowserContext); } });
+    try {
+      assert.deepEqual(warnings, []);
+      assert.deepEqual(Object.keys(instance.kits).sort(), ['browser', 'coding', 'read', 'web_fetch']);
+      assert.deepEqual(instance.kits.web_fetch?.tools.map((tool) => tool.name), ['web_fetch']);
+      const goto = instance.kits.browser?.tools.find((tool) => tool.name === 'browser_goto');
+      assert.ok(goto);
+      const api = { conversationId: ROOT_CONVERSATION_ID } as unknown as ToolExecutionApi;
+      await goto.execute({ url: 'http://127.0.0.1:9/' }, api, BACKGROUND_CONTEXT);
+      assert.deepEqual(launches, [join(options.databasePath.replace(/\.sqlite$/, '.unii'), 'browser', String(ROOT_CONVERSATION_ID))]);
+    } finally {
+      await instance.close();
+    }
+    assert.equal(closed, 1, 'no Chromium outlives the instance');
+  });
+
+  test('the browser is keyed on the agent: every session of it, current or past, shares one profile', async (t) => {
+    const options = await temporaryInstance(t);
+    const launches: string[] = [];
+    const page = { isClosed: () => false, on: () => page, goto: () => Promise.resolve(null), url: () => 'http://127.0.0.1:9/' };
+    const fake = {
+      on: () => fake, pages: () => [page], close: () => Promise.resolve(),
+      route: () => Promise.resolve(), routeWebSocket: () => Promise.resolve(),
+    };
+    const instance = await openInstance({ ...options, ...offlineModels(),
+      launchBrowser: (dir) => { launches.push(dir); return Promise.resolve(fake as unknown as BrowserContext); } });
+    const id = (n: number) => n as ConversationId;
+    try {
+      await instance.root.commit(async (tx) => {
+        const registry = await tx.doc(AgentsDoc);
+        registry.agents.Reviewer = { conversationId: id(70), past: [id(50), id(60)], role: 'main', parent: 'Pi', reported: [], standing: true };
+        registry.agents.Helper = { conversationId: id(80), role: 'sub', parent: 'Reviewer', reported: [], session: id(70) };
+      }, instance.context);
+      const { harness, context } = instance;
+      assert.equal(await browserKey(harness, id(70), context), 'Reviewer');
+      assert.equal(await browserKey(harness, id(50), context), 'Reviewer');
+      assert.equal(await browserKey(harness, id(60), context), 'Reviewer');
+      assert.equal(await browserKey(harness, id(80), context), 'Helper');
+      assert.equal(await browserKey(harness, id(99), context), '99');
+      assert.equal(await browserKey(harness, ROOT_CONVERSATION_ID, context), String(ROOT_CONVERSATION_ID));
+      const goto = instance.kits.browser?.tools.find((tool) => tool.name === 'browser_goto');
+      assert.ok(goto);
+      for (const conversationId of [50, 70, 80, 70].map(id)) {
+        await goto.execute({ url: 'http://127.0.0.1:9/' }, { conversationId } as unknown as ToolExecutionApi, BACKGROUND_CONTEXT);
+      }
+      const dir = join(options.databasePath.replace(/\.sqlite$/, '.unii'), 'browser');
+      assert.deepEqual(launches, [join(dir, 'Reviewer'), join(dir, 'Helper')]);
     } finally {
       await instance.close();
     }
@@ -414,5 +488,75 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       await exited;
       if (instance) await instance.close();
     }
+  });
+
+  test('roster warnings: a browser with no Chromium, an unknown model, failed or unverified credentials', async () => {
+    const { models, model: known } = offlineModels();
+    const faux = DEFAULT_ROSTER.Coder;
+    assert.ok(faux);
+    const roster: Roster = {
+      Coder: { ...faux, model: known, tools: ['coding'] },
+      Reviewer: { ...faux, model: known, tools: ['read', 'browser'], subModel: { provider: 'nowhere', modelId: 'x' } },
+      Researcher: { ...faux, model: { provider: 'nowhere', modelId: 'y' }, tools: ['web_fetch'] },
+    };
+    const calls: string[] = [];
+    const ok = async (access: Access) => rosterWarnings(roster, { models, exists: () => false, defaultChromium: () => '/pw/chrome',
+      access: (provider) => { calls.push(provider); return Promise.resolve(access); } });
+    const failing = await ok({ ok: false, reason: 'none' });
+    assert.equal(failing.length, 4, failing.join('\n'));
+    assert.match(failing[0] ?? '', /^Standing agent Reviewer cannot browse: Playwright's Chromium is not installed \(\/pw\/chrome\)\. Run npx --no-install playwright-core install chromium/);
+    assert.match(failing[1] ?? '', /^Standing agent Reviewer's subs: Unknown model nowhere\/x.*Set another model for Reviewer in settings\.json's "agents"/);
+    assert.match(failing[2] ?? '', /^Standing agent Researcher: Unknown model nowhere\/y/);
+    assert.match(failing[3] ?? '', /^Standing agents Coder, Reviewer cannot run: No credentials for faux/);
+    assert.deepEqual(calls, ['faux'], 'each provider is checked once');
+
+    const unverified = await ok({ ok: false, reason: 'timeout' });
+    assert.match(unverified.at(-1) ?? '', /could not verify the credentials for faux in time/);
+    const fine = await rosterWarnings({ Coder: { ...faux, model: known, tools: ['browser'] } }, { models, chromium: '/opt/chrome',
+      exists: (path) => path === '/opt/chrome', defaultChromium: () => { throw new Error('unused'); }, access: () => Promise.resolve({ ok: true }) });
+    assert.deepEqual(fine, []);
+    const badPath = await rosterWarnings({ Coder: { ...faux, model: known, tools: ['browser'] } }, { models, chromium: '/opt/none',
+      exists: () => false, access: () => Promise.reject(new Error('boom')) });
+    assert.match(badPath[0] ?? '', /PI_DURABLE_CHROMIUM names \/opt\/none, which does not exist/);
+    assert.match(badPath[1] ?? '', /Checking the credentials for faux failed: boom/);
+  });
+
+  test('a work launch warns of the roster\'s problems without waiting for them; an inspection checks nothing', async (t) => {
+    const options = await temporaryInstance(t);
+    const catalog = offlineModels();
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const warned = Promise.withResolvers<string>();
+    const roster: Roster = { Reviewer: { model: catalog.model, thinkingLevel: 'high', tools: ['browser'] } };
+    const instance = await openInstance({ ...options, ...catalog, roster, onWarning: (message) => warned.resolve(message),
+      rosterChecks: { exists: () => true, defaultChromium: () => '/pw/chrome',
+        access: async () => { await gate; return { ok: false, reason: 'timeout' }; } } });
+    try {
+      release();
+      assert.match(await warned.promise, /^Standing agent Reviewer: could not verify the credentials for faux/);
+    } finally {
+      await instance.close();
+    }
+    let inspected = 0;
+    const inspection = await openInstance({ ...options, ...catalog, roster, configureAgent: false, onWarning: () => { inspected++; },
+      rosterChecks: { access: () => Promise.resolve({ ok: false, reason: 'none' }) } });
+    await inspection.close();
+    assert.equal(inspected, 0);
+  });
+
+  test('the browser is local-only for an agent that reads files, and for its subs', () => {
+    const id = (n: number) => n as ConversationId;
+    const agents = {
+      Reviewer: { conversationId: id(2), role: 'main' as const, parent: 'Pi', reported: [], standing: true },
+      Researcher: { conversationId: id(3), role: 'main' as const, parent: 'Pi', reported: [], standing: true },
+      helper: { conversationId: id(4), role: 'sub' as const, parent: 'Reviewer', reported: [] },
+      scout: { conversationId: id(5), role: 'sub' as const, parent: 'Researcher', reported: [] },
+    };
+    assert.equal(localOnlyBrowser(agents, 'Reviewer', DEFAULT_ROSTER), true);
+    assert.equal(localOnlyBrowser({}, 'reviewer', DEFAULT_ROSTER), true, 'the roster counts before the registry, ignoring case');
+    assert.equal(localOnlyBrowser(agents, 'helper', DEFAULT_ROSTER), true);
+    assert.equal(localOnlyBrowser(agents, 'Researcher', DEFAULT_ROSTER), false);
+    assert.equal(localOnlyBrowser(agents, 'scout', DEFAULT_ROSTER), false);
+    assert.equal(localOnlyBrowser(agents, '1', DEFAULT_ROSTER), false, 'Pi browses freely');
   });
 });
