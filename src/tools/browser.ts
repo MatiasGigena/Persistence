@@ -9,9 +9,11 @@ import { type BrowserContext, chromium, type ConsoleMessage, type Page, type Req
 /**
  * Browser tools: a headless Chromium per agent, ported from Pi Cloud's `resources/extensions/browser` (ADR 0027).
  *
- * Every calling conversation (Pi or an agent) gets its own persistent profile, `<profileRoot>/browser/<conversation id>`,
- * so cookies and localStorage survive between calls and restarts, and its own queue: Playwright's Page is not safe for
- * concurrent use, so a `goto` and an `eval` fired in one round must not interleave. Each operation, queue wait included,
+ * Each browser is keyed by `keyOf(conversationId)`: the host maps every session of an agent (a standing agent gets a new
+ * conversation per task) to the agent's name, so the agent keeps one Chromium and one persistent profile,
+ * `<profileRoot>/browser/<key>`, whose cookies and localStorage survive between calls, tasks and restarts. Each browser
+ * has one queue: Playwright's Page is not safe for concurrent use, so a `goto` and an `eval` fired in one round must not
+ * interleave, and two sessions of one agent running at once (rare) take turns on the same page. Each operation, queue wait included,
  * has 60 s; a timeout or an abort closes that browser, and the next call relaunches it. Navigation is HTTP(S) only;
  * loopback and private addresses are allowed, since the browser is for debugging the user's apps. Unlike Pi Cloud there
  * is no `/browser on` gate and no manual control from the web UI.
@@ -33,12 +35,48 @@ export const KEEP_HEADERS: ReadonlySet<string> = new Set([
   'www-authenticate', 'retry-after',
 ]);
 const SENSITIVE = /authorization|cookie|api[-_]?key|token|secret/i;
+/** Query and fragment parameters whose values `redactUrl` hides. */
+const SENSITIVE_PARAM = /token|code|secret|key|auth|session|password|sig/i;
+const REDACTED = '[redacted]';
 
-/** The headers in `allow` (lower-case names), with sensitive values replaced by `[redacted]`. */
+function redactParams(params: string): string {
+  return params.split('&').map((pair) => {
+    const at = pair.indexOf('=');
+    if (at < 0) return pair;
+    let name = pair.slice(0, at);
+    try { name = decodeURIComponent(name.replace(/\+/g, ' ')); } catch { /* keep it raw */ }
+    return SENSITIVE_PARAM.test(name) ? `${pair.slice(0, at)}=${REDACTED}` : pair;
+  }).join('&');
+}
+
+/** `url` (absolute or not) with the values of sensitive query and fragment parameters (`code=`, `#access_token=`) hidden. */
+export function redactUrl(url: string): string {
+  const hash = url.indexOf('#');
+  const before = hash < 0 ? url : url.slice(0, hash);
+  const question = before.indexOf('?');
+  const path = question < 0 ? before : `${before.slice(0, question)}?${redactParams(before.slice(question + 1))}`;
+  return hash < 0 ? path : `${path}#${redactParams(url.slice(hash + 1))}`;
+}
+
+/** A `location` header with its whole query and fragment hidden: redirects carry OAuth codes and tokens there. */
+export function redactLocation(url: string): string {
+  const hash = url.indexOf('#');
+  const before = hash < 0 ? url : url.slice(0, hash);
+  const question = before.indexOf('?');
+  return (question < 0 ? before : `${before.slice(0, question)}?${REDACTED}`) + (hash < 0 ? '' : `#${REDACTED}`);
+}
+
+/**
+ * The headers in `allow` (lower-case names), with sensitive values replaced by `[redacted]`, a `location`'s query and
+ * fragment hidden, and a `referer`'s sensitive parameters.
+ */
 export function filterHeaders(headers: Readonly<Record<string, string>>, allow: ReadonlySet<string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
-    if (allow.has(name.toLowerCase())) out[name] = SENSITIVE.test(name) ? '[redacted]' : value;
+    const lower = name.toLowerCase();
+    if (!allow.has(lower)) continue;
+    out[name] = SENSITIVE.test(name) ? REDACTED : lower === 'location' ? redactLocation(value)
+      : lower === 'referer' ? redactUrl(value) : value;
   }
   return out;
 }
@@ -74,7 +112,15 @@ export type BrowserOptions = {
   readonly launch?: (profileDir: string, options: BrowserLaunchOptions) => Promise<BrowserContext>;
   /** Per operation, queue wait included. Default `OPERATION_TIMEOUT_MS`. */
   readonly timeoutMs?: number;
+  /**
+   * Which browser and profile a calling conversation uses; the host maps every session of an agent to its name.
+   * A key that is not a plain name (`BROWSER_KEY`) falls back to the conversation ID. Default: the conversation ID.
+   */
+  readonly keyOf?: (conversationId: ConversationId, context: Context) => Promise<string>;
 };
+
+/** A browser key that is safe as a folder name: an agent name (`AGENT_NAME`) or a conversation ID. */
+export const BROWSER_KEY = /^(?:[A-Za-z][A-Za-z0-9_-]{0,31}|\d+)$/;
 
 export type BrowserExtension = Extension & {
   readonly tools: readonly ToolRegistration[];
@@ -93,7 +139,7 @@ function pushBounded<T>(buffer: T[], entry: T): void {
   if (buffer.length > MAX_BUFFER) buffer.splice(0, buffer.length - MAX_BUFFER);
 }
 
-/** One agent's browser: its context, current page, buffers, and operation queue. */
+/** One key's (agent's) browser: its context, current page, buffers, and operation queue. */
 type Browser = {
   readonly profileDir: string;
   context: BrowserContext | null;
@@ -114,8 +160,11 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
   const timeoutMs = options.timeoutMs ?? OPERATION_TIMEOUT_MS;
   const browsers = new Map<string, Browser>();
 
-  const browserFor = (conversationId: ConversationId): Browser => {
-    const key = String(conversationId);
+  const keyOf = options.keyOf ?? ((conversationId: ConversationId) => Promise.resolve(String(conversationId)));
+
+  const browserFor = async (conversationId: ConversationId, context: Context): Promise<Browser> => {
+    const resolved = await keyOf(conversationId, context);
+    const key = BROWSER_KEY.test(resolved) ? resolved : String(conversationId);
     let browser = browsers.get(key);
     if (!browser) {
       browser = {
@@ -142,7 +191,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       const location = message.location();
       pushBounded(browser.console, {
         ts: Date.now(), type: message.type(), text: message.text(),
-        ...(location.url ? { location: `${location.url}:${location.lineNumber}` } : {}),
+        ...(location.url ? { location: `${redactUrl(location.url)}:${location.lineNumber}` } : {}),
       });
     });
     page.on('pageerror', (error) => {
@@ -196,8 +245,9 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
    * (which fails the running operation), and keeps `work` from starting if it is still queued.
    */
   async function run<T>(conversationId: ConversationId, context: Context, work: (browser: Browser) => Promise<T>): Promise<T> {
-    const browser = browserFor(conversationId);
     const signal = context.abortSignal;
+    if (signal?.aborted) throw new Error('Browser operation cancelled');
+    const browser = await browserFor(conversationId, context);
     if (signal?.aborted) throw new Error('Browser operation cancelled');
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -246,7 +296,8 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       const page = await ensurePage(browser);
       const response = await page.goto(target.href, { waitUntil: waitUntil ?? 'domcontentloaded', timeout: navigationTimeout ?? 30_000 });
       const status = response?.status() ?? null;
-      return result(`${status ?? '?'} ${page.url()}`, { status, finalUrl: page.url() });
+      const finalUrl = redactUrl(page.url());
+      return result(`${status ?? '?'} ${finalUrl}`, { status, finalUrl });
     }),
   });
 
@@ -255,7 +306,8 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     description: 'Evaluate JavaScript in the current page: an expression (\'localStorage.length\'), a function '
       + '(\'() => Object.keys(localStorage)\', \'async () => { ... }\'), or an already-called IIFE. The value must be '
       + 'JSON-serializable: for DOM nodes return properties such as .outerHTML, .textContent or .value. Use it to read '
-      + 'runtime state (storage, cookies, JWTs, component state, computed styles) or to fire a fetch with custom headers.',
+      + 'runtime state (storage, cookies, JWTs, component state, computed styles) or to fire a fetch with custom headers. '
+      + 'Its result is stored in the chat unredacted: do not return secrets you do not need.',
     parameters: Type.Object({ expression: Type.String({ description: 'Expression or function source' }) }),
     executionMode: 'sequential',
     execute: ({ expression }, api, context) => run(api.conversationId, context, async (browser) => {
@@ -298,7 +350,8 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     name: 'browser_network',
     description: 'Drain buffered network requests, one terse line each (\'<status> <method> <url>\'). verbose=true adds a '
       + `curated set of request and response headers (${[...KEEP_HEADERS].join(', ')}); includeHeaders adds more for this `
-      + 'call (case-insensitive). Authorization, cookie, API key, token and secret values are redacted. Pair headers with '
+      + 'call (case-insensitive). Authorization, cookie, API key, token and secret values are redacted, as are a '
+      + 'location\'s query and fragment and URL parameters such as code= or access_token=. Pair headers with '
       + 'urlFilter or status; use it for 401, 403 and CORS issues. With clear=true (default) the ENTIRE buffer is wiped '
       + 'after the read; clear=false peeks. A fetch whose body is never consumed often shows as ERR net::ERR_ABORTED even '
       + 'though the page saw a response: consume the body for a clean row.',
@@ -324,7 +377,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       const allow = new Set([...KEEP_HEADERS, ...extra]);
       const lines: string[] = [];
       for (const e of out) {
-        lines.push(`${e.status ?? 'ERR'} ${e.method} ${e.url}${e.failure ? `  (${e.failure})` : ''}`);
+        lines.push(`${e.status ?? 'ERR'} ${e.method} ${redactUrl(e.url)}${e.failure ? `  (${e.failure})` : ''}`);
         if (!showHeaders) continue;
         for (const [name, value] of Object.entries(filterHeaders(e.requestHeaders ?? {}, allow))) lines.push(`  → ${name}: ${value}`);
         for (const [name, value] of Object.entries(filterHeaders(e.responseHeaders ?? {}, allow))) lines.push(`  ← ${name}: ${value}`);
@@ -375,10 +428,10 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       if (image.length > MAX_SCREENSHOT_BYTES) throw new Error('Screenshot exceeds 16 MB; try a viewport capture.');
       return {
         output: [
-          { type: 'text', text: `Screenshot of ${page.url()}` },
+          { type: 'text', text: `Screenshot of ${redactUrl(page.url())}` },
           { type: 'image', data: image.toString('base64'), mimeType: 'image/png' },
         ],
-        details: { bytes: image.length, url: page.url() },
+        details: { bytes: image.length, url: redactUrl(page.url()) },
       };
     }),
   });

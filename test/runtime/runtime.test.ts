@@ -10,6 +10,7 @@ import type { Serializable } from 'node:child_process';
 import type { Message } from '@earendil-works/pi-ai';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
+import type { ConversationId } from '@earendil-works/pi-durable';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { BrowserContext } from 'playwright-core';
 import type { Agent, EntryRecord } from '@earendil-works/pi-durable';
@@ -18,8 +19,9 @@ import {
 } from '@earendil-works/pi-ai/providers/faux';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { isRecord } from '../../src/host/config.ts';
+import { AgentsDoc } from '../../src/agents/index.ts';
 import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
-import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
+import { answerText, browserKey, openInstance, transcript } from '../../src/runtime/runtime.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
 import { resumeInstance } from '../../src/runtime/recovery.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
@@ -295,6 +297,39 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       await instance.close();
     }
     assert.equal(closed, 1, 'no Chromium outlives the instance');
+  });
+
+  test('the browser is keyed on the agent: every session of it, current or past, shares one profile', async (t) => {
+    const options = await temporaryInstance(t);
+    const launches: string[] = [];
+    const page = { isClosed: () => false, on: () => page, goto: () => Promise.resolve(null), url: () => 'http://127.0.0.1:9/' };
+    const fake = { on: () => fake, pages: () => [page], close: () => Promise.resolve() };
+    const instance = await openInstance({ ...options, ...offlineModels(),
+      launchBrowser: (dir) => { launches.push(dir); return Promise.resolve(fake as unknown as BrowserContext); } });
+    const id = (n: number) => n as ConversationId;
+    try {
+      await instance.root.commit(async (tx) => {
+        const registry = await tx.doc(AgentsDoc);
+        registry.agents.Reviewer = { conversationId: id(70), past: [id(50), id(60)], role: 'main', parent: 'Pi', reported: [], standing: true };
+        registry.agents.Helper = { conversationId: id(80), role: 'sub', parent: 'Reviewer', reported: [], session: id(70) };
+      }, instance.context);
+      const { harness, context } = instance;
+      assert.equal(await browserKey(harness, id(70), context), 'Reviewer');
+      assert.equal(await browserKey(harness, id(50), context), 'Reviewer');
+      assert.equal(await browserKey(harness, id(60), context), 'Reviewer');
+      assert.equal(await browserKey(harness, id(80), context), 'Helper');
+      assert.equal(await browserKey(harness, id(99), context), '99');
+      assert.equal(await browserKey(harness, ROOT_CONVERSATION_ID, context), String(ROOT_CONVERSATION_ID));
+      const goto = instance.kits.browser?.tools.find((tool) => tool.name === 'browser_goto');
+      assert.ok(goto);
+      for (const conversationId of [50, 70, 80, 70].map(id)) {
+        await goto.execute({ url: 'http://127.0.0.1:9/' }, { conversationId } as unknown as ToolExecutionApi, BACKGROUND_CONTEXT);
+      }
+      const dir = join(options.databasePath.replace(/\.sqlite$/, '.unii'), 'browser');
+      assert.deepEqual(launches, [join(dir, 'Reviewer'), join(dir, 'Helper')]);
+    } finally {
+      await instance.close();
+    }
   });
 
   test('every SQLite transaction uses synchronous FULL, including after reopen', async (t) => {

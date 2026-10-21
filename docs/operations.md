@@ -190,7 +190,7 @@ and bash answers the same way.
 | `<data dir>/chat.sqlite-wal`, `chat.sqlite-shm` | SQLite WAL files |
 | `<data dir>/chat.sqlite.lock` | the flock file |
 | `<data dir>/chat.unii/` | memory: `main/` (log), `tree/` (summaries), `view.json` |
-| `<data dir>/chat.unii/browser/<conversation id>/` | a browser profile (cookies, localStorage) per agent that used the browser tools, mode 700; not backed up |
+| `<data dir>/chat.unii/browser/<agent name>/` | a browser profile (cookies, localStorage) per agent that used the browser tools, shared by all its sessions (a standing agent's tasks); a conversation the agents registry does not name (Pi) uses its conversation ID; mode 700; not backed up |
 | `<data dir>/settings.json` | the default model chosen with `/model`: `{"model": "PROVIDER/ID"}` |
 | `<data dir>/chat.sqlite.sock` | `pi-durable serve`'s Unix socket, mode 600, there only while it runs; in `$XDG_RUNTIME_DIR` (as `pi-durable-<hash>.sock`) when the path is over 107 bytes |
 | `<data dir>/backups/` | `pi-durable backup`'s backups, one directory each, mode 700; kept 14 days |

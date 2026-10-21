@@ -5,12 +5,14 @@ import type { Context } from '@earendil-works/chord';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, Harness } from '@earendil-works/pi-durable';
-import type { AgentChange, Conversation, Cursor, EntryRecord, ModelRef, SubmissionRecord, ToolRegistration } from '@earendil-works/pi-durable';
+import type {
+  AgentChange, Conversation, ConversationId, Cursor, DocumentReader, EntryRecord, ModelRef, SubmissionRecord, ToolRegistration,
+} from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { agentTranscript, createAgentsExtension, listAgents, missingKits, syncAgents } from '../agents/index.ts';
+import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents, missingKits, syncAgents } from '../agents/index.ts';
 import type { AgentsSetup, Roster, ToolKits } from '../agents/index.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
@@ -140,6 +142,19 @@ export function builtinKits(): ToolKits {
   return { coding: { extension: CodingTools, tools }, read: { extension: CodingTools, tools: tools.filter(tool => tool.name === 'read') } };
 }
 
+/**
+ * The browser key of a calling conversation: the name of the agent it is a session of (a standing agent's current
+ * session or one in `past`; a sub's own), so an agent keeps one Chromium and profile across its tasks. Pi and any
+ * conversation the registry does not name keep their conversation ID.
+ */
+export async function browserKey(source: DocumentReader, conversationId: ConversationId, context: Context): Promise<string> {
+  const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
+  for (const [name, agent] of Object.entries(agents)) {
+    if (agent.conversationId === conversationId || agent.past?.includes(conversationId)) return name;
+  }
+  return String(conversationId);
+}
+
 /** The memory's compaction for a turn model: its provider's cheap model; a claude-cli one runs fewer calls at once. */
 function compactionFor(model: ModelRef | undefined, models: Models): { compactionModel: ModelRef | undefined; jobs: number } {
   const compactionModel = defaultCompactionModel(model, models);
@@ -182,8 +197,11 @@ export async function openInstance({
   // Spawned agents copy Pi's choices, then standing ones their roster entry's; the chat's memory is Pi's alone.
   const childAgent: AgentChange = { extensions: { remove: [Unii] } };
   // Browser profiles live in the memory directory, which the coding tools cannot read or change (guard.ts); the
-  // extensions have no shutdown hook, so close() closes the browsers. Neither opens anything until a tool runs.
+  // extensions have no shutdown hook, so close() closes the browsers. Neither opens anything until a tool runs. Every
+  // session of an agent shares the agent's browser, so a standing agent's tasks neither lose its logins nor leak one
+  // Chromium each.
   const Browser = createBrowserExtension({ profileRoot: memoryDir,
+    keyOf: (conversationId, keyContext) => opened ? browserKey(opened, conversationId, keyContext) : Promise.resolve(String(conversationId)),
     ...chromium ? { executablePath: chromium } : {}, ...launchBrowser ? { launch: launchBrowser } : {} });
   const WebFetch = createWebFetchExtension();
   const kits: ToolKits = { ...builtinKits(), browser: { extension: Browser, tools: Browser.tools },

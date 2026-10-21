@@ -10,9 +10,10 @@ import { describe, test } from 'node:test';
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from '@earendil-works/chord/context';
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
 import { type ConversationId, ROOT_CONVERSATION_ID, type ToolExecutionApi, type ToolExecutionResult } from '@earendil-works/pi-durable';
-import { chromium } from 'playwright-core';
+import { type BrowserContext, chromium } from 'playwright-core';
 import {
   type BrowserExtension, type BrowserOptions, createBrowserExtension, evalSource, filterHeaders, httpUrl, KEEP_HEADERS,
+  redactLocation, redactUrl,
 } from '../../src/tools/browser.ts';
 
 const TOOLS = [
@@ -46,6 +47,23 @@ describe('browser helpers', () => {
     });
   });
 
+  test('filterHeaders hides a location\'s query and fragment, and a referer\'s sensitive parameters', () => {
+    const headers = { Location: 'https://app.test/cb?code=abc&state=xyz#access_token=tok', Referer: 'https://a.test/p?session=s1&page=2' };
+    assert.deepEqual(filterHeaders(headers, new Set([...KEEP_HEADERS, 'referer'])), {
+      Location: 'https://app.test/cb?[redacted]#[redacted]', Referer: 'https://a.test/p?session=[redacted]&page=2',
+    });
+    assert.equal(redactLocation('/'), '/');
+    assert.equal(redactLocation('/next?x=1'), '/next?[redacted]');
+  });
+
+  test('redactUrl hides sensitive query and fragment values only', () => {
+    assert.equal(redactUrl('http://h/x'), 'http://h/x');
+    assert.equal(redactUrl('http://h/cb?code=abc&state=s&api_key=k&q=hi'), 'http://h/cb?code=[redacted]&state=s&api_key=[redacted]&q=hi');
+    assert.equal(redactUrl('http://h/#access_token=t&token_type=bearer&x=1'), 'http://h/#access_token=[redacted]&token_type=[redacted]&x=1');
+    assert.equal(redactUrl('http://h/?X-Amz-Signature=s&Password=p&flag'), 'http://h/?X-Amz-Signature=[redacted]&Password=[redacted]&flag');
+    assert.equal(redactUrl('http://h/#section'), 'http://h/#section');
+  });
+
   test('httpUrl allows http(s), loopback included, and refuses the rest', () => {
     assert.equal(httpUrl('http://127.0.0.1:3000/x').href, 'http://127.0.0.1:3000/x');
     assert.equal(httpUrl('https://10.0.0.1/').protocol, 'https:');
@@ -76,6 +94,33 @@ describe('browser helpers', () => {
     });
     await assert.rejects(caller(extension)('browser_goto', { url: 'file:///etc/passwd' }), /Only HTTP\(S\)/);
     assert.equal(launched, false);
+  });
+
+  test('keyOf shares one browser and profile between conversations of one key; the default keys on the conversation', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-durable-browser-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const launches: string[] = [];
+    let closed = 0;
+    const page = { isClosed: () => false, on: () => page, goto: () => Promise.resolve(null), url: () => 'http://127.0.0.1:9/cb?code=c1#id_token=t' };
+    const fake = { on: () => fake, pages: () => [page], close: () => { closed++; return Promise.resolve(); } };
+    const launch: BrowserOptions['launch'] = (dir) => { launches.push(dir); return Promise.resolve(fake as unknown as BrowserContext); };
+    const names: Record<string, string> = { 5: 'Reviewer', 7: 'Reviewer', 9: '../escape' };
+    const keyed = createBrowserExtension({ profileRoot: root, launch,
+      keyOf: (conversationId) => Promise.resolve(names[String(conversationId)] ?? String(conversationId)) });
+    const result = await caller(keyed, 5 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
+    assert.equal(textOf(result), '? http://127.0.0.1:9/cb?code=[redacted]#id_token=[redacted]');
+    await caller(keyed, 7 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
+    await caller(keyed, 9 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
+    assert.deepEqual(launches, [join(root, 'browser', 'Reviewer'), join(root, 'browser', '9')], 'an unsafe key falls back to the ID');
+    await keyed.close();
+    assert.equal(closed, 2);
+
+    launches.length = 0;
+    const plain = createBrowserExtension({ profileRoot: root, launch });
+    await caller(plain, 5 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
+    await caller(plain, 7 as ConversationId)('browser_goto', { url: 'http://127.0.0.1:9/' });
+    assert.deepEqual(launches, [join(root, 'browser', '5'), join(root, 'browser', '7')]);
+    await plain.close();
   });
 
   test('an operation times out, and an abort cancels it', async (t) => {
@@ -114,6 +159,7 @@ describe('browser tools in Chromium', { skip }, () => {
   test.before(async () => {
     server = createServer((req, res) => {
       if (req.url === '/redirect') { res.writeHead(302, { location: '/' }).end(); return; }
+      if (req.url?.startsWith('/oauth')) { res.writeHead(302, { location: '/?code=c0de&state=s#access_token=tok' }).end(); return; }
       if (req.url === '/api') { res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}'); return; }
       if (req.url === '/missing') { res.writeHead(404).end('nope'); return; }
       res.writeHead(200, { 'content-type': 'text/html' }).end(PAGE);
@@ -185,6 +231,16 @@ describe('browser tools in Chromium', { skip }, () => {
     assert.match(verbose, /← content-type: application\/json/);
     assert.doesNotMatch(verbose, /secret123/);
     assert.equal(textOf(await call('browser_network')), '(empty)');
+  });
+
+  test('network and goto redact OAuth codes and tokens in URLs and location', async () => {
+    await call('browser_network');
+    const goto = textOf(await call('browser_goto', { url: `${base}/oauth?client_secret=shh&x=1` }));
+    assert.equal(goto, `200 ${base}/?code=[redacted]&state=s#access_token=[redacted]`);
+    const rows = textOf(await call('browser_network', { urlFilter: '/oauth', verbose: true }));
+    assert.match(rows, /^302 GET .*\/oauth\?client_secret=\[redacted\]&x=1$/m);
+    assert.match(rows, /← location: \/\?\[redacted\]#\[redacted\]$/m);
+    assert.doesNotMatch(rows, /c0de|shh|tok\b/);
   });
 
   test('screenshot returns a PNG image', async () => {

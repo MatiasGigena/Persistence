@@ -82,8 +82,8 @@ host only through `src/ui/types.ts`.
 - **Agents** (`src/agents/`): the agent registry, the agent tools, and the
   `agents.deliver` tasks that move messages and reports between conversations.
 - **Tools** (`src/tools/`, [ADR 0027](decisions/0027-standing-agents.md)): extensions behind the standing agents'
-  `browser` and `web_fetch` kits. `browser.ts` drives a headless Chromium per calling conversation (Playwright, a
-  persistent profile in `chat.unii/browser/`); `web-fetch.ts` fetches a public page as Markdown. Pi has neither.
+  `browser` and `web_fetch` kits. `browser.ts` drives a headless Chromium per agent, shared by all its sessions (Playwright, a
+  persistent profile in `chat.unii/browser/<agent name>/`; `browserKey` in `runtime.ts` maps a session to its agent); `web-fetch.ts` fetches a public page as Markdown. Pi has neither.
 - **Providers** (`src/providers/`): the `claude-cli` model provider, which runs
   each request through the official `claude` CLI and returns its tool calls to
   the Harness, and the `anthropic` subscription check. See [models.md](models.md).
@@ -166,7 +166,7 @@ Details: [agents.md](agents.md), [decisions/](decisions/).
 | `chat.unii/main/YYYY-MM-DD.jsonl` | the memory log: one record `{ i, kind, text, size, date, src? }` per message | `Memory.append` | appended and fsynced per line |
 | `chat.unii/tree/YYYY-MM-DD.jsonl` | tree nodes `{ l, i, text }` | the compactor | appended and fsynced per node |
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
-| `chat.unii/browser/<conversation id>/` | a Chromium profile per agent that used the browser: cookies, localStorage | Chromium, under the host | Chromium's own; not backed up |
+| `chat.unii/browser/<agent name>/` | a Chromium profile per agent that used the browser, shared by all its sessions (any other caller: its conversation ID): cookies, localStorage | Chromium, under the host | Chromium's own; not backed up |
 | `chat.sqlite.lock` | nothing; the flock target | `flock` | none needed |
 | `settings.json` (beside the database) | `{ model }`: the default model chosen with `/model` | `writeSettings` (`src/host/config.ts`), on `/model` | written to a temp file, fsynced, renamed |
 | `serve/devices.json`, `push.json`, `vapid.json` | paired devices, push subscriptions, the VAPID keys | the server (`store.ts` `writeJson`) | written to a temp file, fsynced, renamed, directory fsynced |
@@ -205,7 +205,8 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 - With `claude-cli`, each model request runs a short-lived `claude -p` child (with
   its stub MCP server), killed when the reply's message ends or the request aborts.
   A crash mid-request leaves no CLI session behind; the Harness reissues the request.
-- The browser kit runs one headless Chromium per agent that used it, launched on its first `browser_*` call. Shutdown
+- The browser kit runs one headless Chromium per agent that used it, launched on its first `browser_*` call and reused
+  by the agent's later sessions (a standing agent's next tasks), so their number stays bounded by the agents. Shutdown
   closes them all (`Instance.close`), so no Chromium outlives the host.
 - Shutdown closes the Harness without aborting durable work. The memory gives
   compaction calls in flight up to 5 s, then saves; unfinished calls are redone at
@@ -219,7 +220,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/cli.ts` | Entry: parses arguments, checks Node, resolves paths, runs the host under `flock` |
 | `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file, `PI_DURABLE_CHROMIUM`) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
-| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers included); `transcript`, `answerText` |
+| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers included); `browserKey` (a conversation's agent name, the browser's key); `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/recovery.ts` | `resumeInstance` (pending tasks and queued input), `settleAgents` (wait until agents are idle) |
 | `src/memory/index.ts` | Public exports of the memory |
@@ -233,7 +234,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/providers/claude-cli-mcp.ts` | Stub stdio MCP server that lists Pi's tools to the CLI and runs none |
 | `src/providers/anthropic.ts` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
 | `src/agents/roster.ts` | The standing agents' roster: `DEFAULT_ROSTER`, the kit names (`KITS`), agent name rules; no pi-durable imports, so `config.ts` parses settings.json's `agents` with it |
-| `src/tools/browser.ts` | `createBrowserExtension`: the `browser` extension's eight `browser_*` tools, a headless Chromium and persistent profile per conversation, one queue and a 60 s timeout per operation, `close()` |
+| `src/tools/browser.ts` | `createBrowserExtension`: the `browser` extension's eight `browser_*` tools, a headless Chromium and persistent profile per key (`keyOf`: the agent's name, from the host), one queue and a 60 s timeout per operation, URL redaction, `close()` |
 | `src/tools/web-fetch.ts` | `createWebFetchExtension`: the `web-fetch` extension's `web_fetch` tool, a page as Markdown (Readability, Turndown) or a PDF as text; refuses private destinations, redirects included |
 | `src/agents/index.ts` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
 | `src/protocol/messages.ts` | Wire protocol v1: every message, the op table (`Ops`), item ops, error and close codes, limits |
