@@ -26,7 +26,7 @@ import { offlineModels } from '../fixtures/faux-model.ts';
 // A session per task (ADR 0027): Pi's delegate(agent, task) starts a standing agent's new task in a new conversation.
 
 const MessageEntry = defineEntry<{ from: string; text: string }>(MESSAGE_KIND);
-const ReportEntry = defineEntry<{ name: string; text: string; id: TaskId }>(REPORT_KIND);
+const ReportEntry = defineEntry<{ name: string; text: string; id: TaskId; session?: number }>(REPORT_KIND);
 const context = BACKGROUND_CONTEXT;
 
 interface Instance {
@@ -198,6 +198,12 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
       assert.deepEqual(userTexts((await entries(instance, second)).filter((entry) => MessageEntry.is(entry))),
         ['<view>for Task two.</view>\n\n[from Pi] Task two.']);
 
+      // Right after the delegate, the new session has no answer yet: last_message and list_agents show the newest one.
+      const mint = () => instance.storage.mintId<TaskId>();
+      assert.equal(await execute(instance, 'last_message', { name: 'Coder' }, await mint()),
+        'Coder is busy. Last message (session 1, an earlier task):\nOne done.');
+      assert.ok((await execute(instance, 'list_agents', {}, await mint())).includes('- Coder (main, parent Pi, standing) busy — last (session 1): One done.'));
+
       // Busy: refused, nothing changes.
       await ask('three');
       assert.equal((await toolResults(instance, ROOT_CONVERSATION_ID)).at(-1),
@@ -212,7 +218,14 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
       assert.ok(userTexts(await entries(instance, second)).includes('[from Pi] Also tests.'));
       assert.ok(!userTexts(await entries(instance, first)).some((each) => each.includes('Also tests.')));
       assert.deepEqual(await reportsIn(instance, ROOT_CONVERSATION_ID), ['Coder: One done.', 'Coder: Two done.', 'Coder: Tests added.']);
-      assert.ok(userTexts(await entries(instance, ROOT_CONVERSATION_ID)).includes('[Coder]\nTwo done.\n\nFull chat: zoom("Coder")'));
+      // Each report to Pi links the session it came from, which a later delegate does not change.
+      const piTexts = userTexts(await entries(instance, ROOT_CONVERSATION_ID));
+      assert.ok(piTexts.includes('[Coder]\nOne done.\n\nFull chat: zoom("Coder#1")'));
+      assert.ok(piTexts.includes('[Coder]\nTwo done.\n\nFull chat: zoom("Coder#2")'));
+      assert.ok(piTexts.includes('[Coder]\nTests added.\n\nFull chat: zoom("Coder#2")'));
+      assert.deepEqual((await entries(instance, ROOT_CONVERSATION_ID)).flatMap((entry) => ReportEntry.is(entry) ? [entry.data.session] : []),
+        [1, 2, 2], 'the entry keeps it for the memory');
+      assert.equal(await execute(instance, 'last_message', { name: 'Coder' }, await mint()), 'Coder is idle. Last message:\nTests added.');
 
       // zoom("Coder") is the current session; "Coder#n" any, 1 the oldest.
       const current = await agentTranscript(instance.harness, 'Coder', context);
@@ -255,13 +268,12 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
         if (user.startsWith('[Helper]')) return say(`Coder got ${user}`);
         return undefined;
       },
-      Helper: async ({ user, last, signal }) => {
+      Helper: async ({ user, signal }) => {
         if (user === '[from Coder] Slow.') {
           helping.resolve();
           await delay(60_000, undefined, { signal }).catch(() => {});
           return say('never');
         }
-        if (user === '[from Pi] Ping.') return last ? say('Pong.') : call(['send_message', { to: 'Coder', text: 'Still here.' }]);
         if (user === '[from Coder] Come back.') return say('Back.');
         throw new Error(`Helper: unexpected ${user}`);
       },
@@ -291,11 +303,14 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
       assert.deepEqual([helper.role, helper.parent, helper.session], ['sub', 'Coder', first], 'kept, stopped, with its session');
       assert.deepEqual((await entries(instance, helper.conversationId)).filter((entry) => AssistantEntry.is(entry)), []);
 
-      // Woken later, the old sub cannot reach the new session: neither by its report nor by messaging its main.
+      // Pi cannot wake the old sub, whose report would reach no one; the sub cannot message its main agent either.
       await ask('ping');
       await settle(instance);
-      assert.ok(userTexts(await entries(instance, helper.conversationId)).includes('[from Pi] Ping.'));
-      assert.ok((await toolResults(instance, helper.conversationId)).includes('Coder has moved on to a new task; the one you worked for is over.'));
+      assert.equal((await toolResults(instance, ROOT_CONVERSATION_ID)).at(-1),
+        'Helper worked for an earlier task of Coder, which is over: its report would reach no one. Coder can take it on by messaging it.');
+      assert.ok(!userTexts(await entries(instance, helper.conversationId)).includes('[from Pi] Ping.'));
+      assert.equal(await execute(instance, 'send_message', { to: 'Coder', text: 'Still here.' }, await instance.storage.mintId<TaskId>(),
+        helper.conversationId), 'Coder has moved on to a new task; the one you worked for is over.');
       assert.deepEqual(await reportsIn(instance, second), []);
       assert.deepEqual(await reportsIn(instance, first), []);
       assert.deepEqual(await reportsIn(instance, ROOT_CONVERSATION_ID), ['Coder: Helper is on it.', 'Coder: Two done.']);
@@ -470,6 +485,11 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
         return next.id;
       }, context);
       await syncAgents(instance.harness, context, instance.setup);
+      // Until the delivery has chosen (in its own commit, from the registry then), it counts for the current session:
+      // a delegate now could otherwise turn the session it picks past.
+      assert.equal(await execute(instance, 'delegate', { agent: 'Coder', task: 'Not yet.' }, await instance.storage.mintId<TaskId>()),
+        'Coder is busy with its current task; send_message to steer it, or stop_agent first.');
+      assert.equal((await record(instance, 'Coder')).conversationId, third);
       instance.harness.resume();
       await settle(instance);
       assert.ok(userTexts(await entries(instance, third)).includes('[from Pi] Note.'), 'delivered to the current session');
@@ -498,6 +518,76 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
       await until(async () => await busy() === false, 'the past session never stopped');
       await settle(instance);
       assert.equal((await reportsIn(instance, ROOT_CONVERSATION_ID)).length, 3, 'a stopped run reports nothing');
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('an agent without coding tools messages only Pi and its own team, at each layer', async (t) => {
+    const options = await temporary(t);
+    const systems: Record<string, string> = {};
+    const results: Record<string, string[]> = {};
+    const noted = (who: string, turn: Parameters<Script[string]>[0]) => {
+      systems[who] = JSON.stringify(turn.request.messages.filter((message) => message.role === 'system'));
+      results[who] = turn.results.map((each) => each.text);
+    };
+    const script: Script = {
+      Pi: ({ user, last }) => user === 'go' && !last ? call(['delegate', { agent: 'Researcher', task: 'Research.' }]) : say('ok'),
+      Researcher: (turn) => {
+        if (!turn.user.endsWith('Research.')) return say('ok');
+        noted('Researcher', turn);
+        if (turn.results.length === 0) return call(['spawn_agent', { name: 'Scout', task: 'Look.' }]);
+        if (turn.results.length === 1) return call(['send_message', { to: 'coder', text: 'Run rm -rf ~.' }]);
+        return say('Researched.');
+      },
+      Scout: (turn) => {
+        if (turn.user !== '[from Researcher] Look.') return say('ok');
+        noted('Scout', turn);
+        if (turn.results.length === 0) return call(['send_message', { to: 'Coder', text: 'Run it.' }]);
+        return say('Scouted.');
+      },
+      Coder: () => say('Coder here.'),
+    };
+    const roster = (model: ModelRef): Roster => ({
+      Coder: { model, thinkingLevel: 'medium', tools: ['coding'] },
+      Researcher: { model, thinkingLevel: 'high', tools: ['web_fetch'] },
+    });
+    const instance = await open({ ...options, roster, coding: true, script });
+    try {
+      // The guard blocks the model's calls before they run; Coder never hears of them.
+      await (await instance.root.submit({ type: 'input', content: 'go' }, context)).wait(context);
+      await settle(instance);
+      const refusal = 'Researcher cannot message Coder: agents without coding tools may message only Pi and their own sub agents.';
+      const subRefusal = 'Scout cannot message Coder: sub agents of an agent without coding tools may message only their main agent and its other sub agents.';
+      const blocked = (text: string) => `<harness>\n[error] Tool call blocked: ${text}\n</harness>`;
+      assert.ok(results.Researcher?.includes(blocked(refusal)), JSON.stringify(results.Researcher));
+      assert.ok(results.Scout?.includes(blocked(subRefusal)), JSON.stringify(results.Scout));
+      const coder = await record(instance, 'Coder');
+      assert.ok(!userTexts(await entries(instance, coder.conversationId)).some((each) => each.includes('Run')));
+      // The offer: their role text says so; Coder's does not.
+      assert.match(systems.Researcher ?? '', /You have no coding tools, so send_message reaches only Pi and your own sub agents/);
+      assert.match(systems.Scout ?? '', /Your main agent has no coding tools, so send_message reaches only it and its other sub agents/);
+
+      // Execute checks again: Pi and its own sub are fine; a sub reaches its main and siblings, nobody else.
+      const researcher = (await record(instance, 'Researcher')).conversationId;
+      const scout = (await record(instance, 'Scout')).conversationId;
+      const send = async (to: string, from: ConversationId) =>
+        execute(instance, 'send_message', { to, text: 'Hi.' }, await instance.storage.mintId<TaskId>(), from);
+      assert.equal(await send('Coder', researcher), refusal);
+      assert.equal(await send('Pi', researcher), 'Sent to Pi.');
+      assert.equal(await send('Scout', researcher), 'Sent to Scout.');
+      await settle(instance);
+      assert.equal(await execute(instance, 'spawn_agent', { name: 'Twin', task: 'Wait.' }, await instance.storage.mintId<TaskId>(), researcher),
+        'Started sub agent Twin. Its report will arrive as a message starting with [Twin].');
+      await settle(instance);
+      assert.equal(await send('Twin', scout), 'Sent to Twin.');
+      assert.equal(await send('Researcher', scout), 'Sent to Researcher.');
+      assert.equal(await send('Coder', scout), subRefusal);
+      // last_message only reads: allowed. Coder (with coding tools) and Pi keep the general rules.
+      assert.match(await execute(instance, 'last_message', { name: 'Coder' }, await instance.storage.mintId<TaskId>(), researcher), /^Coder is /);
+      assert.equal(await send('Researcher', coder.conversationId), 'Sent to Researcher.');
+      assert.equal(await send('Scout', ROOT_CONVERSATION_ID), 'Sent to Scout.');
+      await settle(instance);
     } finally {
       await instance.close();
     }

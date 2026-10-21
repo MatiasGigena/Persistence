@@ -8,7 +8,7 @@ import { Type } from '@earendil-works/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { AgentDoc, type ConversationId, defineExtension, defineTool, type ModelRef, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
-import { AgentsDoc, type Roster } from '../../src/agents/index.ts';
+import { AgentsDoc, DEFAULT_ROSTER, type Roster } from '../../src/agents/index.ts';
 import { openInstance, type Instance, type InstanceOptions } from '../../src/runtime/runtime.ts';
 import { call, router, say, type Turn } from '../fixtures/agents-instance.ts';
 
@@ -191,6 +191,10 @@ describe('standing agents (offline, host wiring)', { concurrency: false, timeout
       assert.match(system('Pi'), /Standing agents always exist, each with its own model and tools: Coder \(programming\)\./);
       assert.match(system('Coder'), /Use tabs\./);
       assert.doesNotMatch(system('Helper'), /Use tabs\./);
+      const instructions = async (name: string) => (await instance.harness.snapshot(AgentDoc,
+        (await registryOf(instance))[name]?.conversationId ?? ROOT_CONVERSATION_ID, instance.context))?.instructions;
+      assert.equal(await instructions('Helper'), await instructions('Coder'), 'a sub takes its main agent\'s instructions');
+      assert.match(await instructions('Helper') ?? '', /Your tools besides the agent tools: read, write, edit, bash\./);
     } finally {
       await instance.close();
     }
@@ -202,6 +206,59 @@ describe('standing agents (offline, host wiring)', { concurrency: false, timeout
       assert.deepEqual([helper.model, helper.thinkingLevel], ['faux-coder', 'medium']);
       await instance.setModel(ref('faux-next'));
       assert.equal((await stored(instance, 'Helper')).model, 'faux-coder', '/model leaves a standing agent\'s subs alone');
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('each default roster agent\'s instructions name its own tools, with tools on and off', async (t) => {
+    const options = await temporary(t);
+    const { models, ref } = catalog();
+    const roster: Roster = Object.fromEntries(Object.entries(DEFAULT_ROSTER).map(([name, agent]) => [name, { ...agent, model: ref('faux-coder') }]));
+    const instance = await openInstance({ ...options, models, model: ref('faux-pi'), thinkingLevel: 'high', allowTools: true, roster, kits: browserKit });
+    const instructions = async (name: string) => {
+      const agent = (await registryOf(instance))[name];
+      assert.ok(agent, `no agent ${name}`);
+      return (await instance.harness.snapshot(AgentDoc, agent.conversationId, instance.context))?.instructions ?? '';
+    };
+    const pi = async () => (await instance.harness.snapshot(AgentDoc, ROOT_CONVERSATION_ID, instance.context))?.instructions ?? '';
+    const protectedNote = /Some folders are protected/;
+    try {
+      // Pi's text that still applies is kept; its line about Pi's coding tools is not.
+      for (const name of ['Coder', 'Reviewer', 'Researcher']) {
+        const text = await instructions(name);
+        assert.match(text, /^You run in a persistent Pi Durable terminal host/, name);
+        assert.ok(text.includes(`Your working directory for this launch is ${options.cwd}.`), name);
+        assert.doesNotMatch(text, /The read, write, edit, and bash tools are on/, name);
+      }
+      assert.match(await pi(), /The read, write, edit, and bash tools are on/, 'Pi keeps its own');
+      const coder = await instructions('Coder');
+      assert.match(coder, /Your tools besides the agent tools: read, write, edit, bash\. You have no others\./);
+      assert.match(coder, /bash runs in a sandbox that enforces this/);
+      const reviewer = await instructions('Reviewer');
+      assert.match(reviewer, /Your tools besides the agent tools: read, browser_goto\. You have no others\./);
+      assert.match(reviewer, protectedNote);
+      assert.doesNotMatch(reviewer, /bash/);
+      assert.match(reviewer, /You cannot change files or run commands/);
+      const researcher = await instructions('Researcher');
+      assert.match(researcher, /Your tools besides the agent tools: web_fetch\. You have no others\./);
+      assert.doesNotMatch(researcher, protectedNote);
+      assert.match(researcher, /You cannot read or change local files or run commands/);
+      assert.doesNotMatch(researcher, /\b(bash|write|edit)\b/);
+
+      // Tools off: the local kits' tools are named as off; nobody is told it has them.
+      await instance.setTools(false);
+      const off = await instructions('Coder');
+      assert.match(off, /You have no tools besides the agent tools\./);
+      assert.match(off, /Your local tools \(read, write, edit, bash\) are off for this launch; only the user can turn them on\./);
+      assert.doesNotMatch(off, protectedNote);
+      const reviewerOff = await instructions('Reviewer');
+      assert.match(reviewerOff, /Your tools besides the agent tools: browser_goto\. You have no others\./);
+      assert.match(reviewerOff, /Your local tools \(read\) are off/);
+      assert.match(reviewerOff, /You cannot read or change local files or run commands/);
+      assert.equal(await instructions('Researcher'), researcher, 'no local kits: nothing changes');
+      await instance.setTools(true);
+      assert.equal(await instructions('Coder'), coder, 'on again');
     } finally {
       await instance.close();
     }

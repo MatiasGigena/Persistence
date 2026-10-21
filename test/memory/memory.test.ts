@@ -120,6 +120,9 @@ describe('unii memory', { concurrency: false }, () => {
     assert.equal(w.src, 'report:r1', 'the src key is unchanged, so replays still dedupe');
     assert.deepEqual(m.report({ name: 'Bob', text: 'tests pass', id: 'r1' }), []);
     assert.equal(m.report({ name: 'Bob', text: 'again' })[0]?.src, `report:${hash('Bob\nagain')}`);
+    const [coder] = m.report({ name: 'Coder', text: 'fixed', id: 'r2', session: 2 });
+    assert.equal(coder?.text, '[Coder]\nfixed\n\nFull chat: zoom("Coder#2")', 'a standing agent\'s report links its session');
+    assert.equal(coder?.src, 'report:r2');
     await m.close();
   });
 

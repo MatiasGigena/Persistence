@@ -134,6 +134,9 @@ their `session`, and later, if something wakes one:
   is over.`).
 - A later session that messages the sub (`send_message` from the main agent's current session) takes it on: its
   `session` becomes that one, and its reports come there.
+- Anyone else's `send_message` to it (Pi, another agent, a sibling) is refused, since the sub would work and its report
+  reach no one (`Helper worked for an earlier task of Coder, which is over: its report would reach no one. Coder can
+  take it on by messaging it.`). Only the session it works for, if that one runs again, still reaches it.
 
 **Past sessions stay quiet.** A message whose delivery finds its target in the agent's `past` goes to the agent's
 current session instead, so a task that is over is not woken; since `delegate` waits for unfinished deliveries, that
@@ -147,7 +150,7 @@ kits as well. A past session is still the same agent (its role text and tools wo
 | Action | Pi (root) | main | sub |
 |---|---|---|---|
 | `list_agents` | every agent | Pi and every other agent | every other agent, not Pi |
-| `send_message` | any agent | any agent, and `Pi` | any agent except Pi |
+| `send_message` | any agent | any agent, and `Pi`; without coding tools: `Pi` and its own subs only | any agent except Pi; a sub of a main without coding tools: its main and its sibling subs only |
 | `last_message` | any agent | any agent, and `Pi` | any agent except Pi |
 | `spawn_agent` | yes: creates a main agent | yes: creates a sub agent | no |
 | `delegate` | standing agents only | no | no |
@@ -157,13 +160,26 @@ kits as well. A past session is still the same agent (its role text and tools wo
 Nobody can `send_message` to itself. A main agent may message another main agent and its sub agents; only stopping is
 limited to its own subs.
 
-The sub limits are enforced three times:
+**Agents without coding tools stay in their team.** A standing agent whose roster kits lack `coding` (the default
+Researcher and Reviewer), and each of its subs, are confined: the main agent may `send_message` only Pi and its own sub
+agents, and its subs only their main agent and each other. The Researcher reads untrusted web pages; without this, a
+page could have it tell the Coder to run a command (a prompt injection relayed to bash). The refusal reads
+`Researcher cannot message Coder: agents without coding tools may message only Pi and their own sub agents.` (a sub's:
+`... sub agents of an agent without coding tools may message only their main agent and its other sub agents.`).
+`last_message` and `list_agents` only read, so they stay open. Agents with `coding`, ad-hoc agents (which copy Pi's
+tools) and their subs keep the general rules; others may still message a confined agent. Whether an agent is confined
+follows the roster's kits, not `/tools`.
+
+The limits are enforced three times:
 
 1. **Offer.** A sub's `modelTools` hide `spawn_agent` and `stop_agent`, so the model never sees them. No agent is
-   offered `delegate`: `deriveAgent` drops it from the tools it copies from Pi.
+   offered `delegate`: `deriveAgent` drops it from the tools it copies from Pi. A confined agent's role text, and
+   `send_message`'s description, state its messaging limit.
 2. **Guard.** A `beforeTool` hook blocks `spawn_agent` and `stop_agent` from a sub, `send_message` or `last_message`
-   that address `Pi`, and `delegate` from anyone but Pi, before the call's intent is recorded.
-3. **Execute.** Each tool checks the caller's role again and returns a refusal text.
+   that address `Pi`, a confined agent's `send_message` outside its team, and `delegate` from anyone but Pi, before
+   the call's intent is recorded.
+3. **Execute.** Each tool checks the caller's role (and `send_message` the confinement) again and returns a refusal
+   text.
 
 ## The tools
 
@@ -173,9 +189,9 @@ What the model sees (descriptions abridged to their content):
 |---|---|---|
 | `spawn_agent` | `name`, `task` | `Started main agent X. Its report will arrive as a message starting with [X].` (or `sub`); at once |
 | `delegate` | `agent`, `task` | `Delegated to X (session n). Its report will arrive as a message starting with [X].`; at once |
-| `list_agents` | none | one line per agent: `- Name (role, parent P[, standing]) busy or idle — last: <first 120 chars>` or `— no message yet`; Pi shows as `(session agent)` |
+| `list_agents` | none | one line per agent: `- Name (role, parent P[, standing]) busy or idle — last: <first 120 chars>` (`last (session n): ...` when it is from a past session) or `— no message yet`; Pi shows as `(session agent)` |
 | `send_message` | `to`, `text` | `Sent to X.`; at once |
-| `last_message` | `name` | `X is busy or idle. Last message:\n<text>` or `X is busy or idle. No message yet.` |
+| `last_message` | `name` | `X is busy or idle. Last message:\n<text>` (`Last message (session n, an earlier task):` when it is from a past session) or `X is busy or idle. No message yet.` |
 | `stop_agent` | `name` | `Stopped X.`, `Stopped X and its sub agents A, B.`; Pi stopping a sub also gets `Its main agent M is not told; message it if it should know.` |
 
 Refusals are plain texts such as `No agent named X.`, `An agent named X already exists; use send_message.`,
@@ -183,7 +199,8 @@ Refusals are plain texts such as `No agent named X.`, `An agent named X already 
 message your main agent instead.`, `X is not your sub agent.`
 
 "Busy" means one of the agent's conversations (a standing agent's past sessions included) has a run in progress.
-"Last message" is the latest committed assistant text.
+"Last message" is the latest committed assistant text of the agent's current session or, when that has none yet (right
+after a `delegate`), of its newest past session that has one.
 
 Each conversation also gets an `agents` system section with its role text, adapted from upstream UniiChat's subagent
 prompt:
@@ -198,6 +215,7 @@ prompt:
   what you found and what failed; never wait for another agent.
 - Main agents also: do not send your report with `send_message` too; message Pi only with a question or news that
   cannot wait for the report. A standing agent's roster `instructions` follow its role text.
+- A confined agent (see [Permissions](#permissions)) and its subs: whom `send_message` reaches.
 
 The text about the view is left out when the extension has no `initialContext`.
 
@@ -210,13 +228,16 @@ Every input to an agent or to Pi is a user message placed as a typed entry:
 | spawner → new agent (its task) | `<view>\n\n[from Spawner] task` | `agents.message`, data `{ from, text }` |
 | `delegate` → a standing agent's new session | `<view>\n\n[from Pi] task` | `agents.message`, data `{ from, text }` |
 | `send_message` to an agent | `[from Sender] text` | `agents.message`, data `{ from, text }` |
-| `send_message` from a main to Pi | `[Sender]\ntext\n\nFull chat: zoom("Sender")` | `agents.report`, data `{ name, text, id }` |
-| an agent's final reply → its parent | `[Name] reply`, or `[Name] (no reply)` when it is empty | `agents.report`, data `{ name, text, id }` |
+| `send_message` from a main to Pi | `[Sender]\ntext\n\nFull chat: zoom("Sender")` (`zoom("Sender#n")` from a standing agent) | `agents.report`, data `{ name, text, id, session? }` |
+| an agent's final reply → its parent | `[Name] reply`, or `[Name] (no reply)` when it is empty | `agents.report`, data `{ name, text, id, session? }` |
 | an agent's failed run → its parent | `[Name] failed: <reason>: <detail>` | `agents.report` |
 
-Every input to Pi takes upstream UniiChat's report format, `piReportText(name, text)`:
-`[Name]\ntext\n\nFull chat: zoom("Name")`. The last line tells Pi where to read the agent's whole chat. Inputs to an
-agent stay `[Name] text`, since agents cannot zoom. The entry's `data.text` is always the bare text.
+Every input to Pi takes upstream UniiChat's report format, `piReportText(name, text, session?)`:
+`[Name]\ntext\n\nFull chat: zoom("Name")`. The last line tells Pi where to read the agent's whole chat. From a
+standing agent (or one with past sessions) it names the session the input came from, `zoom("Coder#2")`, and the entry
+keeps the number in `data.session`, from which the memory writes the same link: a plain `zoom("Coder")` opens the
+current session, so after a later `delegate` an old report's link would open the wrong one. Inputs to an agent stay
+`[Name] text`, since agents cannot zoom. The entry's `data.text` is always the bare text.
 
 - The `<view>` preamble is Pi's memory view at spawn time (`memory.render()`), passed as the extension's
   `initialContext`. The host first waits up to 8 s for the view's pending summaries (`memory.settle`), as a turn
@@ -264,8 +285,11 @@ be reported once.
 1. It submits the input to the target conversation with request id `agents:<taskId>`. pi-durable deduplicates by
    request id within a conversation, so a resubmission after a restart returns the first submission. A message whose
    target is in the agent's `past` goes to its current session instead (a report there is dropped): unless the
-   request already reached the past session, the task stores the current session in its memo `session` before it
-   submits, and a rerun reads the memo, so a replay submits to the same conversation and the input arrives once.
+   request already reached the past session, the task picks the current session in a commit, from the registry as it
+   is then (not from an older snapshot), stores it in its memo `session` before it submits, and a rerun reads the
+   memo, so a replay submits to the same conversation and the input arrives once. Until the memo exists, `delegate`'s
+   check of unfinished deliveries counts such a delivery for the agent's current session, so no delegate can turn
+   the session it picks past in between.
 2. If the target is Pi, it completes right after the submit (the admission is durable) and calls `onReport` at most
    once. It does not wait for Pi's answer.
 3. Otherwise it waits for the submission to settle. Then **one commit** records the answer id in the agent's
@@ -304,6 +328,9 @@ await syncAgents(harness, context, { childAgent, roster, kits });   // create mi
    tools become the five agent tools plus its kits' tools, and each kit's extension is selected. A sub of a standing
    agent takes its main agent's entry, then `subModel` and `subThinkingLevel` when given. The local kits (`coding`,
    `read`) apply only while Pi's coding tools are on; `browser` and `web_fetch` stay, since they touch no local files.
+   Its instructions are Pi's with Pi's coding-tools line (the one naming bash) replaced by its own: the kit tools it
+   has now, the protected-folders note only while it has a local kit's tools, which of its local tools are off, and
+   that it cannot change files or run commands when it lacks bash. So the Researcher is never told it has `bash`.
 3. **Role offer.** `delegate` leaves every agent's tools; a sub's `modelTools` hide `spawn_agent` and `stop_agent`.
 4. **The host's `childAgent` change:**
 
@@ -349,7 +376,7 @@ first, in the format of upstream UniiChat's agent log, one `i|kind: text` line p
   chat is one page. `agentTranscript` without a page returns the whole chat.
 
 A standing agent's chat is one session: `zoom("Coder")` reads the current one, `zoom("Coder#2")` the second (1 is the
-oldest, the current one is the last). Its first line says which, before the numbered lines:
+oldest, the current one is the last). Its reports to Pi link the session they came from (`zoom("Coder#2")`). Its first line says which, before the numbered lines:
 
 ```
 session 2 of 3
