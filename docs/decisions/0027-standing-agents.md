@@ -103,7 +103,7 @@ the same for every redirect (at most 5).
 ### Persisted names
 
 New and frozen once shipped: the tool names `delegate`, `web_fetch` and the eight `browser_*`; the extension names of
-the two new extensions; the registry fields `standing` and `past`; the `settings.json` key `agents` and its fields.
+the two new extensions; the registry fields `standing` and `past`, and `session` on a standing agent's sub (the session it belongs to); the `settings.json` key `agents` and its fields.
 
 ## Consequences
 

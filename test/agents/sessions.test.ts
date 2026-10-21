@@ -1,0 +1,367 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { describe, test, type TestContext } from 'node:test';
+import type { Context } from '@earendil-works/chord';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
+import {
+  type AgentChange, AssistantEntry, type Conversation, type ConversationId, createRegistry, type Cursor, defineEntry, type EntryRecord,
+  Harness, type JsonObject, LiveDoc, type ModelRef, ROOT_CONVERSATION_ID, type Storage, type TaskId, type ToolExecutionApi,
+  type ToolRegistration, ToolResultEntry,
+} from '@earendil-works/pi-durable';
+import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
+import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
+import { openNodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { CodingTools } from '@earendil-works/pi-durable/tools';
+import {
+  type AgentsOptions, AgentsDoc, agentTranscript, createAgentsExtension, listAgents, MESSAGE_KIND, missingKits, REPORT_KIND,
+  type Roster, syncAgents,
+} from '../../src/agents/index.ts';
+import { call, router, say, type Script } from '../fixtures/agents-instance.ts';
+import { offlineModels } from '../fixtures/faux-model.ts';
+
+// A session per task (ADR 0027): Pi's delegate(agent, task) starts a standing agent's new task in a new conversation.
+
+const MessageEntry = defineEntry<{ from: string; text: string }>(MESSAGE_KIND);
+const ReportEntry = defineEntry<{ name: string; text: string; id: TaskId }>(REPORT_KIND);
+const context = BACKGROUND_CONTEXT;
+
+interface Instance {
+  readonly harness: Harness;
+  readonly root: Conversation;
+  readonly context: Context;
+  readonly storage: Storage;
+  readonly tools: Readonly<Record<string, ToolRegistration>>;
+  close(): Promise<void>;
+}
+
+async function temporary(t: TestContext) {
+  const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-sessions-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  return { cwd, databasePath: join(cwd, 'sessions.sqlite') };
+}
+
+/** As test/fixtures/agents-instance.ts's openAgents, with a roster: the launch creates the standing agents. */
+async function open({ databasePath, cwd, script, roster, hooks = {} }: {
+  readonly databasePath: string; readonly cwd: string; readonly script: Script;
+  readonly roster: (model: ModelRef) => Roster; readonly hooks?: AgentsOptions;
+}): Promise<Instance> {
+  const { models, model } = offlineModels(router(script));
+  const setup = { ...hooks, roster: roster(model) };
+  const Agents = createAgentsExtension(setup);
+  const registry = createRegistry();
+  registry.install(CodingTools);
+  registry.install(Agents);
+  const agent: AgentChange = { cwd, model, thinkingLevel: 'off', extensions: [CodingTools, Agents],
+    tools: [...Agents.tools], modelTools: null, instructions: 'Offline sessions test.' };
+  const storage = await SqliteStorage.open(await openNodeSqliteDatabase(databasePath));
+  const harness = await Harness.open(storage, { models, registry,
+    env: ({ cwd: directory }) => new NodeExecutionEnv({ cwd: directory ?? cwd }) }, context);
+  const root = await harness.root(context, { agent });
+  await root.configure(agent, context);
+  await syncAgents(harness, context, setup);
+  const tools = Object.fromEntries(Agents.tools.map((tool): [string, ToolRegistration] => [tool.name, tool]));
+  return { harness, root, context, storage, tools, close: () => harness.close(context) };
+}
+
+const coderOnly = (model: ModelRef): Roster => ({ Coder: { model, thinkingLevel: 'medium', tools: [] } });
+
+async function settle({ harness }: Instance, ms = 15_000) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const inspection = await harness.inspect(context);
+    if (!inspection.tasks.length && !inspection.submissions.length) return;
+    if (Date.now() > until) throw new Error(`not settled: ${JSON.stringify(inspection.tasks.map((task) => task.record.kind))}`);
+    await delay(10);
+  }
+}
+async function until(check: () => Promise<boolean>, what: string, ms = 15_000) {
+  for (const end = Date.now() + ms; !await check(); await delay(10)) assert.ok(Date.now() < end, what);
+}
+
+async function entries({ harness }: Instance, conversationId: ConversationId) {
+  const all: EntryRecord[] = [];
+  let cursor: Cursor | undefined;
+  do {
+    const page = await harness.commit((tx) => tx.scanEntries({ conversationId, order: 'ascending' }, 256, cursor), context);
+    all.push(...page.items);
+    cursor = page.next;
+  } while (cursor !== undefined);
+  return all;
+}
+const record = async ({ harness }: Instance, name: string) => {
+  const agent = (await harness.snapshot(AgentsDoc, context))?.agents[name];
+  assert.ok(agent, `no agent ${name}`);
+  return agent;
+};
+const textOf = (content: string | readonly (TextContent | ImageContent)[]) => typeof content === 'string' ? content
+  : content.map((block) => block.type === 'text' ? block.text : '').join('');
+const userTexts = (list: readonly EntryRecord[]) => list.flatMap((entry) => entry.model ?? [])
+  .flatMap((message) => message.role === 'user' ? [textOf(message.content)] : []);
+const reportsIn = async (instance: Instance, conversationId: ConversationId) =>
+  (await entries(instance, conversationId)).filter((entry) => ReportEntry.is(entry))
+    .flatMap((entry) => ReportEntry.is(entry) ? [`${entry.data.name}: ${entry.data.text}`] : []);
+const toolResults = async (instance: Instance, conversationId: ConversationId) => (await entries(instance, conversationId))
+  .filter((entry) => ToolResultEntry.is(entry)).flatMap((entry) => entry.model ?? [])
+  .flatMap((message) => message.role === 'toolResult' ? [textOf(message.content)] : []);
+const offered = async ({ harness }: Instance, conversationId: ConversationId) =>
+  (await (await harness.conversation(conversationId, context))?.agent(context))?.tools.map((tool) => tool.name).sort();
+
+describe('delegate: a session per task (offline)', { concurrency: false, timeout: 60_000 }, () => {
+  test('each task gets a session; busy refuses; send_message goes to the current one; zoom reads any', async (t) => {
+    const options = await temporary(t);
+    const gate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    const instance = await open({ ...options, roster: coderOnly, hooks: { initialContext: ({ task }) => `<view>for ${task}</view>` },
+      script: {
+        Pi: ({ user, last }) => {
+          if (last) return say('ok');
+          if (user === 'one') return call(['delegate', { agent: 'Coder', task: 'Task one.' }]);
+          if (user === 'two') return call(['delegate', { agent: 'Coder', task: 'Task two.' }]);
+          if (user === 'three') return call(['delegate', { agent: 'coder', task: 'Task three.' }]);
+          if (user === 'steer') return call(['send_message', { to: 'Coder', text: 'Also tests.' }]);
+          if (user === 'lead') return call(['spawn_agent', { name: 'Lead', task: 'Wait.' }]);
+          return say('noted');
+        },
+        Coder: async ({ user }) => {
+          if (user.endsWith('Task one.')) return say('One done.');
+          if (user.endsWith('Task two.')) { started.resolve(); await gate.promise; return say('Two done.'); }
+          if (user === '[from Pi] Also tests.') return say('Tests added.');
+          throw new Error(`Coder: unexpected ${user}`);
+        },
+        Lead: () => say('Lead here.'),
+      } });
+    try {
+      const { root } = instance;
+      const ask = async (content: string) => (await root.submit({ type: 'input', content }, context)).wait(context);
+      const first = (await record(instance, 'Coder')).conversationId;
+
+      // The first task takes the launch's never-used conversation: session 1.
+      await ask('one');
+      await settle(instance);
+      let coder = await record(instance, 'Coder');
+      assert.deepEqual([coder.conversationId, coder.past], [first, []]);
+      assert.deepEqual(userTexts((await entries(instance, first)).filter((entry) => MessageEntry.is(entry))),
+        ['<view>for Task one.</view>\n\n[from Pi] Task one.']);
+
+      // The second is a new conversation, the first kept in past, derived before its first input.
+      await ask('two');
+      await started.promise;
+      coder = await record(instance, 'Coder');
+      const second = coder.conversationId;
+      assert.notEqual(second, first);
+      assert.deepEqual(coder.past, [first]);
+      assert.deepEqual(await offered(instance, second), ['last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent']);
+      assert.ok((await offered(instance, ROOT_CONVERSATION_ID))?.includes('delegate'), 'Pi has delegate');
+      assert.deepEqual(userTexts((await entries(instance, second)).filter((entry) => MessageEntry.is(entry))),
+        ['<view>for Task two.</view>\n\n[from Pi] Task two.']);
+
+      // Busy: refused, nothing changes.
+      await ask('three');
+      assert.equal((await toolResults(instance, ROOT_CONVERSATION_ID)).at(-1),
+        'Coder is busy with its current task; send_message to steer it, or stop_agent first.');
+      assert.deepEqual(await record(instance, 'Coder'), coder);
+      gate.resolve();
+      await settle(instance);
+
+      // send_message reaches the current session only.
+      await ask('steer');
+      await settle(instance);
+      assert.ok(userTexts(await entries(instance, second)).includes('[from Pi] Also tests.'));
+      assert.ok(!userTexts(await entries(instance, first)).some((each) => each.includes('Also tests.')));
+      assert.deepEqual(await reportsIn(instance, ROOT_CONVERSATION_ID), ['Coder: One done.', 'Coder: Two done.', 'Coder: Tests added.']);
+      assert.ok(userTexts(await entries(instance, ROOT_CONVERSATION_ID)).includes('[Coder]\nTwo done.\n\nFull chat: zoom("Coder")'));
+
+      // zoom("Coder") is the current session; "Coder#n" any, 1 the oldest.
+      const current = await agentTranscript(instance.harness, 'Coder', context);
+      assert.match(current, /^session 2 of 2 \(current\)\n\n0\|note: .*\n\n1\|user: \[from Pi\] Task two\.\n\n2\|Coder: Two done\./);
+      assert.equal(await agentTranscript(instance.harness, 'coder#2', context), current);
+      const oldest = await agentTranscript(instance.harness, 'Coder#1', context);
+      assert.match(oldest, /^session 1 of 2\n\n0\|note: .*\n\n1\|user: \[from Pi\] Task one\.\n\n2\|Coder: One done\.$/);
+      assert.equal(await agentTranscript(instance.harness, 'Coder#1', context, 1), oldest, 'a short chat is one page');
+      assert.equal(await agentTranscript(instance.harness, 'Coder#3', context), 'No session 3: Coder has 2 sessions.');
+      assert.equal(await agentTranscript(instance.harness, 'Coder#0', context), 'No session 0: Coder has 2 sessions.');
+
+      // An ad-hoc agent has no delegate and no session line.
+      await ask('lead');
+      await settle(instance);
+      const lead = await record(instance, 'Lead');
+      assert.deepEqual(await offered(instance, lead.conversationId), ['last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent']);
+      assert.match(await agentTranscript(instance.harness, 'Lead', context), /^0\|note: /);
+      assert.equal(lead.past, undefined);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('the previous task\'s subs are stopped, and their late reports never reach the new session', async (t) => {
+    const options = await temporary(t);
+    const helping = Promise.withResolvers<void>();
+    const instance = await open({ ...options, roster: coderOnly, script: {
+      Pi: ({ user, last }) => {
+        if (last) return say('ok');
+        if (user === 'one') return call(['delegate', { agent: 'Coder', task: 'Task one.' }]);
+        if (user === 'two') return call(['delegate', { agent: 'Coder', task: 'Task two.' }]);
+        if (user === 'three') return call(['delegate', { agent: 'Coder', task: 'Task three.' }]);
+        if (user === 'ping') return call(['send_message', { to: 'Helper', text: 'Ping.' }]);
+        return say('noted');
+      },
+      Coder: ({ user, last }) => {
+        if (user.endsWith('Task one.')) return last ? say('Helper is on it.') : call(['spawn_agent', { name: 'Helper', task: 'Slow.' }]);
+        if (user.endsWith('Task two.')) return say('Two done.');
+        if (user.endsWith('Task three.')) return last ? say('Asked Helper.') : call(['send_message', { to: 'Helper', text: 'Come back.' }]);
+        if (user.startsWith('[Helper]')) return say(`Coder got ${user}`);
+        return undefined;
+      },
+      Helper: async ({ user, last, signal }) => {
+        if (user === '[from Coder] Slow.') {
+          helping.resolve();
+          await delay(60_000, undefined, { signal }).catch(() => {});
+          return say('never');
+        }
+        if (user === '[from Pi] Ping.') return last ? say('Pong.') : call(['send_message', { to: 'Coder', text: 'Still here.' }]);
+        if (user === '[from Coder] Come back.') return say('Back.');
+        throw new Error(`Helper: unexpected ${user}`);
+      },
+    } });
+    try {
+      const ask = async (content: string) => (await instance.root.submit({ type: 'input', content }, context)).wait(context);
+      await ask('one');
+      await helping.promise;
+      const first = (await record(instance, 'Coder')).conversationId;
+      assert.equal((await record(instance, 'Helper')).session, first, 'a sub of a standing agent works for its session');
+      await until(async () => (await listAgents(instance.harness, context)).filter((agent) => agent.busy).map((agent) => agent.name).join() === 'Helper'
+        && (await reportsIn(instance, ROOT_CONVERSATION_ID)).length === 1
+        && (await instance.harness.snapshot(LiveDoc, ROOT_CONVERSATION_ID, context))?.run === undefined, 'Coder never reported');
+
+      // Delegating stops the busy sub first: it never answers, and nothing reaches either session.
+      await ask('two');
+      await settle(instance);
+      const second = (await record(instance, 'Coder')).conversationId;
+      const helper = await record(instance, 'Helper');
+      assert.deepEqual([helper.role, helper.parent, helper.session], ['sub', 'Coder', first], 'kept, stopped, with its session');
+      assert.deepEqual((await entries(instance, helper.conversationId)).filter((entry) => AssistantEntry.is(entry)), []);
+
+      // Woken later, the old sub cannot reach the new session: neither by its report nor by messaging its main.
+      await ask('ping');
+      await settle(instance);
+      assert.ok(userTexts(await entries(instance, helper.conversationId)).includes('[from Pi] Ping.'));
+      assert.ok((await toolResults(instance, helper.conversationId)).includes('Coder has moved on to a new task; the one you worked for is over.'));
+      assert.deepEqual(await reportsIn(instance, second), []);
+      assert.deepEqual(await reportsIn(instance, first), []);
+      assert.deepEqual(await reportsIn(instance, ROOT_CONVERSATION_ID), ['Coder: Helper is on it.', 'Coder: Two done.']);
+
+      // A later session that messages the sub takes it on: its report comes there.
+      await ask('three');
+      await settle(instance);
+      const third = (await record(instance, 'Coder')).conversationId;
+      assert.deepEqual((await record(instance, 'Coder')).past, [first, second]);
+      assert.equal((await record(instance, 'Helper')).session, third);
+      assert.deepEqual(await reportsIn(instance, third), ['Helper: Back.']);
+      assert.deepEqual(await reportsIn(instance, second), []);
+      assert.deepEqual((await reportsIn(instance, ROOT_CONVERSATION_ID)).slice(2), ['Coder: Asked Helper.', 'Coder: Coder got [Helper] Back.']);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('delegate is replay-safe across a reopen, delivers its task once, and refuses non-standing agents and non-root callers', async (t) => {
+    const options = await temporary(t);
+    let views = 0;
+    const script: Script = {
+      Pi: ({ user, last }) => user.startsWith('[') ? say('noted')
+        : user === 'lead' ? (last ? say('ok') : call(['spawn_agent', { name: 'Lead', task: 'Wait.' }])) : undefined,
+      Coder: ({ user }) => user.endsWith('Do it.') ? say('Did it.') : user.endsWith('Next.') ? say('Next done.') : undefined,
+      Lead: () => say('Lead here.'),
+    };
+    const reopen = () => open({ ...options, roster: coderOnly, script, hooks: { initialContext: () => { views++; return '<view/>'; } } });
+    let instance = await reopen();
+    const execute = async (name: string, args: JsonObject, taskId: TaskId, conversationId: ConversationId = ROOT_CONVERSATION_ID) => {
+      const tool = instance.tools[name];
+      assert.ok(tool, `no tool ${name}`);
+      const { harness } = instance;
+      const unused = (): never => { throw new Error('not used by delegate'); };
+      const api: ToolExecutionApi = {
+        taskId, conversationId, callId: 'direct', registry: createRegistry().snapshot(), models: offlineModels().models,
+        env: undefined, outputWindow: undefined,
+        snapshot: harness.snapshot.bind(harness), snapshotAsOf: harness.snapshotAsOf.bind(harness),
+        watchDoc: harness.watchDoc.bind(harness), commit: harness.commit.bind(harness),
+        conversation: harness.conversation.bind(harness),
+        agent: unused, output: unused, retainedOutput: unused, diagnostic: unused, details: unused, memo: unused,
+        createTask: unused, getTask: unused, waitForTask: unused, executeTool: unused,
+      };
+      const result = await tool.execute(args, api, context);
+      const block = result.output?.[0];
+      assert.ok(block?.type === 'text');
+      return block.text;
+    };
+    const mint = () => instance.storage.mintId<TaskId>();
+    const first = await mint();
+    const second = await mint();
+    try {
+      // Nothing runs until resume(): the delegations stay pending, so a second one finds Coder busy.
+      assert.equal(await execute('delegate', { agent: 'Coder', task: 'Do it.' }, first),
+        'Delegated to Coder (session 1). Its report will arrive as a message starting with [Coder].');
+      assert.equal(await execute('delegate', { agent: 'Coder', task: 'Again.' }, await mint()),
+        'Coder is busy with its current task; send_message to steer it, or stop_agent first.');
+      assert.equal(await execute('delegate', { agent: 'Coder', task: 'Do it.' }, first),
+        'Delegated to Coder (session 1). Its report will arrive as a message starting with [Coder].');
+      assert.equal(views, 2, 'a replay reads no view');
+    } finally {
+      await instance.close();
+    }
+
+    // Reopened mid-delegate (its delivery still pending): the replay returns the stored result and creates nothing.
+    instance = await reopen();
+    try {
+      const before = await record(instance, 'Coder');
+      assert.equal(await execute('delegate', { agent: 'Coder', task: 'Do it.' }, first),
+        'Delegated to Coder (session 1). Its report will arrive as a message starting with [Coder].');
+      assert.deepEqual(await record(instance, 'Coder'), before);
+      instance.harness.resume();
+      await settle(instance);
+      assert.equal(await execute('delegate', { agent: 'Coder', task: 'Next.' }, second),
+        'Delegated to Coder (session 2). Its report will arrive as a message starting with [Coder].');
+      const after = await record(instance, 'Coder');
+      assert.deepEqual(after.past, [before.conversationId]);
+      await settle(instance);
+    } finally {
+      await instance.close();
+    }
+
+    instance = await reopen();
+    try {
+      const coder = await record(instance, 'Coder');
+      assert.equal(await execute('delegate', { agent: 'Coder', task: 'Next.' }, second),
+        'Delegated to Coder (session 2). Its report will arrive as a message starting with [Coder].');
+      assert.deepEqual(await record(instance, 'Coder'), coder, 'a replay after the task ran changes nothing');
+      instance.harness.resume();
+      await settle(instance);
+      // Each task arrived once, and each report reached Pi once.
+      const inputs = async (id: ConversationId) => (await entries(instance, id)).filter((entry) => MessageEntry.is(entry))
+        .flatMap((entry) => MessageEntry.is(entry) ? [entry.data.text] : []);
+      assert.deepEqual(await inputs(coder.past?.[0] ?? coder.conversationId), ['Do it.']);
+      assert.deepEqual(await inputs(coder.conversationId), ['Next.']);
+      assert.deepEqual(await reportsIn(instance, ROOT_CONVERSATION_ID), ['Coder: Did it.', 'Coder: Next done.']);
+
+      // Refusals: an unknown name, an ad-hoc agent, and any caller but Pi.
+      assert.equal(await execute('delegate', { agent: 'Nobody', task: 'x' }, await mint()), 'No agent named Nobody.');
+      await (await instance.root.submit({ type: 'input', content: 'lead' }, context)).wait(context);
+      assert.equal(await execute('delegate', { agent: 'lead', task: 'x' }, await mint()),
+        'Lead is not a standing agent; use spawn_agent or send_message.');
+      assert.equal(await execute('delegate', { agent: 'Coder', task: 'x' }, await mint(), coder.conversationId),
+        'Only Pi can delegate; use send_message.');
+      assert.equal(await execute('delegate', { agent: 'Coder', task: 'x' }, await mint(), coder.past?.[0] ?? coder.conversationId),
+        'Only Pi can delegate; use send_message.', 'an earlier session is still Coder');
+      await settle(instance);
+      assert.deepEqual((await record(instance, 'Coder')).past, coder.past);
+    } finally {
+      await instance.close();
+    }
+    assert.deepEqual(missingKits({ Coder: { model: { provider: 'p', modelId: 'm' }, thinkingLevel: 'high', tools: ['web_fetch'] } }, {}),
+      ['Coder (web_fetch)']);
+  });
+});
