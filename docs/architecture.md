@@ -88,7 +88,7 @@ host only through `src/ui/types.ts`.
   side of `backup`, `serve pair` and `serve devices`; `backup.ts` writes backups as the writer (ADR 0022);
   `store.ts` holds `serve/`'s JSON files.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,
-  installs the coding/routing, memory and agents extensions plus the tool kits' (`browser`, `web-fetch`),
+  installs the coding/routing, memory and agents extensions plus the tool kits' (`browser`, `web-fetch`, `autoreview`),
   and configures Pi for this launch.
   `Instance.close` closes the Harness, then every Chromium the browser kit launched, then the memory.
 - **Memory** (`src/memory/`): the UniiChat log, tree, view, and compactor, plus the
@@ -96,7 +96,8 @@ host only through `src/ui/types.ts`.
 - **Agents** (`src/agents/`): the agent registry, the agent tools, and the
   `agents.deliver` tasks that move messages and reports between conversations.
 - **Tools** (`src/tools/`, [ADR 0027](decisions/0027-standing-agents.md)): extensions behind the standing agents'
-  `browser` and `web_fetch` kits. `browser.ts` drives a headless Chromium per agent, shared by all its sessions (Playwright, a
+  `browser`, `web_fetch` and `autoreview` kits. `autoreview.ts` exposes only the installed skill helper, always through P2,
+  using the guarded/routed bash implementation without offering bash to the Reviewer (ADR 0029). `browser.ts` drives a headless Chromium per agent, shared by all its sessions (Playwright, a
   persistent profile in `chat.unii/browser/<agent name>/`; `browserKey` in `runtime.ts` maps a session to its agent); `web-fetch.ts` fetches a public page as Markdown. Pi has neither.
 - **Machine routing** (`src/machines/routing.ts`): binds request IDs, root runs and agent conversations to
   immutable execution destinations, separately from the re-derived agent configuration. Spawn and standing-agent
@@ -251,7 +252,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/cli.ts` | Entry: parses arguments, checks Node, selects SSH/bridge before local state; otherwise resolves paths and runs the host under `flock` |
 | `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file, `PI_DURABLE_CHROMIUM`) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
-| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read` or `coding`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
+| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`, `autoreview`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read`, `coding` or `autoreview`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/recovery.ts` | `resumeInstance` (pending tasks and queued input), `settleAgents` (wait until agents are idle) |
 | `src/memory/index.ts` | Public exports of the memory |
@@ -266,6 +267,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/providers/anthropic.ts` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
 | `src/agents/roster.ts` | The standing agents' roster: `DEFAULT_ROSTER`, the kit names (`KITS`), agent name rules; no pi-durable imports, so `config.ts` parses settings.json's `agents` with it |
 | `src/tools/browser.ts` | `createBrowserExtension`: the `browser` extension's eight `browser_*` tools, a headless Chromium and persistent profile per key (`keyOf`: the agent's name, from the host), one queue and a 60 s timeout per operation, URL redaction, `close()` |
+| `src/tools/autoreview.ts` | `createAutoreviewExtension`: dedicated skill-helper invocation, fixed P0–P2; guarded local shell or pinned connector execution, no raw commands or isolation overrides |
 | `src/tools/web-fetch.ts` | `createWebFetchExtension`: the `web-fetch` extension's `web_fetch` tool, a page as Markdown (Readability, Turndown) or a PDF as text; refuses private destinations, redirects included |
 | `src/agents/index.ts` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
 | `src/machines/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |

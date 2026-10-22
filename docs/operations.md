@@ -27,6 +27,29 @@ How to install, run, back up, move, and remove a Persistence host.
 - No root privileges, Docker, open inbound port, or public web server. Root helps only with system packages:
   bubblewrap, and Chromium's shared libraries if they are missing (the optional `install-deps` step below).
 
+## Autoreview
+
+The default Reviewer's dedicated `autoreview` tool requires the user's canonical skill on **each machine where
+reviews execute** (the server for server-target sessions; the workstation for workstation-target sessions):
+
+- `~/.pi/agent/skills/autoreview/SKILL.md` and its `scripts/autoreview` helper. When set,
+  `PI_CODING_AGENT_DIR` replaces `~/.pi/agent`.
+- Python 3 (`python3`), working bubblewrap, and the skill helper's isolation prerequisites.
+- The standalone Codex CLI at `~/.local/share/autoreview/codex-cli/bin/codex`, with working authentication. The tool
+  passes this path explicitly, ignoring stale inherited `CODEX_BIN` selections. The Reviewer's own model is
+  unchanged; the helper selects its review model according to the installed skill.
+
+The tool always passes `--max-priority P2`, preserves the helper's controls, and executes through `GuardedEnv`.
+No skill/CLI is installed or copied automatically. Missing dependencies or protected credentials must be reported;
+do not remove protections to make a review pass. Codex is first; `engine: "pi"` is only an explicit availability
+fallback after diagnosis and reporting, never a workaround for isolation, safety, rate limits or findings. Pi's
+credentials may themselves be protected: that is a blocker, not permission to bypass the guard.
+
+Restart the host to pick up the new roster/tool. If `settings.json` has a custom `"agents"` roster, include
+`"autoreview"` in its reviewer's `tools`. The review kit is local: `/tools off` disables it, and SSH execution
+requires both server tools and the connector's own per-process grant. It uses the existing routed bash operation,
+so no protocol update or generic shell permission for Reviewer is needed.
+
 ## Install locally
 
 ```sh
@@ -181,7 +204,8 @@ run them on the VPS through your normal SSH shell.
   Pi can continue and delegate review after a report without changing machines.
   Unmapped legacy reports, mixed-machine inputs and older unpinned sessions cannot
   acquire an implicit server destination; start a new routed task for those cases.
-- The connector supports `read`, `write`, `edit` and `bash` (the coding/read kits).
+- The connector supports `read`, `write`, `edit` and `bash` (the coding/read kits), plus the `autoreview` kit's
+  fixed helper command through the same guarded bash operation.
   `browser_*` and `web_fetch` are unsupported for remote-target sessions: they
   refuse, never silently run on the VPS. In particular, the standing Researcher
   cannot fetch pages for a remote-target task yet. Server-target sessions retain
@@ -299,7 +323,7 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
 ## Protected folders
 
 Coding tools are on by default for local launches and `serve` (ADR 0025); an SSH
-connector needs its own explicit grant. Pi and agents with coding/read kits use
+connector needs its own explicit grant. Pi and agents with coding/read/autoreview kits use
 the same guarded environment on the execution machine. Tools act as your user, except:
 
 | Kind | Paths | The tools |
@@ -323,14 +347,14 @@ and bash answers the same way.
 
 For server-target sessions, the standing agents (ADR 0027, [agents.md](agents.md))
 are held to more than the protected folders. Remote-target network calls are
-currently refused; the connector supports coding/read kits only.
+currently refused; the connector supports coding/read kits and autoreview's fixed helper command.
 
 
 - `web_fetch` (the Researcher's) refuses loopback, private, link-local, CGNAT (Tailscale) and unique-local addresses,
   on every redirect too.
 - The `browser` (the Reviewer's) may open loopback and private addresses, to debug your apps, but always refuses
   link-local ones (cloud metadata such as `169.254.169.254`) and CGNAT (your tailnet). An agent that also reads local
-  files, through the `read` or `coding` kit (the Reviewer, and its subs), gets a local-only browser: loopback and
+  files, through the `read`, `coding` or `autoreview` kit (the Reviewer, and its subs), gets a local-only browser: loopback and
   private addresses only, so it cannot carry your files to the internet. The policy follows the roster, so a custom
   `agents` entry with `browser` and `read` gets the same.
 - An agent without coding tools may message only Pi and its own subs, so it cannot steer one that has them.

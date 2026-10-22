@@ -9,7 +9,7 @@ import type {
   AgentChange, ConversationId, Cursor, DocumentReader, EntryId, EntryRecord, Extension, NextTaskState,
   Session, TaskId, TaskOptions, ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
-import { isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, type StandingAgent } from './roster.ts';
+import { AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, type StandingAgent } from './roster.ts';
 
 export { AGENT_NAME, DEFAULT_ROSTER, isAgentName, isKit, KITS, LOCAL_KITS } from './roster.ts';
 export type { Kit, Roster, StandingAgent } from './roster.ts';
@@ -328,8 +328,9 @@ function standingInstructions(pi: string | undefined, tools: readonly string[], 
     lines.push(`Your local tools (${local.join(', ')}) are off for this launch; only the user can turn them on.`);
   }
   if (!usable.includes('bash')) {
-    lines.push(usable.includes('read') ? 'You cannot change files or run commands: do not claim to have done so.'
-      : 'You cannot read or change local files or run commands: do not claim to have done so.');
+    lines.push(usable.includes('autoreview') ? 'You cannot change files or run arbitrary commands; autoreview runs only the installed review helper.'
+      : usable.includes('read') ? 'You cannot change files or run commands: do not claim to have done so.'
+        : 'You cannot read or change local files or run commands: do not claim to have done so.');
   }
   return lines.join('\n');
 }
@@ -1035,6 +1036,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       else if (confined(registry?.agents ?? {}, caller.name, roster)) lines.push(CONFINED_TEXT[caller.role]);
       const own = caller.role === 'main' && caller.standing ? rosterEntry(roster, caller.name) : undefined;
       if (own?.instructions) lines.push(own.instructions);
+      if (standingOf(registry?.agents ?? {}, caller.name, roster)?.tools.includes('autoreview')) lines.push(AUTOREVIEW_POLICY);
       return lines.join('\n');
     })],
   };

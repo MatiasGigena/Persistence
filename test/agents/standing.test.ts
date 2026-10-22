@@ -236,10 +236,11 @@ describe('standing agents (offline, host wiring)', { concurrency: false, timeout
       assert.match(coder, /Your tools besides the agent tools: read, write, edit, bash\. You have no others\./);
       assert.match(coder, /bash runs in a sandbox that enforces this/);
       const reviewer = await instructions('Reviewer');
-      assert.match(reviewer, /Your tools besides the agent tools: read, browser_goto\. You have no others\./);
+      assert.match(reviewer, /Your tools besides the agent tools: read, browser_goto, autoreview\. You have no others\./);
+      assert.deepEqual(await offered(instance, 'Reviewer'), [...AGENT_TOOLS, 'read', 'browser_goto', 'autoreview'].sort());
       assert.match(reviewer, protectedNote);
       assert.doesNotMatch(reviewer, /bash/);
-      assert.match(reviewer, /You cannot change files or run commands/);
+      assert.match(reviewer, /You cannot change files or run arbitrary commands/);
       const researcher = await instructions('Researcher');
       assert.match(researcher, /Your tools besides the agent tools: web_fetch\. You have no others\./);
       assert.doesNotMatch(researcher, protectedNote);
@@ -254,7 +255,8 @@ describe('standing agents (offline, host wiring)', { concurrency: false, timeout
       assert.doesNotMatch(off, protectedNote);
       const reviewerOff = await instructions('Reviewer');
       assert.match(reviewerOff, /Your tools besides the agent tools: browser_goto\. You have no others\./);
-      assert.match(reviewerOff, /Your local tools \(read\) are off/);
+      assert.match(reviewerOff, /Your local tools \(read, autoreview\) are off/);
+      assert.ok(!(await offered(instance, 'Reviewer')).includes('autoreview'));
       assert.match(reviewerOff, /You cannot read or change local files or run commands/);
       assert.equal(await instructions('Researcher'), researcher, 'no local kits: nothing changes');
       await instance.setTools(true);
@@ -262,6 +264,41 @@ describe('standing agents (offline, host wiring)', { concurrency: false, timeout
     } finally {
       await instance.close();
     }
+  });
+
+  test('the autoreview policy follows its kit into subs, custom instructions, tools-off and reopen', async t => {
+    const options = await temporary(t);
+    const seen: Turn[] = [];
+    const { models, ref } = catalog(seen, {
+      Pi: ({ user, last }) => user.includes('[Reviewer]') || last ? say('ok')
+        : call(['delegate', { agent: 'Reviewer', task: 'Investigate.' }]),
+      Reviewer: ({ last }) => last ? say('Done.') : call(['spawn_agent', { name: 'ReviewHelper', task: 'Investigate a detail.' }]),
+      ReviewHelper: () => say('Done.'),
+    });
+    const base = { ...options, models, model: ref('faux-pi'), rosterChecks: false as const,
+      roster: { Reviewer: { model: ref('faux-coder'), thinkingLevel: 'high' as const,
+        tools: ['read', 'autoreview'] as const, instructions: 'Extra review context.' } } };
+    let instance = await openInstance({ ...base, allowTools: true });
+    try {
+      await (await instance.submit('Investigate.')).wait(instance.context);
+      await settle(instance);
+      for (const name of ['Reviewer', 'ReviewHelper']) {
+        const prompt = JSON.stringify(seen.find(turn => turn.who === name)?.request.messages);
+        assert.match(prompt, /For every code review, read the installed \/autoreview skill/, name);
+        assert.match(prompt, /Always review P0–P2/, name);
+        assert.ok((await offered(instance, name)).includes('autoreview'));
+        assert.ok(!(await offered(instance, name)).includes('bash'));
+      }
+      assert.match(JSON.stringify(seen.find(turn => turn.who === 'Reviewer')?.request.messages), /Extra review context/);
+      await instance.setTools(false);
+      for (const name of ['Reviewer', 'ReviewHelper']) assert.ok(!(await offered(instance, name)).includes('autoreview'));
+    } finally { await instance.close(); }
+    instance = await openInstance({ ...base, allowTools: false });
+    try {
+      for (const name of ['Reviewer', 'ReviewHelper']) assert.ok(!(await offered(instance, name)).includes('autoreview'), name);
+      await instance.setTools(true);
+      for (const name of ['Reviewer', 'ReviewHelper']) assert.ok((await offered(instance, name)).includes('autoreview'), name);
+    } finally { await instance.close(); }
   });
 
   test('a name collision makes the existing ad-hoc agent the standing one', async (t) => {

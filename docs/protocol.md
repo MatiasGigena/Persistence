@@ -331,7 +331,8 @@ side effects. Retain the ledger and inspect uncertain changes before creating a
 new execution. Graceful connector close currently drains admitted calls, so an
 unbounded shell command may delay exit.
 
-Only native coding/read tools are supported on the workstation. They run through
+Workstations support native coding/read tools, including the `autoreview` kit's fixed helper command carried
+as a native `bash` call (no additional wire operation). They run through
 `GuardedEnv`, including hidden local state/auth, client config and ledger,
 read-only system folders and bubblewrap bash. Remote-target `browser_*` and
 `web_fetch` calls refuse instead of silently running on the server. Server-target

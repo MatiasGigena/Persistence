@@ -49,6 +49,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Reviewer always uses the installed `/autoreview` skill for code reviews, with a dedicated `autoreview` tool fixed
+  at P0–P2. It keeps read/browser access without general shell or editing tools. The helper runs through the
+  existing guarded local or pinned workstation execution path; `/tools off` disables it. Requires the skill and
+  standalone Codex on the execution machine; failures remain incomplete, not manual clean verdicts (ADR 0029).
+
 - Native SSH workstation chat (ADR 0028): `connect USER@VPS --remote-bin
   /home/USER/pi-durable-instance/bin/pi-durable` saves a machine identity and SSH destination separately from
   chat state. Interactive launches use that central chat; `--remote` overrides it once and `--local` preserves

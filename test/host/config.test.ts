@@ -79,7 +79,7 @@ test('the standing agents: settings.json\'s "agents", else the built-in roster; 
   assert.deepEqual(await launch(), DEFAULT_ROSTER, 'no settings.json');
   assert.deepEqual(Object.keys(DEFAULT_ROSTER), ['Coder', 'Reviewer', 'Researcher']);
   assert.deepEqual(DEFAULT_ROSTER.Coder, { model: { provider: 'claude-cli', modelId: 'opus' }, thinkingLevel: 'medium', tools: ['coding'] });
-  assert.deepEqual(DEFAULT_ROSTER.Reviewer?.tools, ['read', 'browser']);
+  assert.deepEqual(DEFAULT_ROSTER.Reviewer?.tools, ['read', 'browser', 'autoreview']);
   assert.deepEqual(DEFAULT_ROSTER.Researcher?.tools, ['web_fetch']);
   await writeFile(settingsPath, '{"model":"claude-cli/sonnet"}');
   assert.deepEqual(await launch(), DEFAULT_ROSTER, 'no "agents" key');

@@ -291,7 +291,8 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       launchBrowser: (dir) => { launches.push(dir); return Promise.resolve(fake as unknown as BrowserContext); } });
     try {
       assert.deepEqual(warnings, []);
-      assert.deepEqual(Object.keys(instance.kits).sort(), ['browser', 'coding', 'read', 'web_fetch']);
+      assert.deepEqual(Object.keys(instance.kits).sort(), ['autoreview', 'browser', 'coding', 'read', 'web_fetch']);
+      assert.deepEqual(instance.kits.autoreview?.tools.map(tool => tool.name), ['autoreview']);
       assert.deepEqual(instance.kits.web_fetch?.tools.map((tool) => tool.name), ['web_fetch']);
       const goto = instance.kits.browser?.tools.find((tool) => tool.name === 'browser_goto');
       assert.ok(goto);
@@ -555,6 +556,8 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
     assert.equal(localOnlyBrowser(agents, 'Reviewer', DEFAULT_ROSTER), true);
     assert.equal(localOnlyBrowser({}, 'reviewer', DEFAULT_ROSTER), true, 'the roster counts before the registry, ignoring case');
     assert.equal(localOnlyBrowser(agents, 'helper', DEFAULT_ROSTER), true);
+    assert.equal(localOnlyBrowser(agents, 'Reviewer', { Reviewer: { ...DEFAULT_ROSTER.Reviewer!, tools: ['autoreview', 'browser'] } }), true,
+      'the review helper reads local files even without the read kit');
     assert.equal(localOnlyBrowser(agents, 'Researcher', DEFAULT_ROSTER), false);
     assert.equal(localOnlyBrowser(agents, 'scout', DEFAULT_ROSTER), false);
     assert.equal(localOnlyBrowser(agents, '1', DEFAULT_ROSTER), false, 'Pi browses freely');

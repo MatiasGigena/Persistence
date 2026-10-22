@@ -96,6 +96,43 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     } finally { await instance.close(); }
   });
 
+  test('the dedicated review tool dispatches only its fixed helper command to the delegated machine', async t => {
+    const options = await temporary(t);
+    const recorded = recorder();
+    const seen: Turn[] = [];
+    const catalog = offlineModels(router({
+      Pi: ({ user, last }) => user.includes('[Reviewer]') || last ? say('done')
+        : call(['delegate', { agent: 'Reviewer', task: 'Review local work.' }]),
+      Reviewer: ({ last }) => last ? say('Reviewed.') : call(['autoreview', { mode: 'local', base: 'candidate-base' }]),
+    }, seen));
+    const instance = await openInstance({ ...options, ...catalog, ...recorded, allowTools: true,
+      roster: { Reviewer: { model: catalog.model, thinkingLevel: 'high', tools: ['read', 'browser', 'autoreview'] } }, rosterChecks: false });
+    try {
+      await submit(instance, 'Review.', 'review-remote', laptop);
+      await settleAgents(instance, { intervalMs: 5 });
+      assert.equal(recorded.calls.length, 1);
+      assert.deepEqual(recorded.calls[0]?.target, laptop);
+      assert.equal(recorded.calls[0]?.name, 'bash', 'the existing guarded connector and ledger execute the fixed command');
+      assert.match(String(recorded.calls[0]?.args.command), /--max-priority=P2/);
+      assert.match(String(recorded.calls[0]?.args.command), /--engine=codex/);
+      assert.match(String(recorded.calls[0]?.args.command), /--base=candidate-base/);
+      const reviewer = seen.find(turn => turn.who === 'Reviewer');
+      assert.ok(reviewer);
+      const registry = await instance.harness.snapshot(AgentsDoc, instance.context);
+      const id = registry?.agents.Reviewer?.conversationId;
+      assert.ok(id);
+      const conversation = await instance.harness.conversation(id, instance.context);
+      assert.ok(conversation);
+      const tools = (await conversation.agent(instance.context)).tools.map(tool => tool.name);
+      assert.ok(tools.includes('autoreview'));
+      for (const name of ['bash', 'write', 'edit']) assert.ok(!tools.includes(name), name);
+      await instance.setTools(false);
+      const state = await instance.harness.snapshot(AgentDoc, id, instance.context);
+      assert.ok(Array.isArray(state?.tools));
+      assert.ok(!state.tools.includes('autoreview'));
+    } finally { await instance.close(); }
+  });
+
   test('request destination is persisted before busy rejection and survives reopen', async t => {
     const options = await temporary(t);
     const recorded = recorder();

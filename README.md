@@ -72,7 +72,7 @@ automatically.
 
 Every remote message pins the exact workstation and launch directory; spawned
 agents and newly delegated standing-agent sessions inherit that target. Existing
-sessions never move. The connector supports coding/read tools only; remote-target
+sessions never move. The connector supports coding/read tools and autoreview's fixed helper command; remote-target
 `browser_*` and `web_fetch` calls refuse rather than run on the VPS. Offline tools
 wait for that same target, never run on the VPS or another computer. A dropped network link does not cancel a running
 local command. Exit currently waits for admitted local calls to finish and cache
@@ -155,11 +155,14 @@ Pi is the session agent, with a standing team (each configurable in `settings.js
 | Agent | Model | Effort | Kits |
 |---|---|---|---|
 | Coder | `claude-cli/opus` | `medium` | coding |
-| Reviewer | `openai-codex/gpt-6.1-sol` | `xhigh` | read, browser |
+| Reviewer | `openai-codex/gpt-6.1-sol` | `xhigh` | read, browser, autoreview |
 | Researcher | `openai-codex/gpt-6.1-sol` | `high` | web_fetch |
 
 `delegate` starts a fresh session for a standing agent's task; `send_message`
 steers its current task. Pi can also spawn ad-hoc main agents. Main agents spawn sub agents.
+Reviewer must use our installed `/autoreview` skill for every code review, always through **P2** (P0–P2).
+Its dedicated tool runs the helper on the pinned machine without granting a general shell or file edits;
+`/tools off` disables it. See [setup](docs/operations.md#autoreview) and [workflow](docs/agents.md#reviewer-always-autoreview-through-p2).
 
 ```
 Pi ─┬─ main agent ─┬─ sub agent
@@ -198,9 +201,10 @@ routing scope, not project-only confinement. There is no per-command approval; i
 before requesting another execution.
 
 For server-target agents, browser egress checks allow loopback/private apps, refuse link-local and Tailscale/CGNAT
-addresses, and refuse public addresses when the agent also has a read/coding kit (the default Reviewer).
+addresses, and refuse public addresses when the agent also has a read/coding/autoreview kit (the default Reviewer).
 `web_fetch` accepts public destinations only, on every redirect too. Remote-target network kits are unsupported.
-The host does not load ordinary Pi extensions, guards, skills, MCP servers, or project instruction files.
+The host does not autoload ordinary Pi extensions, guards, skills, MCP servers, or project instruction files;
+Reviewer's dedicated tool is an explicit integration with the installed autoreview skill.
 
 ## Project layout
 
@@ -211,7 +215,7 @@ src/host/           terminal chat, /commands, reply watcher; CLI options and pat
 src/runtime/        Harness, extensions, Pi's agent config; resume and agent settling
 src/memory/         UniiChat memory: log, tree, view, compactor, extension
 src/agents/         standing roster, hierarchy, sessions and messaging
-src/tools/          browser and web_fetch kits
+src/tools/          browser, web_fetch and autoreview kits
 src/machines/       persistent target routing for runs and spawned agents
 src/client/         socket/SSH TUI, stdio bridge, local execution ledger
 src/protocol/       native chat and machine-execution messages

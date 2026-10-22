@@ -68,7 +68,7 @@ commit (`syncAgents`), with registry field `standing: true`. The built-in roster
 | Name | Model | Effort | Tool kits |
 |---|---|---|---|
 | `Coder` | `claude-cli/opus` | `medium` | `coding` |
-| `Reviewer` | `openai-codex/gpt-6.1-sol` | `xhigh` | `read`, `browser` |
+| `Reviewer` | `openai-codex/gpt-6.1-sol` | `xhigh` | `read`, `browser`, `autoreview` |
 | `Researcher` | `openai-codex/gpt-6.1-sol` | `high` | `web_fetch` |
 
 `settings.json` may replace it with an `"agents"` object keyed by name: `model` and `tools` (kits) are required,
@@ -88,11 +88,35 @@ The tool kits:
 |---|---|
 | `coding` | `read`, `write`, `edit`, `bash`, through `GuardedEnv` as Pi's |
 | `read` | `read` |
+| `autoreview` | `autoreview`: the installed skill helper, fixed P0–P2, through guarded/routed execution; no general shell or editing tools |
 | `browser` | `browser_goto`, `browser_eval`, `browser_console`, `browser_network`, `browser_fill`, `browser_click`, `browser_screenshot`, `browser_close` |
 | `web_fetch` | `web_fetch` |
 
 A kit the host lacks gives its agents none of its tools, with one launch warning naming them (`missingKits`). The
 agent tools come on top of the kits, as for every main agent.
+
+### Reviewer: always /autoreview, through P2
+
+For every code review the default Reviewer must read the installed `/autoreview` skill and call its dedicated
+`autoreview` tool. The policy follows the kit into every task session and its subs, after custom instructions.
+Debugging and browser checks do not replace a code review. The tool fixes `--max-priority P2` (P0, P1 and P2),
+starts with Codex and the standalone CLI, and allows only Pi as an explicit fallback after a diagnosed, reported
+Codex availability failure—not for slow progress, rate limits, isolation/safety refusals or unwanted findings.
+
+Its arguments select `mode` (`local`, `branch`, `commit`), optional `repository`, `base`, `commit`, `prompt`,
+`promptFiles`, `datasets` and fallback `engine`. Branch mode requires a base; local mode includes dirty and untracked
+work; commit mode defaults to HEAD. No raw command, severity override, output path or isolation switch is exposed.
+The existing guarded shell implementation runs only this fixed helper command, on the session's pinned machine;
+SSH connectors use their existing bash permission check and durable execution ledger. Reviewer still has no
+`bash`, `write` or `edit` tool and cannot message the Coder directly.
+
+`--no-tools` and `/tools off` remove `autoreview` with the other local kits. Missing skills/credentials, failures,
+filtered or incomplete reviews are blockers, never clean reports or a reason to substitute a manual review. Helper
+exit codes and output are preserved (exit 1 can mean findings); interrupted calls are not automatically repeated.
+The helper still owns Git capture, reviewer isolation, result validation and cleanup. Install its prerequisites on
+**each execution machine** ([operations.md](operations.md#autoreview)). Nothing is copied from this repo or deployed
+automatically. A custom `settings.json` roster replaces the default: add `"autoreview"` to its reviewer's `tools`
+explicitly to retain this workflow. The host does not otherwise autoload ordinary Pi skills.
 
 ## Sessions: one per task
 
@@ -328,7 +352,7 @@ await syncAgents(harness, context, { childAgent, roster, kits });   // create mi
 2. **Standing agents and their subs.** A standing agent's roster entry overrides model, thinking level and tools: its
    tools become the five agent tools plus its kits' tools, and each kit's extension is selected. A sub of a standing
    agent takes its main agent's entry, then `subModel` and `subThinkingLevel` when given. The local kits (`coding`,
-   `read`) apply only while Pi's coding tools are on; `browser` and `web_fetch` stay offered, since they touch no local
+   `read`, `autoreview`) apply only while Pi's coding tools are on; `browser` and `web_fetch` stay offered, since they touch no local
    files. Their calls refuse in remote-target sessions until remote network-kit support exists.
    Its instructions are Pi's with Pi's coding-tools line (the one naming bash) replaced by its own: the kit tools it
    has now, the protected-folders note only while it has a local kit's tools, which of its local tools are off, and
@@ -356,7 +380,7 @@ session can still run: `/tools off` reaches them too.
 
 With machine routing enabled ([ADR 0028](decisions/0028-remote-machines-over-ssh.md)),
 model requests, agent state and delivery stay on the central server; coding/read
-tools run on an immutable `{machineId, cwd, label}` destination:
+tools and autoreview's fixed helper command run on an immutable `{machineId, cwd, label}` destination:
 
 - A routed user message binds its request ID and root run to its destination. A
   busy root rejects routed user sends, rather than steering an existing run onto
@@ -388,7 +412,7 @@ tools run on an immutable `{machineId, cwd, label}` destination:
   exact launch cwd, never another workstation or the VPS. Its own per-process
   coding/read grant is required in addition to the server gate; it starts off
   unless the remote launch explicitly uses `--allow-tools` or `/tools on`.
-- The initial workstation connector supports coding/read kits only. A
+- The workstation connector supports coding/read kits and autoreview's fixed helper command. A
   remote-target session's `browser_*` and `web_fetch` calls refuse, never run on
   the server as a fallback. This includes the Researcher's fetches. Server-target
   sessions keep the browser/web-fetch kits and their existing egress checks.

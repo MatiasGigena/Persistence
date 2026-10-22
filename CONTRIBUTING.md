@@ -79,21 +79,21 @@ Give each test its own temporary data directory.
 
 - Keep persisted identifiers stable. Existing databases and memory directories
   depend on them:
-  - extension names `uniichat`, `agents`, `browser` and `web-fetch`;
+  - extension names `uniichat`, `agents`, `browser`, `web-fetch` and `autoreview`;
   - entry kinds `agents.report`, `agents.message`, `host.resume-boundary`;
   - task kinds `agents.anchor` and `agents.deliver`, and their versions;
   - the doc kind `agents.registry`, and its agents' fields, `standing`, `past` and `session` among them;
   - the `agents.deliver` task memo field `session` (the conversation a message delivery chose);
   - the optional `session` number (from 1) in `agents.report` entry data;
   - tool names `zoom`, `date`, `spawn_agent`, `list_agents`, `send_message`,
-    `last_message`, `stop_agent`, `delegate`, `web_fetch`, and the browser's `browser_goto`,
+    `last_message`, `stop_agent`, `delegate`, `web_fetch`, `autoreview`, and the browser's `browser_goto`,
     `browser_eval`, `browser_console`, `browser_network`, `browser_fill`, `browser_click`,
     `browser_screenshot`, `browser_close`;
   - memory kinds `user`, `pi`, `tool`, `echo`, `work`, `note`, and the `src` key formats;
   - the file names `chat.sqlite`, `<database>.lock`, `settings.json` and its `model`,
     `thinkingLevel` and `agents` keys (each agent's `model`, `thinkingLevel`, `tools`,
     `instructions`, `subModel`, `subThinkingLevel`, and the kit names `coding`, `read`,
-    `browser`, `web_fetch`), the `.unii` directory, and its `main/`, `tree/`, `view.json`,
+    `browser`, `web_fetch`, `autoreview`), the `.unii` directory, and its `main/`, `tree/`, `view.json`,
     `browser/<agent name, or conversation id for unnamed callers>/`.
   A change to any of these needs a migration and an ADR.
 - One writer per database. Keep every write under the CLI's flock.

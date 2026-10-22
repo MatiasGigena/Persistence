@@ -19,6 +19,7 @@ import type { AgentRecord, AgentsSetup, Roster, StandingAgent, ToolKits } from '
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
+import { createAutoreviewExtension } from '../tools/autoreview.ts';
 import { createBrowserExtension } from '../tools/browser.ts';
 import type { BrowserOptions } from '../tools/browser.ts';
 import { createWebFetchExtension } from '../tools/web-fetch.ts';
@@ -54,7 +55,7 @@ export interface InstanceOptions {
   /** The standing agents (ADR 0027); default none. The host passes settings.json's roster, or the built-in one. */
   readonly roster?: Roster;
   /**
-   * Tool kits that replace this instance's own (`coding`, `read`, `browser`, `web_fetch`), by kit; tests use it. A kit's
+   * Tool kits that replace this instance's own (`coding`, `read`, `browser`, `web_fetch`, `autoreview`), by kit; tests use it. A kit's
    * extension is installed in the registry on every launch. A standing agent's kit that no one supplies gives it none
    * of its tools.
    */
@@ -97,7 +98,7 @@ export interface Instance {
   setModel(model: ModelRef): Promise<void>;
   /**
    * Turn the coding tools on or off for Pi and every agent, with Pi's instructions to match; for standing agents, the
-   * `coding` and `read` kits. Rejects on an inspection.
+   * `coding`, `read` and `autoreview` kits. Rejects on an inspection.
    */
   setTools(enabled: boolean): Promise<void>;
   /** Set Pi's and its ad-hoc agents' reasoning effort from their next request. Checks nothing. Rejects on an inspection. */
@@ -184,11 +185,11 @@ const rosterEntry = (roster: Roster, name: string): StandingAgent | undefined =>
 
 /**
  * Whether browser key `key` gets a local-only browser: the agent, or a sub's main, is a standing agent whose roster
- * entry has a kit that reads local files (`read`, `coding`), so its browser cannot carry those files off the machine.
+ * entry has a kit that reads local files (`read`, `coding`, `autoreview`), so its browser cannot carry those files off the machine.
  * The roster's own names count even before the registry knows them.
  */
 export function localOnlyBrowser(agents: Readonly<Record<string, AgentRecord>>, key: string, roster: Roster): boolean {
-  const readsFiles = (name: string): boolean => (rosterEntry(roster, name)?.tools ?? []).some(kit => kit === 'read' || kit === 'coding');
+  const readsFiles = (name: string): boolean => (rosterEntry(roster, name)?.tools ?? []).some(kit => kit === 'read' || kit === 'coding' || kit === 'autoreview');
   if (readsFiles(key)) return true;
   const agent = Object.entries(agents).find(([name]) => name.toLowerCase() === key.toLowerCase())?.[1];
   if (agent?.role !== 'sub') return false;
@@ -331,13 +332,18 @@ export async function openInstance({
     localOnly: (key: string) => localKeys.has(key) || localOnlyBrowser({}, key, roster),
     ...chromium ? { executablePath: chromium } : {}, ...launchBrowser ? { launch: launchBrowser } : {} });
   const WebFetch = createWebFetchExtension();
+  const bash = codingTools.tools?.find(tool => tool.name === 'bash');
+  if (!bash) throw new Error('The guarded bash implementation is missing.');
+  const Autoreview = createAutoreviewExtension(bash);
   const available: ToolKits = { ...builtinKits(), browser: { extension: Browser, tools: Browser.tools },
-    web_fetch: { extension: WebFetch, tools: WebFetch.tools }, ...extraKits };
+    web_fetch: { extension: WebFetch, tools: WebFetch.tools },
+    autoreview: { extension: Autoreview, tools: Autoreview.tools }, ...extraKits };
   const kits: ToolKits = Object.fromEntries(Object.entries(available).map(([name, kit]) => {
     if (!routing || !kit.extension) return [name, kit];
     // Never reinstall the unwrapped coding-tools extension through a standing agent's kit.
-    // Network kits retain their own protections on the server and explicitly refuse remote targets.
-    const extension = kit.extension.name === CodingTools.name ? codingTools : routing.localOnly(kit.extension);
+    // Autoreview already calls routed bash; network kits stay server-only with their own protections.
+    const extension = kit.extension.name === CodingTools.name ? codingTools
+      : kit.extension === Autoreview ? Autoreview : routing.localOnly(kit.extension);
     const names = new Set(kit.tools.map(tool => tool.name));
     return [name, { ...kit, extension, tools: (extension.tools ?? []).filter(tool => names.has(tool.name)) }];
   }));
