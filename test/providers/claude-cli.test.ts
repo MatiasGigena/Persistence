@@ -77,13 +77,17 @@ function parseCall(line: string): Call {
     tools: isList(o.tools) ? o.tools : [], killed: o.killed === true };
 }
 
-/** A provider whose `claude` is the fake CLI playing `script`; `calls()` reads what each call received. */
+const shellQuote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
+
+/** A provider with a fake CLI; calls() records JS activity, pids() records launches even before Node starts. */
 async function fakeCli(t: TestContext, script: FakeClaudeStep[] = [],
   { auth, env: extra = {}, idleTimeoutMs }: { auth?: Json; env?: NodeJS.ProcessEnv; idleTimeoutMs?: number } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'pi-durable-fake-claude-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const bin = join(dir, 'claude');
-  await writeFile(bin, `#!/bin/sh\nexec "${process.execPath}" "${FAKE}" "$@"\n`, { mode: 0o755 });
+  const bin = join(dir, 'claude'), pidsFile = join(dir, 'pids');
+  await writeFile(pidsFile, '', { mode: 0o600 });
+  // exec preserves the shell PID, so cold Node startup cannot hide a child that should have been killed.
+  await writeFile(bin, `#!/bin/sh\nprintf '%s\\n' "$$" >> ${shellQuote(pidsFile)}\nexec ${shellQuote(process.execPath)} ${shellQuote(FAKE)} "$@"\n`, { mode: 0o755 });
   const log = join(dir, 'calls.jsonl'), scriptFile = join(dir, 'script.json');
   await writeFile(log, '');
   await writeFile(scriptFile, JSON.stringify(script));
@@ -93,9 +97,15 @@ async function fakeCli(t: TestContext, script: FakeClaudeStep[] = [],
   const models = createModels();
   models.setProvider(claudeCliProvider({ env, bin, ...idleTimeoutMs === undefined ? {} : { idleTimeoutMs } }));
   const calls = async () => (await readFile(log, 'utf8')).split('\n').filter(Boolean).map(parseCall);
+  const pids = async (): Promise<number[]> => (await readFile(pidsFile, 'utf8')).split('\n').filter(Boolean).map(line => {
+    assert.match(line, /^[1-9]\d*$/);
+    const pid = Number(line);
+    assert.ok(Number.isSafeInteger(pid));
+    return pid;
+  });
   const model = models.getModel('claude-cli', 'haiku');
   assert.ok(model);
-  return { dir, bin, models, model, calls };
+  return { dir, bin, models, model, calls, pids };
 }
 
 async function collect(stream: AssistantMessageEventStream) {
@@ -109,6 +119,14 @@ async function until(predicate: () => boolean | Promise<boolean>, ms = 3_000) {
     if (await predicate()) return true;
   }
   return false;
+}
+
+function processExited(pid: number): boolean {
+  try { process.kill(pid, 0); return false; }
+  catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return true;
+    throw error;
+  }
 }
 
 const user = (content: UserMessage['content'], timestamp = 1): UserMessage => ({ role: 'user', content, timestamp });
@@ -299,11 +317,19 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.equal(types.at(-1), 'error');
     assert.equal(aborted.stopReason, 'aborted');
     assert.equal(firstText(aborted), 'partial');
+    assert.ok(await until(async () => (await cli.calls()).some(c => c.killed)), 'the streaming aborted CLI handled SIGTERM');
+    const abortedPids = await cli.pids();
+    assert.equal(abortedPids.length, 1, 'the aborted request launched one CLI');
+    const abortedPid = abortedPids[0] ?? assert.fail('missing aborted CLI PID');
+    assert.ok(await until(() => processExited(abortedPid)), 'the aborted CLI process exited');
     const timed = (await collect(cli.models.streamSimple(cli.model, { messages: [user('x')] }, { timeoutMs: 300 }))).message;
     assert.equal(timed.stopReason, 'error');
     assert.match(timed.errorMessage ?? '', /timed out after 300 ms/);
     assert.ok(isRetryableAssistantError(timed));
-    assert.ok(await until(async () => (await cli.calls()).filter(c => c.killed).length === 2));
+    const pids = await cli.pids();
+    assert.equal(pids.length, 2, 'abort and timeout each launched a CLI');
+    assert.equal(new Set(pids).size, 2, 'the timeout exercised a fresh process');
+    assert.ok(await until(() => pids.every(processExited)), 'both spawned CLI processes exited, even if timeout beat Node startup');
   });
 
   test('auth check asks `claude auth status`, logged in or not', async (t) => {

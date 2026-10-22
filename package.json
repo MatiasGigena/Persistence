@@ -12,7 +12,7 @@
   },
   "scripts": {
     "start": "bash bin/pi-durable",
-    "test": "node --test \"test/**/*.test.ts\"",
+    "test": "node --test --test-concurrency=4 \"test/**/*.test.ts\"",
     "check": "tsc && tsc -p src/web && tsc -p src/web/sw && eslint --max-warnings 0 . && bash -n bin/pi-durable",
     "typecheck": "tsc && tsc -p src/web && tsc -p src/web/sw",
     "lint": "eslint --max-warnings 0 ."
