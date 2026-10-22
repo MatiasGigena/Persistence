@@ -32,8 +32,9 @@ recovery, request deduplication, queued-input recovery after a model failure, to
 opt-in and reset, synchronous FULL commits, pagination, the one global chat, lock
 exclusion, shutdown with open stdin, and exactly-once agent delivery.
 The suite runs at most four test files at once: process-heavy recovery and sandbox
-fixtures otherwise compete with the launcher's short readiness deadlines.
-Node 22 may print its expected experimental SQLite warning.
+fixtures otherwise compete with the launcher's short readiness deadlines. Launcher
+fixtures isolate client preferences, so a saved remote default never reaches a real
+server during tests. Node 22 may print its expected experimental SQLite warning.
 
 A real Codex login and model smoke test once returned `durable-ready` and exited
 successfully. Repeat one by hand after changes to credentials or model handling.

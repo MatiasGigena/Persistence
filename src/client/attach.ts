@@ -63,6 +63,9 @@ export interface AttachIo {
   /** Default: the process's terminal. */
   readonly terminal?: Terminal;
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Local execution directory for a remote connector's editor path completion. */
+  readonly cwd?: string;
+  readonly initialNotice?: string;
   /** Detaches when it aborts, as SIGTERM and SIGHUP do. */
   readonly signal?: AbortSignal;
   /** Where the closing line goes; default stdout. */
@@ -111,9 +114,12 @@ export async function runAttached(session: RemoteSession, io: AttachIo = {}): Pr
   const { error, warn } = console;
   try {
     await runTui(session, {
-      cwd: session.welcome()?.cwd ?? process.cwd(), signal: shutdown.signal, attached: session.attached,
+      cwd: io.cwd ?? session.welcome()?.cwd ?? process.cwd(), signal: shutdown.signal, attached: session.attached,
       ...io.terminal ? { terminal: io.terminal } : {}, ...io.env ? { env: io.env } : {},
-      onStart: () => { console.error = console.warn = (...args: unknown[]) => session.notify(format(...args), 'warn'); },
+      onStart: () => {
+        console.error = console.warn = (...args: unknown[]) => session.notify(format(...args), 'warn');
+        if (io.initialNotice) session.notify(io.initialNotice);
+      },
     });
   } finally {
     console.error = error;

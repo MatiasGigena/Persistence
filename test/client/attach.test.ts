@@ -151,7 +151,8 @@ test('a probed attach refuses launch settings; a server that closes the link for
 
 test('the launcher: --attach without a server fails; a busy lock with a server answering says to attach', async t => {
   const { dir, socket, config } = await chat(t);
-  const env = { ...process.env, PI_DURABLE_DATA_DIR: dir };
+  const env = { ...process.env, PI_DURABLE_DATA_DIR: dir,
+    PI_DURABLE_CLIENT_CONFIG: join(dir, 'client.json'), PI_DURABLE_REMOTE: '' };
   await assert.rejects(exec(launcher, ['--attach'], { env }), { code: 1, stderr: new RegExp(`pi-durable: No server answers at ${socket}`) });
 
   // Holds the chat's flock, as a server would; its own process group, so the sleep goes with it.

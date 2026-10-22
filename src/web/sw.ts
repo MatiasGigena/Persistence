@@ -15,7 +15,7 @@ const SHELL = [
   '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/icons/badge-96.png',
   '/main.ts', '/link.ts', '/store.ts', '/chat-view.ts', '/markdown.ts', '/format.ts', '/push.ts',
   '/panels/sheet.ts', '/panels/agents.ts', '/panels/memory.ts', '/panels/chat-settings.ts', '/panels/tools.ts', '/copy.ts',
-  '/protocol/messages.ts', '/protocol/mirror.ts', '/protocol/parse.ts', '/protocol/version.ts',
+  '/protocol/messages.ts', '/protocol/machines.ts', '/protocol/mirror.ts', '/protocol/parse.ts', '/protocol/version.ts',
   '/vendor/marked.esm.js',
 ];
 

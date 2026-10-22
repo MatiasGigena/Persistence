@@ -18,12 +18,14 @@ Usage: pi-durable [options] [prompt]
        pi-durable serve pair                     One-time code to pair a web device
        pi-durable serve devices [--revoke NAME]  List paired web devices, or revoke one
        pi-durable backup [--out DIR]             Online backup of the chat
+       pi-durable connect SSH_HOST [options]     Save the default remote server
+       pi-durable bridge                        Proxy the local server socket over stdio
 
 No prompt opens interactive chat. There is one chat, and it never ends:
 every launch, from any directory, reopens it. Tools run in the directory
 you launch from (or --cwd). When a server runs for the chat, interactive
 chat attaches to it instead (the server's model, tools and directory apply).
-A prompt whose first word is serve or backup needs -p.
+A prompt whose first word is serve, backup, connect or bridge needs -p.
 
   -p, --print TEXT       Send one prompt, print its answer, exit
   --resume               Finish interrupted work, print transcript, exit
@@ -42,7 +44,10 @@ A prompt whose first word is serve or backup needs -p.
                          on by default, with your user privileges)
   --allow-tools          Tools on (the default for a local launch; kept for scripts)
   --plain                Line-by-line chat instead of the full-screen terminal UI
-  --local                Never attach to a server; open the chat here
+  --remote SSH_HOST      Use an SSH server for this launch (else saved remote)
+  --remote-bin PATH      Remote pi-durable executable (default: pi-durable)
+  --remote-data-dir PATH Remote server state directory
+  --local                Bypass saved remote; open the chat here
   --attach               Attach to the running server, or fail
   --port N               serve: loopback TCP port for the web app (default 7433)
   --revoke NAME          serve devices: forget a device and disconnect it
@@ -62,6 +67,8 @@ Chat commands: /help, /model, /effort, /tools, /agents, /mem, /status, /exit (--
 /help, /history, /agents, /status, /exit). Ctrl+D or /exit closes the host, and
 so does Ctrl+C (twice in the terminal UI); unfinished work resumes next launch.
 Attached, they detach and the server keeps working.
+Remote machine tools are OFF unless --allow-tools is supplied for this client
+launch; --no-tools keeps them off. Saved remote preferences never grant permission.
 Tools are ON, for a local launch and for serve, unless --no-tools is supplied;
 /tools turns them on or off until the host exits, never for later launches.
 Protected folders: the chat's own state and your credentials (~/.ssh, ~/.claude,
@@ -92,7 +99,7 @@ Server environment:
 
 type Flag = 'help' | 'version' | 'allowTools' | 'noTools' | 'resume' | 'history' | 'status' | 'plain' | 'local' | 'attach';
 type Value = 'database' | 'dataDir' | 'cwd' | 'modelSpec' | 'thinkingLevel' | 'authFile' | 'requestId' | 'prompt'
-  | 'portSpec' | 'revoke' | 'out';
+  | 'portSpec' | 'revoke' | 'out' | 'remote' | 'remoteBin' | 'remoteDataDir';
 const FLAGS = new Map<string, Flag>([['--help', 'help'], ['-h', 'help'], ['--version', 'version'], ['-v', 'version'],
   ['--allow-tools', 'allowTools'], ['--no-tools', 'noTools'], ['--resume', 'resume'], ['--history', 'history'], ['--status', 'status'], ['--plain', 'plain'],
   ['--local', 'local'], ['--attach', 'attach']]);
@@ -101,29 +108,33 @@ const VALUES = new Map<string, Value>([
   ['--cwd', 'cwd'], ['--model', 'modelSpec'], ['--thinking', 'thinkingLevel'],
   ['--auth-file', 'authFile'], ['--request-id', 'requestId'], ['--print', 'prompt'], ['-p', 'prompt'],
   ['--port', 'portSpec'], ['--revoke', 'revoke'], ['--out', 'out'],
+  ['--remote', 'remote'], ['--remote-bin', 'remoteBin'], ['--remote-data-dir', 'remoteDataDir'],
 ]);
 
 /**
  * What a launch does: `chat` is every launch without a subcommand (interactive chat, a prompt, --status, …);
  * `serve` runs the server; `serve-pair`, `serve-devices` and `backup` are its admin commands.
  */
-export type Command = 'chat' | 'serve' | 'serve-pair' | 'serve-devices' | 'backup';
-const COMMANDS: readonly Command[] = ['chat', 'serve', 'serve-pair', 'serve-devices', 'backup'];
+export type Command = 'chat' | 'serve' | 'serve-pair' | 'serve-devices' | 'backup' | 'connect' | 'bridge';
+const COMMANDS: readonly Command[] = ['chat', 'serve', 'serve-pair', 'serve-devices', 'backup', 'connect', 'bridge'];
 type Key = Flag | Value;
 const LOCATION: readonly Key[] = ['help', 'version', 'database', 'dataDir'];
 /** The options each command takes; any other is an error. A prompt is the `prompt` key. */
 const ALLOWED: Readonly<Record<Command, ReadonlySet<Key>>> = {
   chat: new Set<Key>([...LOCATION, 'allowTools', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'cwd',
-    'modelSpec', 'thinkingLevel', 'authFile', 'requestId', 'prompt']),
+    'modelSpec', 'thinkingLevel', 'authFile', 'requestId', 'prompt', 'remote', 'remoteBin', 'remoteDataDir']),
   serve: new Set<Key>([...LOCATION, 'cwd', 'portSpec', 'modelSpec', 'thinkingLevel', 'authFile', 'allowTools', 'noTools']),
   'serve-pair': new Set<Key>(LOCATION),
   'serve-devices': new Set<Key>([...LOCATION, 'revoke']),
   backup: new Set<Key>([...LOCATION, 'out']),
+  connect: new Set<Key>(['help', 'version', 'remoteBin', 'remoteDataDir']),
+  bridge: new Set<Key>(LOCATION),
 };
 /** Options that set up a local launch, so an attached chat (which uses the server's) refuses them. */
 const LAUNCH_ONLY: readonly Key[] = ['allowTools', 'noTools', 'cwd', 'modelSpec', 'thinkingLevel', 'authFile', 'plain'];
 const COMMAND_NAMES: Readonly<Record<Command, string>> = {
   chat: 'chat', serve: 'serve', 'serve-pair': 'serve pair', 'serve-devices': 'serve devices', backup: 'backup',
+  connect: 'connect', bridge: 'bridge',
 };
 /** Every reasoning effort (thinking level), lowest first. */
 export const THINKING: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -137,10 +148,18 @@ const MODEL_SOURCES: readonly ModelSource[] = ['flag', 'env', 'settings', 'defau
 /** Parsed command line. `model` is the --model flag's; resolveOptions() applies the other sources. */
 export interface Options {
   command: Command;
+  /** SSH destination, set by --remote or connect's positional argument. */
+  remote?: string;
+  remoteBin?: string;
+  remoteDataDir?: string;
+  /** Explicit local-host options a remote client must reject. */
+  remoteUnsupported?: string;
   help?: boolean;
   version?: boolean;
-  /** Coding tools for this launch: on for a local chat unless --no-tools; always off for serve and admin commands. */
+  /** Coding tools for local chat and serve: on unless --no-tools; off for admin commands. */
   allowTools: boolean;
+  /** Remote execution permission: only explicit --allow-tools enables this client process. */
+  remoteAllowTools?: boolean;
   /** --no-tools was given. */
   noTools?: boolean;
   resume?: boolean;
@@ -256,6 +275,8 @@ export const errorCode = (error: unknown): unknown => error instanceof Error && 
 function command(words: readonly string[]): { command: Command; rest: readonly string[] } {
   const [first, second] = words;
   if (first === 'backup') return { command: 'backup', rest: words.slice(1) };
+  if (first === 'connect') return { command: 'connect', rest: words.slice(1) };
+  if (first === 'bridge') return { command: 'bridge', rest: words.slice(1) };
   if (first !== 'serve') return { command: 'chat', rest: words };
   if (second === 'pair') return { command: 'serve-pair', rest: words.slice(2) };
   if (second === 'devices') return { command: 'serve-devices', rest: words.slice(2) };
@@ -270,9 +291,10 @@ export function parsePort(spec: string, what: string): number {
 }
 
 export function parseArgs(args: readonly string[]): Options {
-  const options: Options = { command: 'chat', thinkingLevel: DEFAULT_THINKING, allowTools: true };
+  const options: Options = { command: 'chat', thinkingLevel: DEFAULT_THINKING, allowTools: true, remoteAllowTools: false };
   const words: string[] = [], literal: string[] = [];
   const given = new Map<Key, string>();
+  const repeated: string[] = [];
   let thinking: string = options.thinkingLevel;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
@@ -282,6 +304,7 @@ export function parseArgs(args: readonly string[]): Options {
     else if (key) {
       const value = args[++i];
       if (value === undefined || value.startsWith('--')) throw new Error(`${arg} requires a value`);
+      if (given.has(key)) repeated.push(arg);
       given.set(key, arg);
       if (key === 'thinkingLevel') { thinking = value; options.thinkingFlag = true; }
       else options[key] = value;
@@ -291,7 +314,13 @@ export function parseArgs(args: readonly string[]): Options {
   if (options.help || options.version) return options;
   const { command: chosen, rest } = command(words);
   options.command = chosen;
-  const prompts = [...rest, ...literal];
+  let prompts = [...rest, ...literal];
+  if (chosen === 'connect') {
+    if (repeated.length) throw new Error(`${repeated[0] ?? ''} must be given only once for connect`);
+    if (rest.length !== 1 || literal.length) throw new Error('Usage: pi-durable connect SSH_HOST [--remote-bin PATH] [--remote-data-dir PATH]');
+    options.remote = rest[0];
+    prompts = [];
+  }
   if (chosen !== 'chat') {
     const name = COMMAND_NAMES[chosen];
     if (prompts.length) {
@@ -309,10 +338,15 @@ export function parseArgs(args: readonly string[]): Options {
       if (spelling) throw new Error(`${spelling} applies only to ${key === 'portSpec' ? 'serve' : key === 'revoke' ? 'serve devices' : 'backup'}`);
     }
     if (options.local && options.attach) throw new Error('Choose either --local or --attach');
+    if (options.local && options.remote !== undefined) throw new Error('Choose either --local or --remote');
+    if (options.local && (options.remoteBin !== undefined || options.remoteDataDir !== undefined)) throw new Error('--remote-bin and --remote-data-dir do not apply to --local');
+    const remoteLocal: readonly Key[] = ['database', 'dataDir', 'modelSpec', 'thinkingLevel', 'authFile', 'plain', 'resume', 'history', 'status', 'prompt', 'requestId'];
+    options.remoteUnsupported = remoteLocal.map(key => given.get(key)).find(spelling => spelling !== undefined);
     const local = LAUNCH_ONLY.map(key => given.get(key)).find(spelling => spelling !== undefined);
     if (local && options.attach) throw new Error(`${local} does not apply to --attach: the server's settings apply (use /model and /tools there)`);
     if (local) options.launchOption = local;
   }
+  options.remoteAllowTools = chosen === 'chat' && given.has('allowTools') && !options.noTools;
   if (options.portSpec !== undefined) options.port = parsePort(options.portSpec, '--port');
   if (options.revoke !== undefined && !options.revoke.trim()) throw new Error('--revoke requires a device name');
   if (prompts.length && options.prompt !== undefined) throw new Error('Use either --print or a positional prompt, not both');
@@ -524,6 +558,17 @@ function parseOrigin(value: string): string {
   return url.origin;
 }
 
+/** The bridge only locates the existing socket: no directories, model settings or credentials are loaded. */
+export async function resolveSocketPath(options: Pick<Options, 'database' | 'dataDir'>, env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const dataDir = resolve(options.dataDir ?? env.PI_DURABLE_DATA_DIR ?? join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'pi-durable'));
+  let databasePath = resolve(options.database ?? join(dataDir, 'chat.sqlite'));
+  try { databasePath = await realpath(databasePath); }
+  catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
+  const socket = statePaths(databasePath, env).socket;
+  if (socket === undefined) throw new Error('This chat has no server socket: its path is too long and XDG_RUNTIME_DIR is unset');
+  return socket;
+}
+
 export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
   const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
   const dataDir = resolve(options.dataDir ?? env.PI_DURABLE_DATA_DIR ?? join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'pi-durable'));
@@ -552,9 +597,10 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
 }
 
 const STRINGS = ['cwd', 'dataDir', 'databasePath', 'memoryDir', 'settingsPath', 'serveDir', 'authFile'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out', 'launchOption', 'chromium'] as const satisfies readonly (keyof Config)[];
+const OPTIONAL_STRINGS = ['database', 'modelSpec', 'requestId', 'prompt', 'socketPath', 'portSpec', 'revoke', 'out', 'launchOption', 'chromium',
+  'remote', 'remoteBin', 'remoteDataDir', 'remoteUnsupported'] as const satisfies readonly (keyof Config)[];
 const BOOLEANS = ['allowTools', 'exists', 'inspectOnly'] as const satisfies readonly (keyof Config)[];
-const OPTIONAL_BOOLEANS = ['help', 'version', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'thinkingFlag'] as const satisfies readonly (keyof Config)[];
+const OPTIONAL_BOOLEANS = ['help', 'version', 'noTools', 'resume', 'history', 'status', 'plain', 'local', 'attach', 'thinkingFlag', 'remoteAllowTools'] as const satisfies readonly (keyof Config)[];
 const isPort = (x: unknown): boolean => typeof x === 'number' && Number.isInteger(x) && x >= 1 && x <= 65535;
 
 function isServeSettings(x: unknown): x is ServeSettings {

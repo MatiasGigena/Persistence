@@ -91,9 +91,138 @@ cd /path/to/project
 tmux attach -t pi-durable
 ```
 
+## Remote workstations over SSH
+
+This keeps the chat, models, memory and agents on one server, but runs coding
+tools on the workstation where you launched the TUI. It is the native chat
+protocol over SSH, not a generic external MCP integration. The following is a
+setup recipe; no live VPS deployment is implied.
+
+### Configure once
+
+1. Install this application on the VPS and workstation. On the VPS, sign into
+   the model provider and start [Server mode](#server-mode). The server must
+   already be running; the bridge never starts a host for it.
+2. Verify the VPS's SSH host-key fingerprint through a trusted channel and
+   establish its known-host entry with your normal SSH client. Arrange
+   noninteractive authentication (for example an unlocked SSH agent). Test
+   `ssh USER@VPS true`; the application uses `BatchMode=yes` and
+   `StrictHostKeyChecking=yes`, so it neither prompts for credentials nor trusts
+   a new host key. Put custom ports, identities and aliases in `~/.ssh/config`.
+3. On the workstation, save the destination, using the remote executable's
+   absolute path (replace `USER@VPS` and `USER`):
+
+   ```sh
+   pi-durable connect USER@VPS --remote-bin /home/USER/pi-durable-instance/bin/pi-durable
+   cd /path/to/project
+   pi-durable                         # shared chat, local coding tools OFF
+   pi-durable --allow-tools           # explicitly grant this process's tools
+   ```
+
+`connect` writes `~/.config/pi-durable/client.json` with a stable `machineId` and
+`ssh` preferences (`host`, optional `command` and `dataDir`). It does not connect,
+copy credentials, enable tools, or create a local chat. `--remote-data-dir
+/absolute/PATH` selects the remote server's nondefault state directory; it and
+`--remote-bin` are interpreted literally, without tilde or environment expansion.
+The default executable is `pi-durable` on the remote PATH.
+
+The client runs `ssh -T … USER@VPS '…/pi-durable' 'bridge'`, with forwarding
+disabled. `bridge` proxies stdin/stdout to the existing, owner-checked mode 600
+Unix socket; diagnostics go only to stderr. It opens no database, model runtime,
+Harness, flock, TCP listener or SSH forwarding port. The remote login shell must
+not print banners to stdout for noninteractive commands. Use the same application
+version on both ends (protocol 3); routed busy-root sends now reject instead of
+queueing or steering, so update clients and server together. The client also
+refuses a server without machine-routing capability before sending a message.
+
+### Launch routing and permission
+
+```sh
+pi-durable --remote USER@VPS --remote-bin /home/USER/pi-durable-instance/bin/pi-durable  # once only
+pi-durable --cwd /path/to/another/project                               # saved server
+pi-durable --local                                                    # old local chat
+pi-durable --local --history                                           # inspect local state
+```
+
+Selection is `--remote`, then `PI_DURABLE_REMOTE`, then the saved SSH destination.
+An explicit or environment host does not inherit the saved host's executable or
+data-dir overrides: supply those again when needed. `--local` bypasses all saved
+remote preferences, even a damaged configuration. To remove the saved default,
+remove only `ssh` from `client.json`, retaining `machineId`; also unset
+`PI_DURABLE_REMOTE` if used.
+
+Remote chat requires terminal stdin and stdout. One-shot/positional prompts,
+pipes, `--history`, `--status`, `--resume`, `--plain`, `--request-id`, `--model`,
+`--thinking`, `--auth-file`, `--database` and `--data-dir` are refused in remote
+mode. A bad configuration, missing SSH login, stopped/old server or unsupported
+mode fails closed, never falling back to the local chat. Use `/model` for the
+server's model and `--remote-data-dir` for its socket location. Admin commands
+(`serve`, `backup`, pairing/devices) still operate on the machine where invoked;
+run them on the VPS through your normal SSH shell.
+
+- Every remote connector process starts with its own coding/read tools off unless `--allow-tools` is
+  passed, even though local launches and `serve` default to guarded coding tools
+  on. `/tools on` asks for confirmation and enables both this connector's
+  local grant and the server gate; `/tools off` revokes them. Neither permission
+  is saved. Another connector being enabled does not authorize this one. A
+  server restart restores its launch policy (on unless `--no-tools`), but cannot
+  grant a new connector permission.
+- Each submitted message pins the exact stable `machineId` and canonical launch
+  `cwd`; the footer and dispatch notices identify the destination. New main/sub
+  agents inherit their spawner's pin and keep it across model/tools changes and
+  restart. A standing agent's newly delegated session inherits the delegating run's
+  pin; old sessions and their subs keep theirs. Sending an existing agent a
+  message does not move it to your machine.
+- Routed user messages are refused while Pi's root run is busy. In particular,
+  another workstation cannot steer an active run onto its own files; wait for
+  the run to finish and send again. A rejected request ID remains bound to its
+  original destination.
+- New agent messages/reports carry their exact source session's destination, so
+  Pi can continue and delegate review after a report without changing machines.
+  Unmapped legacy reports, mixed-machine inputs and older unpinned sessions cannot
+  acquire an implicit server destination; start a new routed task for those cases.
+- The connector supports `read`, `write`, `edit` and `bash` (the coding/read kits).
+  `browser_*` and `web_fetch` are unsupported for remote-target sessions: they
+  refuse, never silently run on the VPS. In particular, the standing Researcher
+  cannot fetch pages for a remote-target task yet. Server-target sessions retain
+  their existing network kits and egress rules.
+- A cwd pin is routing scope, **not project-only confinement**. The connector's
+  `GuardedEnv` hides standard local state and credentials, its client config
+  directory and execution ledger, makes system folders read-only, and runs bash
+  in bubblewrap (see [Protected folders](#protected-folders)). Outside those
+  protections, native tools accept absolute paths and retain the workstation
+  user's permissions. There is no per-command approval.
+
+### Disconnects, shutdown and uncertain effects
+
+An offline or disabled connector leaves a call waiting for that exact machine
+and cwd. It never runs on the server or another device. A network disconnect
+alone does not cancel a command already running on the workstation; reconnecting
+resends the same execution ID, which joins live work or returns its cached result.
+The current remote CLI's exit path waits for admitted local calls to finish and
+be durably cached before closing the link. A bash call with no timeout can delay
+exit indefinitely; use explicit stop/cancel when needed, understanding that it is
+not rollback. A server shutdown may also send cancellation.
+
+The workstation keeps `machine-tools/` (below), not a local chat. It hashes each
+execution ID to a directory, durably writes and fsyncs the intent and payload
+fingerprint **before** invoking a tool, and atomically fsyncs its result. Reusing
+an ID with changed arguments is refused. A worker crash that leaves an unresolved
+intent returns an error with `INDETERMINATE`, never automatically repeats the
+side effect. Oversized results are discarded and cached as `RESULT_TOO_LARGE`.
+
+This is duplicate prevention, not transactional exactly-once bash. A command may
+have changed files before crashing or being cancelled. A server restart is also
+not the same as a link reconnect: native unsafe tool tasks may settle as
+interrupted/unknown rather than resume dispatch. Inspect the workstation and its
+ledger before requesting a new execution. Retain the ledger; deleting it or
+restoring an older copy removes replay protection. It is not part of the server's
+chat backup, and may contain private arguments, file contents and results.
+
 ## Phone access (SSH/mosh)
 
-The terminal UI works on a phone at 40 to 60 columns and about 15 rows with the
+This is a shell on the VPS, not a workstation tool connector: tools run on the
+VPS. The terminal UI works on a phone at 40 to 60 columns and about 15 rows with the
 keyboard open. Below 60 columns it hides the header line, shortens the footer
 (the tools state always stays), shows one argument per tool call with a 2-line
 preview, removes panel margins and shortens key hints. The spinner slows to 4
@@ -169,11 +298,14 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
 
 ## Protected folders
 
-Coding tools are on by default, for Pi and every agent, local or `serve` (ADR 0025). They act as your user, except:
+Coding tools are on by default for local launches and `serve` (ADR 0025); an SSH
+connector needs its own explicit grant. Pi and agents with coding/read kits use
+the same guarded environment on the execution machine. Tools act as your user, except:
 
 | Kind | Paths | The tools |
 |---|---|---|
 | The chat's state | the data directory; the database, its WAL, lock and socket; `chat.unii/` (with the browser profiles); `settings.json`; `serve/`; `backups/` | cannot read or change |
+| Connector state (on a workstation) | client config directory (including `client.json` and `machine-id`), `machine-tools/` ledger | cannot read or change |
 | Credentials | Pi's `auth.json`, `~/.ssh`, `~/.gnupg`, `~/.claude`, `~/.claude.json`, `~/.config/gh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc` | cannot read or change |
 | System | `/etc`, `/usr`, `/boot`, `/opt`, `/bin`, `/sbin`, `/lib*`, `/srv`, `/var/lib` | can read, not change |
 
@@ -189,7 +321,10 @@ and bash answers the same way.
 
 ## Standing agents' network tools
 
-The standing agents (ADR 0027, [agents.md](agents.md)) are held to more than the protected folders:
+For server-target sessions, the standing agents (ADR 0027, [agents.md](agents.md))
+are held to more than the protected folders. Remote-target network calls are
+currently refused; the connector supports coding/read kits only.
+
 
 - `web_fetch` (the Researcher's) refuses loopback, private, link-local, CGNAT (Tailscale) and unique-local addresses,
   on every redirect too.
@@ -204,7 +339,10 @@ The standing agents (ADR 0027, [agents.md](agents.md)) are held to more than the
 
 | Path | What |
 |---|---|
-| `${XDG_STATE_HOME:-~/.local/state}/pi-durable/` | default data dir |
+| `${XDG_STATE_HOME:-~/.local/state}/pi-durable/` | default local/server chat data dir |
+| `${XDG_CONFIG_HOME:-~/.config}/pi-durable/client.json` | workstation identity and default SSH destination; mode 600, no permissions or model credentials |
+| `${XDG_CONFIG_HOME:-~/.config}/pi-durable/machine-id` | stable workstation UUID when no saved client config supplies one |
+| `${XDG_STATE_HOME:-~/.local/state}/pi-durable/machine-tools/` | workstation execution ledger: hashed call directories, intents and cached results; independent of the chat |
 | `<data dir>/chat.sqlite` | the one chat: Pi, agents, tasks |
 | `<data dir>/chat.sqlite-wal`, `chat.sqlite-shm` | SQLite WAL files |
 | `<data dir>/chat.sqlite.lock` | the flock file |
@@ -215,7 +353,12 @@ The standing agents (ADR 0027, [agents.md](agents.md)) are held to more than the
 | `<data dir>/backups/` | `pi-durable backup`'s backups, one directory each, mode 700; kept 14 days |
 | `<data dir>/serve/` | `pi-durable serve`'s state, mode 700: `vapid.json` and `push.json` (see [Push notifications](#push-notifications)), `devices.json`; files mode 600 |
 
-- `--data-dir PATH` or `PI_DURABLE_DATA_DIR` changes the data dir.
+- `PI_DURABLE_CLIENT_CONFIG` overrides the workstation's client config path;
+  `machine-id` sits beside it. `XDG_CONFIG_HOME` sets its default root. None of
+  these files stores a tools grant. Do not copy one machine's identity to another.
+- The workstation ledger uses `XDG_STATE_HOME`, not `--data-dir` or
+  `PI_DURABLE_DATA_DIR`; it is separate from the server's chat and backup.
+- In local/server mode, `--data-dir PATH` or `PI_DURABLE_DATA_DIR` changes the data dir.
 - `--database PATH` selects a specific SQLite file. Its memory goes beside it:
   `PATH` with `.sqlite` replaced by `.unii`, or with `.unii` appended if `PATH` does
   not end in `.sqlite`. Its lock is `PATH.lock`.
@@ -236,8 +379,9 @@ The standing agents (ADR 0027, [agents.md](agents.md)) are held to more than the
   default. A committed write survives power loss.
 - Memory log lines and tree nodes are fsynced as they are appended; `view.json` is
   replaced atomically.
-- Every work launch resumes pending tasks and submissions. Input left queued by a
+- Every host work launch resumes pending tasks and submissions. Input left queued by a
   failed model request is advanced with an empty `host.resume-boundary` entry.
+  Remote clients do not open or recover a local chat; the central server owns recovery.
 - Ctrl+C (twice within a second in the terminal UI; once with `--plain`), Ctrl+D,
   `/exit`, SIGTERM, and SIGHUP close the Harness and transport without aborting
   durable work, and restore the terminal. Reopening resumes it. In the terminal UI,
@@ -245,7 +389,9 @@ The standing agents (ADR 0027, [agents.md](agents.md)) are held to more than the
   or `/stop` in the terminal UI interrupts Pi's current run only.
 - Interrupted model requests can be reissued, which costs additional provider usage.
   A failed terminal submission is not retried with a new prompt.
-- Agent messages and reports are delivered exactly once across crashes.
+- Agent messages and reports are delivered exactly once across crashes. This
+  guarantee is delivery, not external tool side effects; see
+  [Disconnects, shutdown and uncertain effects](#disconnects-shutdown-and-uncertain-effects).
 - External effects are not exactly-once. An interrupted unsafe tool is reported as
   interrupted, but a shell command may already have changed something. Review such
   changes before asking the model to repeat them.
@@ -322,8 +468,10 @@ systemctl --user enable --now pi-durable.service pi-durable-backup.timer
 systemctl --user status pi-durable
 ```
 
-- `pi-durable.service` runs `~/pi-durable-instance/bin/pi-durable serve --cwd ~/projects`: the coding tools work
-  in `~/projects`. Edit `ExecStart` if the checkout or the directory is elsewhere, then `daemon-reload`.
+- `pi-durable.service` runs `~/pi-durable-instance/bin/pi-durable serve --cwd ~/projects`:
+  `~/projects` is the default target for server-local socket/web messages. SSH
+  workstations send their own explicit targets instead. Edit `ExecStart` if the
+  checkout or directory is elsewhere, then `daemon-reload`.
 - Without `enable-linger`, the server stops when you log out and starts only when you log in.
 - `systemctl --user stop pi-durable` closes it durably: every client gets "the server is stopping" (and
   reconnects later), and unfinished work resumes at the next start. It exits with 143, which the unit counts
@@ -365,8 +513,10 @@ A malformed value stops the server at start with a message naming the variable (
 - It listens on the socket `<data dir>/chat.sqlite.sock` (mode 600) as soon as the chat is open, and on
   `127.0.0.1:7433` when the web app is configured; never on another address. It resumes interrupted work behind
   the scenes, so clients can watch it.
-- An interactive `pi-durable` in a shell on the VPS attaches to the running server (its model, tools and
-  directory apply). One-shot launches (`-p`, `--status`, `--history`, `--resume`) and `--local` need the chat's
+- An interactive `pi-durable` in a shell on the VPS, without a saved SSH remote,
+  attaches to the running server (its model, tools and directory apply). Remote
+  workstations instead use [the SSH connector](#remote-workstations-over-ssh).
+  Local one-shot launches (`-p`, `--status`, `--history`, `--resume`) and `--local` need the chat's
   flock, which the server holds: they exit with 75 until it stops.
 - `pi-durable serve pair`, `serve devices [--revoke NAME]` and `backup` talk to it over the socket.
 
@@ -529,6 +679,12 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `The socket path … is over 107 bytes and XDG_RUNTIME_DIR is unset` | Use a shorter `--database` or `--data-dir` path, or run under a login session or systemd, which set `XDG_RUNTIME_DIR`. |
 | `… exists and is not a socket; move it away` | Something else sits at `<db>.sock`. Move it; the server replaces only a stale socket. |
 | `web devices unavailable: …/devices.json is damaged` | The server runs without web pairing. Fix the file, or delete it and pair the devices again. |
+| SSH host-key or authentication failure | Verify the host key and configure noninteractive SSH login outside the application; it never auto-trusts a host or falls back to a local chat. |
+| `This server lacks machine routing` | Update the server checkout and restart `pi-durable.service`; matching `PROTOCOL: 3` alone is insufficient; `welcome.machines: true` is also required. |
+| Remote flags/mode refused | Use the supported interactive SSH TUI, or `--local` intentionally for local inspection/one-shot modes. |
+| Tools wait for a machine | Reconnect that same workstation from the exact launch cwd and explicitly grant tools there; enabling another device cannot reroute it. |
+| `INDETERMINATE` | The execution ledger cannot establish whether a side effect finished. Inspect changes; never delete the intent merely to force replay. |
+| Exit waits on a local command | The remote CLI drains admitted calls to cache their outcomes; an unbounded bash call can keep it waiting. Stop explicitly if appropriate; cancellation can leave partial effects. |
 
 Exit statuses: 0 success, 1 error, 75 lock busy, 130 SIGINT, 129 SIGHUP, 143 SIGTERM.
 

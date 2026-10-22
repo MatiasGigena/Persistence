@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatItem, ServerMessage, SessionStatus, Welcome } from '../../src/protocol/messages.ts';
+import { PROTOCOL } from '../../src/protocol/version.ts';
 import { Store, turnEnds } from '../../src/web/store.ts';
 import type { ViewItem } from '../../src/web/store.ts';
 
 const WELCOME: Welcome = {
-  t: 'welcome', protocol: 2, server: '0.1.0', boot: 'b1', assets: 'a1', peer: 'web', cwd: '/w',
+  t: 'welcome', protocol: PROTOCOL, server: '0.1.0', boot: 'b1', assets: 'a1', peer: 'web', cwd: '/w',
   tools: { remote: 'confirm', idleMinutes: 30 }, device: 'phone',
 };
 const STATUS: SessionStatus = { model: 'p/m', thinkingLevel: 'high', toolsEnabled: false, busy: false, queued: 0, memory: undefined, agents: [] };

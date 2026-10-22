@@ -1,7 +1,8 @@
-// Wire protocol v1: every message between the server (src/server/) and its clients (src/client/, src/web/).
+// Wire protocol v3: every message between the server (src/server/) and its clients (src/client/, src/web/).
 // docs/protocol.md is the prose spec; this file is its types and constants. Shared by Node and the browser, so it
 // holds plain types and constants only: no Node or DOM imports, and no runtime imports at all.
-import type { ChatItem, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+import type { ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+import type { MachineCall, MachineCancel, MachineRegistration, MachineResult } from './machines.ts';
 
 export type { AgentStatus, ChatItem, MemoryStats, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
 
@@ -104,7 +105,10 @@ export interface Ops {
    * `requestId`, a repeat of the same id is admitted once (pi-durable's submission dedup), so a client may resend
    * after losing the `res` to a reconnect.
    */
-  readonly send: { readonly params: { readonly text: string; readonly requestId?: string; readonly steer?: boolean }; readonly result: null };
+  readonly send: { readonly params: { readonly text: string; readonly requestId?: string; readonly steer?: boolean; readonly target?: MachineTarget }; readonly result: null };
+  readonly 'machine.register': { readonly params: { readonly registration: MachineRegistration }; readonly result: null };
+  readonly 'machine.set': { readonly params: { readonly enabled: boolean; readonly confirm?: 'enable-tools' }; readonly result: null };
+  readonly 'machine.list': { readonly params: NoParams; readonly result: { readonly machines: readonly MachineRegistration[] } };
   /** Interrupts Pi's running work (Esc). */
   readonly abort: { readonly params: NoParams; readonly result: null };
   /** Stops one agent and its sub agents, or all agents without `name`. Names stopped, sub agents first. */
@@ -150,10 +154,10 @@ export type Result<O extends Op> = Ops[O]['result'];
 export const OPS: readonly Op[] = [
   'send', 'abort', 'stopAgents', 'feed.open', 'feed.close', 'feed.resync', 'memory.view', 'memory.zoom', 'models',
   'model.set', 'tools.set', 'thinking.levels', 'thinking.set', 'push.subscribe', 'push.unsubscribe', 'admin.backup', 'admin.pair', 'admin.devices',
-  'admin.revoke',
+  'admin.revoke', 'machine.register', 'machine.set', 'machine.list',
 ];
 /** Ops only socket peers may call; web peers get `forbidden`. */
-export const SOCKET_ONLY: ReadonlySet<Op> = new Set<Op>(['admin.backup', 'admin.pair', 'admin.devices', 'admin.revoke']);
+export const SOCKET_ONLY: ReadonlySet<Op> = new Set<Op>(['admin.backup', 'admin.pair', 'admin.devices', 'admin.revoke', 'machine.register', 'machine.set']);
 /** Ops only web peers may call; socket peers get `forbidden`. */
 export const WEB_ONLY: ReadonlySet<Op> = new Set<Op>(['push.subscribe', 'push.unsubscribe']);
 /** What `tools.set` must carry to enable the tools: the client asked its user first. */
@@ -186,7 +190,7 @@ export interface Visible { readonly t: 'visible'; readonly visible: boolean }
 /** Liveness; the server answers `pong` with the same `n`. */
 export interface Ping { readonly t: 'ping'; readonly n: number }
 
-export type ClientMessage = Hello | Request | Visible | Ping;
+export type ClientMessage = Hello | Request | Visible | Ping | MachineResult;
 
 // ------------------------------------------------------------------------------------------------ server → client
 
@@ -208,6 +212,8 @@ export interface Welcome {
   readonly pushKey?: string;
   /** This web device's name; absent for socket peers. */
   readonly device?: string;
+  /** This server can pin runs and dispatch tools to authenticated machine connectors. */
+  readonly machines?: true;
 }
 
 /** The initial state (welcome, status, root snapshot) is complete. */
@@ -250,7 +256,7 @@ export interface Pong { readonly t: 'pong'; readonly n: number }
 /** The server's last message before it ends the connection; a WebSocket close frame repeats the code. */
 export interface Bye { readonly t: 'bye'; readonly code: number; readonly reason: string }
 
-export type ServerMessage = Welcome | Ready | StatusMessage | Snapshot | Items | FeedEnd | Notice | Response | Pong | Bye;
+export type ServerMessage = Welcome | Ready | StatusMessage | Snapshot | Items | FeedEnd | Notice | Response | Pong | Bye | MachineCall | MachineCancel;
 
 // ------------------------------------------------------------------------------------------------ item ops
 

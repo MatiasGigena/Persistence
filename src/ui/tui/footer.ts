@@ -50,7 +50,8 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
     ...status.reconnecting ? [{ text: theme.warning('reconnecting…'), rank: TOOLS }] : [],
     { text: model, rank: 4 },
     { text: dim(compact ? `think ${status.thinkingLevel}` : `thinking ${status.thinkingLevel}`), rank: 7 },
-    { text: status.toolsEnabled ? theme.warning('tools on') : dim('tools off'), rank: TOOLS },
+    { text: status.toolsEnabled ? theme.warning(`tools on${status.machine ? ` @ ${status.machine.label}` : ''}`)
+      : dim(`tools off${status.machine ? ` @ ${status.machine.label}` : ''}`), rank: TOOLS },
   ];
   if (status.busy) {
     list.push({ text: theme.accent(`${SPINNER[frame % SPINNER.length] ?? ''} ${compact ? 'busy' : 'working'}`), rank: 0 });

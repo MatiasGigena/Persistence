@@ -306,7 +306,7 @@ function messageRefusal(agents: Readonly<Record<string, AgentRecord>>, roster: R
 }
 
 /** The local tools' safety note, as in Pi's instructions (src/runtime/runtime.ts `piInstructions`). */
-const protectedText = (bash: boolean) => 'These tools act on the local machine with the host process permissions. Some folders are '
+const protectedText = (bash: boolean, routed = false) => `These tools act on ${routed ? 'the pinned machine with its runner permissions' : 'the local machine with the host process permissions'}. Some folders are `
   + 'protected: this chat\'s own state and the user\'s credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, '
   + `and system folders (/etc, /usr, ...) are read-only${bash ? '; bash runs in a sandbox that enforces this' : ''}. A refusal that names a `
   + 'protected path is deliberate: do not try to get around it, and say in your report if the task needs that path. Use the tools '
@@ -323,7 +323,7 @@ function standingInstructions(pi: string | undefined, tools: readonly string[], 
     : 'You have no tools besides the agent tools.';
   const lines = [...kept, own];
   const usable = localOn ? local : [];
-  if (usable.length) lines.push(protectedText(usable.includes('bash')));
+  if (usable.length) lines.push(protectedText(usable.includes('bash'), (pi ?? '').includes('Your machine and working directory are pinned per run')));
   if (!localOn && local.length) {
     lines.push(`Your local tools (${local.join(', ')}) are off for this launch; only the user can turn them on.`);
   }
@@ -634,6 +634,10 @@ export interface AgentsOptions extends AgentsSetup {
   ) => string | undefined | Promise<string | undefined>;
   /** Called after an input from an agent was durably admitted to Pi, at most once per input. */
   readonly onReport?: (report: AgentReport) => unknown;
+  /** Pin a new agent or delegated task's conversation in the same once-only transaction as its first delivery. */
+  readonly onSpawn?: (tx: Tx, parent: ConversationId, child: ConversationId) => Promise<void>;
+  /** Bind a newly scheduled delivery to its actual source conversation before its first submission. */
+  readonly onDelivery?: (tx: Tx, source: ConversationId, destination: ConversationId, requestId: string) => Promise<void>;
 }
 
 /** The agents extension; its `tools` are what a host enables. */
@@ -654,7 +658,7 @@ export interface AgentsExtension extends Extension {
  *   names the standing agents in Pi's role text and adds each one's `instructions` to its own.
  */
 export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtension {
-  const { initialContext, onReport, roster = {} } = options;
+  const { initialContext, onReport, onSpawn, onDelivery, roster = {} } = options;
   // Carries one input to one agent, then that agent's answer to its parent.
   const Deliver = defineTask<DeliveryInput, DeliverState, null>({
     name: DELIVER_KIND,
@@ -732,7 +736,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
             const session = agent.parent === PI ? sessionNumber(agent, conversationId) : undefined;
             const content = agent.parent === PI ? piReportText(to, report, session) : `[${to}] ${report}`;
             if (parent) await createDelivery(tx, parent, agent.parent, content,
-              { kind: REPORT_KIND, data: { name: to, text: report, ...session === undefined ? {} : { session } } }, 'followUp');
+              { kind: REPORT_KIND, data: { name: to, text: report, ...session === undefined ? {} : { session } } }, 'followUp', undefined, conversationId);
           }
           return done();
         }, context);
@@ -743,10 +747,16 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
   });
 
   /** `owner` is the conversation that owns the delivery task; by default the committing tool call's own. */
-  const createDelivery = (tx: Tx, conversationId: ConversationId, to: string, content: string,
-    entry: MessageEntry | ReportEntry, whenBusy: DeliveryInput['whenBusy'], owner?: ConversationId): Promise<TaskId<null>> =>
-    tx.createTask(Deliver, { to, conversationId, content, entry, whenBusy },
+  const createDelivery = async (tx: Tx, conversationId: ConversationId, to: string, content: string,
+    entry: MessageEntry | ReportEntry, whenBusy: DeliveryInput['whenBusy'], owner: ConversationId | undefined,
+    source: ConversationId): Promise<TaskId<null>> => {
+    const id = await tx.createTask(Deliver, { to, conversationId, content, entry, whenBusy },
       owner === undefined ? TASK_OPTIONS : { ...TASK_OPTIONS, conversationId: owner });
+    // The caller supplies the actual sending/answered session, not its standing agent's mutable current session.
+    // Its metadata and the delivery commit together, so replay cannot submit before a source binding exists.
+    await onDelivery?.(tx, source, conversationId, `agents:${id}`);
+    return id;
+  };
 
   /** Run `change` once per tool call: a replayed call returns the first result. */
   const once = async (api: ToolExecutionApi, context: Context,
@@ -794,12 +804,13 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
         if (existing) return `An agent named ${existing.name} already exists; use send_message.`;
         const anchor = await tx.createTask(Anchor, null, TASK_OPTIONS);
         const child = await tx.createConversation({ ownership: { kind: 'task', taskId: anchor } });
+        await onSpawn?.(tx, api.conversationId, child.id);
         // A sub of a standing agent works for the session that spawned it.
         const session = role === 'sub' && registry.agents[caller.name]?.standing ? { session: api.conversationId } : {};
         registry.agents[name] = { conversationId: child.id, role, parent: caller.name, reported: [], ...session };
         await deriveAgent(tx, registry.agents, name, options);
         await createDelivery(tx, child.id, name, content,
-          { kind: MESSAGE_KIND, data: { from: caller.name, text: task } }, 'followUp');
+          { kind: MESSAGE_KIND, data: { from: caller.name, text: task } }, 'followUp', undefined, api.conversationId);
         return `Started ${role} agent ${name}. Its report will arrive as a message starting with [${name}].`;
       });
     },
@@ -861,9 +872,11 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
           agent.past = [...agent.past ?? [], previous];
           agent.conversationId = child.id;
         }
+        // The first delegate can reuse the initial empty conversation; pin it too, never the standing identity.
+        await onSpawn?.(tx, api.conversationId, agent.conversationId);
         await deriveAgent(tx, draft.agents, found.name, options);
         await createDelivery(tx, agent.conversationId, found.name, content,
-          { kind: MESSAGE_KIND, data: { from: PI, text: task } }, 'followUp', ROOT_CONVERSATION_ID);
+          { kind: MESSAGE_KIND, data: { from: PI, text: task } }, 'followUp', ROOT_CONVERSATION_ID, api.conversationId);
         return `Delegated to ${found.name} (session ${agent.past.length + 1}). Its report will arrive as a message starting with [${found.name}].`;
       });
     },
@@ -938,7 +951,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
           ? { kind: REPORT_KIND, data: { name: caller.name, text: message, ...session === undefined ? {} : { session } } }
           : { kind: MESSAGE_KIND, data: { from: caller.name, text: message } };
         const content = found.role === 'root' ? piReportText(caller.name, message, session) : `[from ${caller.name}] ${message}`;
-        await createDelivery(tx, found.conversationId, found.name, content, entry, 'steer');
+        await createDelivery(tx, found.conversationId, found.name, content, entry, 'steer', undefined, api.conversationId);
         return `Sent to ${found.name}.`;
       });
     },

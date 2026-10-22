@@ -9,6 +9,7 @@ import { Connection, OpError } from './connection.ts';
 import type { ConnectionHost, Handlers } from './connection.ts';
 import type { DeviceRegistry, PeerHub, PeerLink, PushNotifier } from './link.ts';
 import { InvalidSubscription } from './push.ts';
+import type { MachineBroker } from './machines.ts';
 
 /** No push while some client was visible this recently. */
 export const VISIBLE_MS = 60_000;
@@ -32,6 +33,7 @@ export interface HubOptions {
   readonly pushPreview: boolean;
   readonly push?: PushNotifier;
   readonly devices?: DeviceRegistry;
+  readonly machines?: MachineBroker;
   /** After `admin.revoke` forgot a device: drop what else it left (its push subscriptions). */
   readonly revoked?: (name: string) => Promise<unknown>;
   /** `admin.backup`: an online backup into `out` (absolute), or the default directory. */
@@ -87,6 +89,7 @@ export class Hub implements PeerHub {
       root: () => this.session?.chat,
       visibility: connection => { if (!connection.visible) this.visibleAt = Math.max(this.visibleAt, connection.visibleAt); },
       closed: connection => this.closed(connection),
+      machineResult: (connection, message) => this.options.machines?.result(connection, message),
     };
   }
 
@@ -122,6 +125,7 @@ export class Hub implements PeerHub {
   /** Ends every connection with `bye {code}` and refuses new ones and new requests. Leaves the session open. */
   async close(code: CloseCode, reason: string): Promise<void> {
     this.stopping = true;
+    this.options.machines?.close();
     clearTimeout(this.idleTimer);
     for (const off of this.unsubscribe.splice(0)) off();
     for (const connection of [...this.connections]) connection.close(code, reason);
@@ -139,10 +143,12 @@ export class Hub implements PeerHub {
     const { server, boot, assets, cwd, tools, push } = this.options;
     const web = link.peer === 'web';
     return { protocol: PROTOCOL, server, boot, assets, peer: link.peer, cwd, tools,
-      ...web && push ? { pushKey: push.publicKey } : {}, ...web && link.device ? { device: link.device.name } : {} };
+      ...web && push ? { pushKey: push.publicKey } : {}, ...web && link.device ? { device: link.device.name } : {},
+      ...this.options.machines ? { machines: true } : {} };
   }
 
   private closed(connection: Connection): void {
+    this.options.machines?.disconnected(connection);
     this.connections.delete(connection);
     this.visibleAt = Math.max(this.visibleAt, connection.visibleAt);
     for (const entry of [...this.agentFeeds.values()]) this.release(entry, connection);
@@ -325,12 +331,28 @@ export class Hub implements PeerHub {
     const failed = (error: unknown): OpError => error instanceof OpError ? error
       : new OpError(ErrorCode.failed, error instanceof Error ? error.message : String(error));
     return {
-      send: async ({ text, requestId, steer }) => {
+      'machine.register': async ({ registration }, connection) => {
+        this.need();
+        if (!this.options.machines) throw new OpError(ErrorCode.unavailable, 'Machine connectors are not available on this server.');
+        this.options.machines.register(connection, registration);
+        this.options.log(`machine connected: ${registration.target.label}, ${registration.target.cwd}, tools ${registration.enabled ? 'on' : 'off'}`);
+        return null;
+      },
+      'machine.set': async ({ enabled, confirm }, connection) => {
+        this.need();
+        if (!this.options.machines) throw new OpError(ErrorCode.unavailable, 'Machine connectors are not available on this server.');
+        if (enabled && confirm !== ENABLE_TOOLS) throw new OpError(ErrorCode.badRequest, `Turning tools on needs confirm: '${ENABLE_TOOLS}'.`);
+        this.options.machines.setEnabled(connection, enabled);
+        return null;
+      },
+      'machine.list': async () => { this.need(); return { machines: this.options.machines?.list() ?? [] }; },
+      send: async ({ text, requestId, steer, target }) => {
         if (!text.trim()) throw new OpError(ErrorCode.badRequest, 'The message is empty.');
         if (requestId !== undefined && (requestId.length < 1 || requestId.length > 128)) {
           throw new OpError(ErrorCode.badRequest, 'requestId must be 1 to 128 characters.');
         }
-        try { await this.need().send(text, requestId, steer === true); } catch (error) { throw failed(error); }
+        if (target && !this.options.machines) throw new OpError(ErrorCode.unavailable, 'This server cannot route tools to execution machines; update it first.');
+        try { await this.need().send(text, requestId, steer === true, target); } catch (error) { throw failed(error); }
         return null;
       },
       abort: async () => { await this.need().abort(); return null; },

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { CloseCode, LIMITS } from '../../src/protocol/messages.ts';
 import type { ChatItem, ServerMessage } from '../../src/protocol/messages.ts';
+import { PROTOCOL } from '../../src/protocol/version.ts';
 import { MAX_IN_FLIGHT, SILENCE_MS, STATUS_MS } from '../../src/server/connection.ts';
 import { Hub, PUSH_EVERY_MS, VISIBLE_MS } from '../../src/server/hub.ts';
 import type { HubOptions } from '../../src/server/hub.ts';
@@ -60,7 +61,7 @@ test('hello gets welcome, status, the root snapshot and ready, in order', t => {
   link.hello(true);
   assert.deepEqual(types(link), ['welcome', 'status', 'snapshot', 'ready']);
   const [welcome, status, snapshot] = link.got;
-  assert.deepEqual(welcome, { t: 'welcome', protocol: 2, server: '0.1.0', boot: 'boot1', assets: 'a1', peer: 'web', cwd: '/work',
+  assert.deepEqual(welcome, { t: 'welcome', protocol: PROTOCOL, server: '0.1.0', boot: 'boot1', assets: 'a1', peer: 'web', cwd: '/work',
     tools: { remote: 'confirm', idleMinutes: 30 }, device: 'phone' });
   assert.equal(status?.t === 'status' && status.status.model, 'faux/faux-1');
   assert.deepEqual(snapshot, { t: 'snapshot', feed: 'root', items: session.root.list });

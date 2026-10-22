@@ -5,6 +5,7 @@ import { RemoteError, RemoteSession } from '../../src/client/remote-session.ts';
 import type { RemoteSessionOptions } from '../../src/client/remote-session.ts';
 import { ClientLink } from '../../src/client/unix-link.ts';
 import { CloseCode, ROOT_FEED } from '../../src/protocol/messages.ts';
+import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { ChatItem, NoticeLevel } from '../../src/ui/types.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
 import type { FakeServerOptions } from '../fixtures/fake-server.ts';
@@ -233,10 +234,11 @@ test('bye 4000 closes for good with a notice; pending requests reject', async ()
   server.hold('models');
   const models = session.models();
   await until(() => server.queue.length === 1, 'the held request');
-  lastPeer(wire).close(CloseCode.version, 'protocol 3 only');
+  lastPeer(wire).close(CloseCode.version, `protocol ${PROTOCOL + 1} only`);
   await assert.rejects(models, { code: 'disconnected' });
   await until(() => session.attached.state() === 'closed', 'closed');
-  assert.match(notices.at(-1)?.[0] ?? '', /refused this client's protocol \(2\): protocol 3 only\. Update pi-durable/);
+  assert.ok((notices.at(-1)?.[0] ?? '').includes(
+    `refused this client's protocol (${PROTOCOL}): protocol ${PROTOCOL + 1} only. Update pi-durable`));
   await delay(30);
   assert.equal(wire.peers.length, 1, 'no reconnect');
   await assert.rejects(session.send('x'), { code: 'disconnected' });

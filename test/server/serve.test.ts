@@ -75,7 +75,8 @@ test('serve end to end: a socket client sends, watches the reply stream in, and 
 
   // An online backup while the server runs, through the backup command's socket path.
   const backups = join(folder, 'backups');
-  const { stdout } = await exec(process.execPath, [resolve('src/cli.ts'), 'backup', '--database', join(folder, 'chat.sqlite'), '--out', backups]);
+  const env = { ...process.env, PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
+  const { stdout } = await exec(process.execPath, [resolve('src/cli.ts'), 'backup', '--database', join(folder, 'chat.sqlite'), '--out', backups], { env });
   assert.match(stdout, /Backup written by the server: .*backups\/\d{4}-\d{2}-\d{2}T/);
   const [dir] = await readdir(backups);
   assert.deepEqual((await readdir(join(backups, dir ?? ''))).sort(), ['chat.sqlite', 'chat.unii'], 'no settings.json yet');
@@ -93,7 +94,8 @@ test('the launcher runs serve under the flock, serves the admin commands, and st
   t.after(() => rm(folder, { recursive: true, force: true }));
   const launcher = resolve('bin/pi-durable');
   const env = { ...process.env, PI_DURABLE_DATA_DIR: join(folder, 'state'), OPENAI_API_KEY: 'offline-placeholder-not-a-real-key',
-    PI_DURABLE_ORIGIN: '', PI_DURABLE_ALLOW_LOGIN: '' };
+    PI_DURABLE_ORIGIN: '', PI_DURABLE_ALLOW_LOGIN: '',
+    PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
   const base = ['--model', 'openai/gpt-4o-mini', '--auth-file', join(folder, 'auth.json'), '--cwd', folder];
   await assert.rejects(exec(launcher, ['serve', 'pair'], { env }), { code: 1, stderr: /No server is running for this chat/ });
   await assert.rejects(exec(launcher, ['backup'], { env }), { code: 1, stderr: /No saved chat to back up/ });

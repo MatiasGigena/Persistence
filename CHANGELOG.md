@@ -15,8 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   state and your credentials (`~/.ssh`, `~/.claude`, `~/.config/gh`, `~/.aws`, …) are hidden from the tools, and
   system folders are read-only. read/write/edit check the real path; bash runs in bubblewrap, which is now
   required for bash (`sudo apt install bubblewrap`). `PI_DURABLE_PROTECT` / `PI_DURABLE_UNPROTECT` adjust the list.
-  ADR 0025. Protocol 2: `welcome.tools.idleMinutes` is optional; older web pages reload, an older attached TUI asks
-  for an update.
+  ADR 0025 made `welcome.tools.idleMinutes` optional in protocol 2; the remote-routing changes below now require
+  protocol 3. Older web pages reload, an older attached TUI asks for an update.
 
 - The existing right-hand web menu uses a rounded monochrome glass panel with a
   labelled header, close button and viewport-bounded scrolling; all actions stay the same.
@@ -27,7 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Web app and home-screen icons use Pi Cloud's block mark and Lucide controls.
 
 - Coding tools are on by default for a local launch; `--no-tools` turns them off (`--allow-tools` is kept as a
-  no-op). `serve` still starts with them off. ADR 0009 amended.
+  no-op locally, and is an explicit grant for SSH connectors). ADR 0009 amended; ADR 0025 extends the guarded
+  default to `serve`.
 
 ### Fixed
 
@@ -47,6 +48,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reply was cut off at the output limit, instead of ending the turn in silence.
 
 ### Added
+
+- Native SSH workstation chat (ADR 0028): `connect USER@VPS --remote-bin
+  /home/USER/pi-durable-instance/bin/pi-durable` saves a machine identity and SSH destination separately from
+  chat state. Interactive launches use that central chat; `--remote` overrides it once and `--local` preserves
+  the local chat. Strict known-host SSH carries the native protocol through `bridge` to the existing private
+  Unix socket, with no local chat database/model runtime, extra public port or generic external MCP server.
+  Unsupported modes and servers fail closed, never fall back to a local chat.
+- Workstation coding/read tools require an explicit per-process `--allow-tools` or confirmed `/tools on`, even
+  when the server's guarded coding tools are on by default. Tools use `GuardedEnv`, including hidden client
+  configuration and execution ledger, read-only system folders and bubblewrap bash.
+- Immutable execution pins per user message/run and agent session, including standing-agent delegation;
+  offline connectors wait for the same machine/cwd. Busy-root user sends reject rather than retargeting a run;
+  new agent reports/messages retain their exact source session's route, allowing Pi to delegate review after a
+  report. Unmapped legacy inputs, conflicting routes and old unpinned sessions fail closed. Remote-target
+  browser/web-fetch calls are not supported and refuse rather than running on the VPS.
+- Protocol 3: routed `send` rejects busy-root user messages instead of queueing or steering them, a semantic
+  incompatibility requiring client and server updates together. Machine capability fields/messages are additive
+  in shape: `welcome.machines`, `send.target`, `machine.register`, `machine.set`, `machine.list`, `machine.call`,
+  `machine.cancel` and `machine.result`. The remote CLI also checks the capability before sending. A local fsynced intent/result ledger joins duplicate executions; crash-unknown outcomes
+  return `INDETERMINATE`, not an automatic rerun. This is not exactly-once arbitrary bash. Graceful connector
+  close drains admitted calls; an unbounded command may delay exit. No VPS deployment is implied.
 
 - Standing agents (ADR 0027): Coder (programming, coding tools), Reviewer (reviewing and debugging: read tool and a
   browser) and Researcher (web research: `web_fetch`) exist in every chat, each with its own model and effort.
@@ -74,13 +96,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `⠋ working · bash npm test`), so a long turn is never silent. It is cut to 60 columns, or 24 on a phone.
 
 - Server mode (phase 2, ADRs 0016 and 0022 accepted): `pi-durable serve [--cwd D] [--port N]` runs the chat
-  headless under its flock, with coding tools off, on a mode 600 Unix socket (NDJSON) and, when configured,
+  headless under its flock, with guarded coding tools on unless `--no-tools`, on a mode 600 Unix socket (NDJSON) and, when configured,
   the web listener. One session is fanned out to every client (`src/server/hub.ts`, `connection.ts`): item
   diffs at most every 50 ms and only while a peer's buffer is under 256 KiB, status at most 4 times a second,
   agent feeds shared by refcount, `bye` 4008 for a peer stuck over 8 MiB for 60 s, 1000 after 60 s of silence,
   and 1012 to everyone on SIGTERM, SIGINT or SIGHUP. Coding tools turned on remotely need a confirmation, are
   refused to the web with `PI_DURABLE_REMOTE_TOOLS=off`, are announced to every client and the journal, and
-  turn off after `PI_DURABLE_TOOLS_IDLE_MIN` minutes without a run. Push fires when Pi finishes or an agent
+  turn off after `PI_DURABLE_TOOLS_IDLE_MIN` minutes without a run only when that variable is set. Push fires when Pi finishes or an agent
   reports, unless a client was visible in the last minute, at most once per kind per 30 s.
 - `pi-durable backup [--out DIR]`: an online backup (`VACUUM INTO`, then `chat.unii/` and `settings.json`, in
   one synchronous step of the writer) into `backups/<UTC time>/` beside the chat; through the server when one
@@ -120,7 +142,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and the `PI_DURABLE_ORIGIN`, `PI_DURABLE_ALLOW_LOGIN`, `PI_DURABLE_PORT`,
   `PI_DURABLE_REMOTE_TOOLS`, `PI_DURABLE_TOOLS_IDLE_MIN` and `PI_DURABLE_PUSH_PREVIEW`
   variables are parsed and checked; the commands say which phase implements them.
-  `serve` refuses `--allow-tools`.
+  `serve` accepts `--no-tools`; its guarded tools default on (ADR 0025).
 - The terminal UI's `/mem` loads asynchronously ("Loading…") and reloads while open
   when the memory changes; host warnings reach the chat through the session
   (`onNotice`); an attached TUI detaches on `/exit`, Ctrl+D or Ctrl+C twice and shows

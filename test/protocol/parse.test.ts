@@ -46,6 +46,10 @@ const REQUESTS: { readonly [O in Op]: RequestOf<O> } = {
   'admin.pair': { t: 'req', id: 15, op: 'admin.pair', params: {} },
   'admin.devices': { t: 'req', id: 16, op: 'admin.devices', params: {} },
   'admin.revoke': { t: 'req', id: 17, op: 'admin.revoke', params: { name: 'phone' } },
+  'machine.register': { t: 'req', id: 18, op: 'machine.register', params: { registration: {
+    target: { machineId: 'pc-1', cwd: '/projects', label: 'PC' }, enabled: false } } },
+  'machine.set': { t: 'req', id: 19, op: 'machine.set', params: { enabled: true, confirm: 'enable-tools' } },
+  'machine.list': { t: 'req', id: 20, op: 'machine.list', params: {} },
 };
 
 /** One successful response per op. */
@@ -74,6 +78,9 @@ const RESPONSES: { readonly [O in Op]: ResponseOf<O> } = {
     { name: 'phone', pairedAt: 1_700_000_000_000, lastSeen: 1_700_000_100_000 }, { name: 'laptop', pairedAt: 1_700_000_000_000 },
   ] } },
   'admin.revoke': { t: 'res', id: 17, op: 'admin.revoke', ok: true, result: null },
+  'machine.register': { t: 'res', id: 18, op: 'machine.register', ok: true, result: null },
+  'machine.set': { t: 'res', id: 19, op: 'machine.set', ok: true, result: null },
+  'machine.list': { t: 'res', id: 20, op: 'machine.list', ok: true, result: { machines: [] } },
 };
 
 const CLIENT: readonly ClientMessage[] = [

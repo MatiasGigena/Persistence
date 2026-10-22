@@ -123,10 +123,9 @@ export async function createUiSession(
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    async send(text, requestId, steer) {
-      // Admitted durably, not awaited: the feed shows the answer. A busy Pi gets it as a follow-up, or steered.
-      await root.submit({ type: 'input', content: text, ...requestId === undefined ? {} : { requestId },
-        ...steer ? { whenBusy: 'steer' } : {} }, context);
+    async send(text, requestId, steer, target) {
+      // Standalone keeps follow-up/steering; routed admission pins the target and explicitly rejects busy runs.
+      await instance.submit(text, requestId, target, steer);
     },
     async abort() {
       // Pi's current run only: queued inputs are withdrawn; agents' background deliveries keep going.

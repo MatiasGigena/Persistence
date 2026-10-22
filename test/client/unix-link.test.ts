@@ -5,14 +5,16 @@ import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setImmediate as immediate, setTimeout as delay } from 'node:timers/promises';
 import { RemoteSession } from '../../src/client/remote-session.ts';
 import { ClientLink, ForeignSocket, unixConnector } from '../../src/client/unix-link.ts';
 import type { Connector } from '../../src/client/unix-link.ts';
 import { CloseCode } from '../../src/protocol/messages.ts';
 import type { ServerMessage } from '../../src/protocol/messages.ts';
+import { PROTOCOL } from '../../src/protocol/version.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
 import { listenFake } from './socket-server.ts';
+import { memoryConnector } from './memory-link.ts';
 
 async function until(ok: () => boolean, what: string, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
@@ -36,7 +38,7 @@ async function rawServer(path: string, onConnection: (socket: Socket) => void): 
   return { close: () => new Promise<void>(resolve => { for (const socket of sockets) socket.destroy(); server.close(() => resolve()); }) };
 }
 
-const WELCOME = JSON.stringify({ t: 'welcome', protocol: 2, server: '0.1.0', boot: 'b', assets: 'a', peer: 'socket', cwd: '/w',
+const WELCOME = JSON.stringify({ t: 'welcome', protocol: PROTOCOL, server: '0.1.0', boot: 'b', assets: 'a', peer: 'socket', cwd: '/w',
   tools: { remote: 'confirm', idleMinutes: 30 } });
 
 test('over a real socket: hello, welcome, the state, requests, and NDJSON lines split anywhere', async t => {
@@ -97,10 +99,12 @@ test('no server: a missing socket, a silent server, or a file that is not a sock
 
 test('a welcome of another protocol, or a bye 4000 to hello, fails the first connect for good', async t => {
   const dir = await folder(t);
-  const path = join(dir, 'v2.sock');
-  const v2 = await rawServer(path, socket => socket.once('data', () => socket.write(`${WELCOME.replace('"protocol":2', '"protocol":3')}\n`)));
-  t.after(() => v2.close());
-  await assert.rejects(new ClientLink({ connect: unixConnector(path), client: 'test' }).start(), /protocol 3, this client 2/);
+  const path = join(dir, 'incompatible.sock');
+  const incompatible = await rawServer(path, socket => socket.once('data', () => socket.write(
+    `${WELCOME.replace(`"protocol":${PROTOCOL}`, `"protocol":${PROTOCOL + 1}`)}\n`)));
+  t.after(() => incompatible.close());
+  await assert.rejects(new ClientLink({ connect: unixConnector(path), client: 'test' }).start(),
+    new RegExp(`protocol ${PROTOCOL + 1}, this client ${PROTOCOL}`));
   const byePath = join(dir, 'bye.sock');
   const bye = await rawServer(byePath, socket => socket.once('data', () => socket.end('{"t":"bye","code":4000,"reason":"too old"}\n')));
   t.after(() => bye.close());
@@ -160,6 +164,83 @@ test('bye 1012 reconnects with backoff to the restarted server; bye 4001 closes 
   await until(() => link.state() === 'closed', 'closed');
   assert.match(link.closedBecause() ?? '', /refused this client: revoked/);
   await session.close();
+});
+
+const flush = async (): Promise<void> => { for (let i = 0; i < 4; i++) await immediate(); };
+
+test('normal bye is terminal by default, preserving local detach behavior', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const wire = memoryConnector(new FakeServer());
+  const link = new ClientLink({ connect: wire.connect, client: 'test' });
+  t.after(() => link.close());
+  await link.start();
+  wire.peers[0]?.close(CloseCode.normal, 'silence timeout');
+  await flush();
+  assert.equal(link.state(), 'closed');
+  assert.match(link.closedBecause() ?? '', /silence timeout/);
+  t.mock.timers.tick(10_000);
+  await flush();
+  assert.equal(wire.peers.length, 1);
+});
+
+test('reconnectNormal retries normal bye with backoff and a fresh hello; explicit close stays terminal', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const wire = memoryConnector(new FakeServer());
+  const link = new ClientLink({ connect: wire.connect, client: 'test', reconnectNormal: true,
+    retry: { first: 100, max: 100 }, random: () => 0.5 });
+  t.after(() => link.close());
+  await link.start();
+  wire.peers[0]?.close(CloseCode.normal, 'silence timeout');
+  await flush();
+  assert.equal(link.state(), 'reconnecting');
+  assert.equal(link.closedBecause(), undefined);
+  t.mock.timers.tick(99);
+  await flush();
+  assert.equal(wire.peers.length, 1);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(link.state(), 'open');
+  assert.equal(wire.peers.length, 2);
+  assert.equal(wire.sent.filter(text => text.includes('"t":"hello"')).length, 2);
+  link.close();
+  await flush();
+  t.mock.timers.tick(10_000);
+  await flush();
+  assert.equal(link.state(), 'closed');
+  assert.equal(wire.peers.length, 2);
+});
+
+test('explicit close cancels a normal-bye reconnect that has not started yet', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const wire = memoryConnector(new FakeServer());
+  const link = new ClientLink({ connect: wire.connect, client: 'test', reconnectNormal: true });
+  t.after(() => link.close());
+  await link.start();
+  wire.peers[0]?.close(CloseCode.normal, 'silence timeout');
+  await flush();
+  assert.equal(link.state(), 'reconnecting');
+  link.close();
+  t.mock.timers.tick(10_000);
+  await flush();
+  assert.equal(link.state(), 'closed');
+  assert.equal(wire.peers.length, 1);
+});
+
+test('reconnectNormal never retries unauthorized or version bye', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  for (const code of [CloseCode.unauthorized, CloseCode.version]) {
+    const wire = memoryConnector(new FakeServer());
+    const link = new ClientLink({ connect: wire.connect, client: 'test', reconnectNormal: true });
+    t.after(() => link.close());
+    await link.start();
+    wire.peers[0]?.close(code, 'refused');
+    await flush();
+    assert.equal(link.state(), 'closed');
+    assert.match(link.closedBecause() ?? '', /refused/);
+    t.mock.timers.tick(10_000);
+    await flush();
+    assert.equal(wire.peers.length, 1);
+  }
 });
 
 test('backoff doubles from the first wait to the cap, and resets after a welcome', async () => {

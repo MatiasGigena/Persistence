@@ -31,6 +31,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0025](0025-protected-folders.md) | Coding tools on by default everywhere, held to protected folders (amends 0009, 0019) |
 | [0026](0026-pi-cloud-chat-controls.md) | Pi Cloud's chat settings, turn actions and steering in the web app (amends 0023) |
 | [0027](0027-standing-agents.md) | Standing agents with their own models, tools and a session per task (amends 0003) |
+| [0028](0028-remote-machines-over-ssh.md) | One central chat, workstation tools over native SSH (extends 0018, 0025, 0027) |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".

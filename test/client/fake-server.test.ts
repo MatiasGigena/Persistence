@@ -2,9 +2,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ServerMessage } from '../../src/protocol/messages.ts';
+import { PROTOCOL } from '../../src/protocol/version.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
 
-const HELLO = JSON.stringify({ t: 'hello', protocol: 2, client: 'test', visible: true });
+const HELLO = JSON.stringify({ t: 'hello', protocol: PROTOCOL, client: 'test', visible: true });
 const req = (id: number, op: string, params: object = {}): string => JSON.stringify({ t: 'req', id, op, params });
 const types = (messages: readonly ServerMessage[]): string[] => messages.map(message => message.t);
 
@@ -28,7 +29,8 @@ test('hello gets welcome, status, the root snapshot and ready; requests before i
 
 test('another protocol gets bye 4000 and the end', () => {
   const { connection, ended } = peer(new FakeServer());
-  assert.deepEqual(connection.handle(HELLO.replace('"protocol":2', '"protocol":1')), [{ t: 'bye', code: 4000, reason: 'This server speaks protocol 2' }]);
+  assert.deepEqual(connection.handle(HELLO.replace(`"protocol":${PROTOCOL}`, `"protocol":${PROTOCOL + 1}`)),
+    [{ t: 'bye', code: 4000, reason: `This server speaks protocol ${PROTOCOL}` }]);
   assert.equal(ended(), true);
 });
 

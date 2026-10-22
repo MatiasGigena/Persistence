@@ -18,7 +18,8 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents, /mem, /model and /effort). The TUI never imports pi-durable.
 - `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`.
 - `src/server/`: `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
-- `src/client/`: the attached TUI: `attach.ts` (probe and routing), `remote-session.ts` (a `UiSession` over the protocol), `unix-link.ts` (the reconnecting socket link).
+- `src/client/`: attached TUI and SSH connector: `attach.ts`, `remote-session.ts`, `unix-link.ts`; `config.ts` and `remote.ts` select the central server before local chat resolution, `ssh-link.ts` and `bridge.ts` carry the socket over SSH, `machine-executor.ts` runs guarded tools with a durable local ledger.
+- `src/machines/routing.ts`: persisted per-request, run and agent-session execution targets; `src/server/machines.ts`: authenticated connector dispatch, never host fallback.
 - `src/web/`: the phone web app, vanilla DOM TypeScript served type-stripped (own `tsconfig.json`; `sw.ts` has `sw/tsconfig.json`). `format.ts`, `store.ts`, `link.ts` and `markdown.ts` stay DOM-free so `test/web/` runs them in Node.
 - `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
 - `tsconfig.json`, `eslint.config.ts`: the type and lint rules `npm run check` enforces.
@@ -47,7 +48,9 @@ A change is done when both pass and the docs below still match the code.
   state and credentials hidden, system folders read-only, bash in bubblewrap; never hand the tools a bare
   `NodeExecutionEnv` outside tests. `/tools on|off`
   switches them for the current launch only; never persist that choice. Launch config and the toggle share
-  one tool list (`piTools`), and both reconfigure Pi and its agents.
+  one tool list (`piTools`), and both reconfigure Pi and its agents. Remote SSH connectors have an additional
+  local grant: their tools start **off** unless `--allow-tools` is explicit or `/tools on` confirms them. Neither
+  reconnects nor another device's grant can authorize a connector. Never bypass `GuardedEnv` on a connector.
 - **Network tools stay in their lanes.** The kits' network tools differ. Every `browser` request goes through
   its own loopback egress proxy, which checks each connection (redirect hops and WebSockets included) and connects
   only to the address it checked: loopback and private addresses are allowed (it debugs the user's apps),

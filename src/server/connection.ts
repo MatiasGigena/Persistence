@@ -9,6 +9,7 @@ import type {
 import { diffItems, wireItem } from '../protocol/diff.ts';
 import { isParseError, parseClientMessage } from '../protocol/parse.ts';
 import { PROTOCOL } from '../protocol/version.ts';
+import type { MachineCall, MachineCancel, MachineResult } from '../protocol/machines.ts';
 import type { ChatFeed } from '../ui/types.ts';
 import type { PeerLink } from './link.ts';
 
@@ -46,6 +47,7 @@ export interface ConnectionHost {
   visibility(connection: Connection): void;
   /** The connection ended: release what it held. Called once. */
   closed(connection: Connection): void;
+  machineResult?(connection: Connection, message: MachineResult): void;
 }
 
 type Outgoing = ServerMessage | ResponseOf<Op>;
@@ -153,6 +155,11 @@ export class Connection {
     this.feedChanged(id);
   }
 
+  /** Tool execution events are sent only after this authenticated connection is ready. */
+  sendMachine(message: MachineCall | MachineCancel): void {
+    if (this.phase === 'ready') this.send(message);
+  }
+
   private send(message: Outgoing): void {
     if (this.phase === 'closed') return;
     this.link.send(JSON.stringify(message));
@@ -196,6 +203,9 @@ export class Connection {
         return;
       case 'ping':
         if (this.phase !== 'hello') this.send({ t: 'pong', n: message.n });
+        return;
+      case 'machine.result':
+        if (this.phase === 'ready' && this.link.peer === 'socket') this.host.machineResult?.(this, message);
         return;
       case 'req':
         if (this.phase === 'hello') { this.fail(message.id, ErrorCode.version, 'Send hello first.'); return; }

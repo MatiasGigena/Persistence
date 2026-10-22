@@ -8,7 +8,7 @@ import type {
 } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
 import type { AttachedLink, LinkState } from '../ui/tui/app.ts';
-import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
+import type { ChatFeed, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
 
 /** What the session needs of its link; `ClientLink` (unix-link.ts) is one. */
@@ -35,6 +35,10 @@ export interface RemoteSessionOptions {
   readonly requestTimeoutMs?: number;
   /** Prefix of `send` request ids; default a random one per session. */
   readonly clientId?: string;
+  readonly target?: MachineTarget;
+  readonly requireMachines?: boolean;
+  readonly machineToolsEnabled?: () => boolean;
+  readonly setMachineTools?: (enabled: boolean) => Promise<void>;
 }
 
 /** Shown before the first status arrives; the client waits for `ready()` before showing anything. */
@@ -93,6 +97,7 @@ export class RemoteSession implements UiSession {
   readonly attached: AttachedLink;
   private readonly link: ServerLink;
   private readonly timeoutMs: number;
+  private readonly options: RemoteSessionOptions;
   private readonly clientId: string;
   private readonly root = new Mirror(ROOT_FEED);
   /** Mirrors by their feed id on the current connection. */
@@ -115,6 +120,7 @@ export class RemoteSession implements UiSession {
 
   constructor(link: ServerLink, options: RemoteSessionOptions = {}) {
     this.link = link;
+    this.options = options;
     this.timeoutMs = options.requestTimeoutMs ?? 30_000;
     this.clientId = options.clientId ?? `tui-${random()}`;
     this.chat = this.root.feed(() => Promise.resolve());
@@ -148,7 +154,10 @@ export class RemoteSession implements UiSession {
     return Promise.resolve();
   }
 
-  status(): SessionStatus { return this.current; }
+  status(): SessionStatus {
+    return this.options.target ? { ...this.current, machine: this.options.target,
+      toolsEnabled: this.current.toolsEnabled && (this.options.machineToolsEnabled?.() ?? false) } : this.current;
+  }
 
   onStatus(listener: () => void): () => void {
     this.statusListeners.add(listener);
@@ -161,8 +170,8 @@ export class RemoteSession implements UiSession {
   }
 
   /** Admitted once even if resent: the requestId (given, or made here) stays with the text across reconnects. */
-  async send(text: string, requestId = `${this.clientId}-${++this.sends}`, steer = false): Promise<void> {
-    await this.request('send', steer ? { text, requestId, steer } : { text, requestId });
+  async send(text: string, requestId = `${this.clientId}-${++this.sends}`, steer = false, target = this.options.target): Promise<void> {
+    await this.request('send', { text, requestId, ...steer ? { steer } : {}, ...target ? { target } : {} });
   }
 
   async abort(): Promise<void> { await this.request('abort', {}); }
@@ -195,7 +204,14 @@ export class RemoteSession implements UiSession {
 
   /** The TUI asked its user before turning tools on, so `enabled` carries the confirmation. */
   async setTools(enabled: boolean): Promise<void> {
-    await this.request('tools.set', enabled ? { enabled, confirm: ENABLE_TOOLS } : { enabled });
+    try {
+      await this.options.setMachineTools?.(enabled);
+      await this.request('tools.set', enabled ? { enabled, confirm: ENABLE_TOOLS } : { enabled });
+    } catch (error) {
+      if (enabled) await this.options.setMachineTools?.(false).catch(() => undefined);
+      throw error;
+    }
+    for (const listener of [...this.statusListeners]) listener();
   }
 
   async thinkingLevels(): Promise<readonly string[]> { return (await this.request('thinking.levels', {})).levels; }
@@ -209,7 +225,7 @@ export class RemoteSession implements UiSession {
    * message. Rejects with a RemoteError: the server's, `timeout`, or `disconnected` (a dropped link; `send`s wait
    * for the next connection instead).
    */
-  private request<O extends Op>(op: O, params: Params<O>, hook?: (result: Result<O>) => void): Promise<Result<O>> {
+  request<O extends Op>(op: O, params: Params<O>, hook?: (result: Result<O>) => void): Promise<Result<O>> {
     if (this.detaching || this.link.state() === 'closed') {
       return Promise.reject(new RemoteError('disconnected', 'Not connected to the server'));
     }
@@ -305,6 +321,13 @@ export class RemoteSession implements UiSession {
   private receive(message: ServerMessage): void {
     switch (message.t) {
       case 'welcome': {
+        if (this.options.requireMachines && !message.machines) {
+          const error = new RemoteError('failed', 'This server lacks machine routing. Update and restart its pi-durable service first; no local chat was opened.');
+          this.first.reject(error);
+          this.notify(error.message, 'error');
+          this.link.close();
+          return;
+        }
         const restarted = this.greeting !== undefined && this.greeting.boot !== message.boot;
         this.greeting = message;
         this.feeds.clear();

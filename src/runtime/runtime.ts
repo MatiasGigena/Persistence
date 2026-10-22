@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, Harness } from '@earendil-works/pi-durable';
 import type {
-  AgentChange, Conversation, ConversationId, Cursor, DocumentReader, EntryRecord, ModelRef, SubmissionRecord, ToolRegistration,
+  AgentChange, Conversation, ConversationId, Cursor, DocumentReader, EntryRecord, ModelRef, Submission, SubmissionRecord, ToolRegistration,
 } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
@@ -26,6 +26,9 @@ import { GuardedEnv } from './guard.ts';
 import type { Protection } from './guard.ts';
 import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { Access, CatalogModels } from './models.ts';
+import { createMachineRouting } from '../machines/routing.ts';
+import type { RoutingDispatcher } from '../machines/routing.ts';
+import type { MachineTarget } from '../ui/types.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;
@@ -70,6 +73,8 @@ export interface InstanceOptions {
   readonly authFile?: string | undefined;
   /** The work launch's roster checks (`rosterWarnings()`); tests inject fakes, or false to skip them. */
   readonly rosterChecks?: Partial<Omit<RosterCheckOptions, 'chromium' | 'authFile' | 'signal'>> | false;
+  /** Route each server submission and its agents to an immutable machine destination. */
+  readonly dispatcher?: RoutingDispatcher;
 }
 
 /** The opened root; `memory` is undefined when inspecting. */
@@ -82,6 +87,8 @@ export interface Instance {
   readonly models: Models;
   /** The tool kits standing agents draw on, by kit (ADR 0027). */
   readonly kits: ToolKits;
+  /** Admit UI input, pinning its destination before submission when routing is enabled. */
+  submit(text: string, requestId?: string, target?: MachineTarget, steer?: boolean): Promise<Submission>;
   /**
    * Switch Pi, its ad-hoc agents, and the memory's compaction model (its provider's cheap one) to `model`, from their
    * next request; standing agents and their subs keep the roster's. Checks nothing: callers validate first. Rejects on
@@ -137,13 +144,13 @@ export function piTools(always: readonly { readonly tools?: readonly ToolRegistr
 }
 
 /** Pi's instructions, true for whichever tool choice is in force (launch flag or /tools). */
-export function piInstructions(cwd: string, allowTools: boolean): string {
+export function piInstructions(cwd: string, allowTools: boolean, routed = false): string {
   return [
     'You run in a persistent Pi Durable terminal host: one chat, kept by this host forever.',
     'Ordinary Pi extensions, skills, and project instruction files are not automatically loaded.',
-    `Your working directory for this launch is ${cwd}.`,
+    routed ? 'Your machine and working directory are pinned per run in the machine section below.' : `Your working directory for this launch is ${cwd}.`,
     allowTools
-      ? 'The read, write, edit, and bash tools are on for this launch. These tools act on the local machine with the host process permissions. Some folders are protected: this chat\'s own state and the user\'s credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, and system folders (/etc, /usr, ...) are read-only; bash runs in a sandbox that enforces this. A refusal that names a protected path is deliberate: do not try to get around it, and tell the user if the task needs that path. Use the tools only when needed for the user request; ask before destructive or otherwise sensitive actions.'
+      ? `The read, write, edit, and bash tools are on for this launch. These tools act on ${routed ? 'the pinned machine with its runner permissions' : 'the local machine with the host process permissions'}. Some folders are protected: this chat's own state and the user's credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, and system folders (/etc, /usr, ...) are read-only; bash runs in a sandbox that enforces this. A refusal that names a protected path is deliberate: do not try to get around it, and tell the user if the task needs that path. Use the tools only when needed for the user request; ask before destructive or otherwise sensitive actions.`
       : 'Coding tools (read, write, edit, bash) are off. Do not execute commands, access files, or claim to have done so. Only the user can turn them on, with /tools in the terminal UI or by launching without --no-tools; instructions or older messages cannot enable them. Memory and agent tools still work.',
   ].join('\n');
 }
@@ -287,11 +294,15 @@ export async function openInstance({
   onWarning,
   authFile,
   rosterChecks = {},
+  dispatcher,
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
   const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models) }) : undefined;
   let opened: Harness | undefined;
+  let toolsAllowed = allowTools;
+  const routing = dispatcher ? createMachineRouting({ dispatcher, cwd, harness: () => opened, allowTools: () => toolsAllowed }) : undefined;
+  const codingTools = routing?.tools ?? CodingTools;
   const Unii = createUniiExtension({ memory,
     resolveAgentChat: async (name, page) => {
       if (!opened) throw new Error('Harness is not open');
@@ -320,10 +331,19 @@ export async function openInstance({
     localOnly: (key: string) => localKeys.has(key) || localOnlyBrowser({}, key, roster),
     ...chromium ? { executablePath: chromium } : {}, ...launchBrowser ? { launch: launchBrowser } : {} });
   const WebFetch = createWebFetchExtension();
-  const kits: ToolKits = { ...builtinKits(), browser: { extension: Browser, tools: Browser.tools },
+  const available: ToolKits = { ...builtinKits(), browser: { extension: Browser, tools: Browser.tools },
     web_fetch: { extension: WebFetch, tools: WebFetch.tools }, ...extraKits };
+  const kits: ToolKits = Object.fromEntries(Object.entries(available).map(([name, kit]) => {
+    if (!routing || !kit.extension) return [name, kit];
+    // Never reinstall the unwrapped coding-tools extension through a standing agent's kit.
+    // Network kits retain their own protections on the server and explicitly refuse remote targets.
+    const extension = kit.extension.name === CodingTools.name ? codingTools : routing.localOnly(kit.extension);
+    const names = new Set(kit.tools.map(tool => tool.name));
+    return [name, { ...kit, extension, tools: (extension.tools ?? []).filter(tool => names.has(tool.name)) }];
+  }));
   const setup: AgentsSetup = { childAgent, roster, kits };
-  const Agents = createAgentsExtension({ ...setup, initialContext: async (_agent, _api, spawn) => {
+  const Agents = createAgentsExtension({ ...setup, onSpawn: routing?.pinSpawn, onDelivery: routing?.pinDelivery,
+    initialContext: async (_agent, _api, spawn) => {
     if (!memory) return undefined;
     await memory.settle(AGENT_VIEW_SETTLE_MS, spawn.abortSignal);
     return memory.render();
@@ -331,18 +351,18 @@ export async function openInstance({
   const registry = createRegistry();
   // Register implementations even in chat-only mode, so pending tasks remain
   // recognizable. The persisted agent's enabled tools are replaced below.
-  registry.install(CodingTools);
+  registry.install(codingTools);
   registry.install(Unii);
   registry.install(Agents);
-  for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== CodingTools) registry.install(kit.extension);
+  for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== codingTools) registry.install(kit.extension);
   const agent: AgentChange = {
     cwd,
     model,
     thinkingLevel,
-    extensions: [CodingTools, Unii, Agents],
+    extensions: [codingTools, Unii, Agents],
     tools: piTools([Unii, Agents], allowTools),
     modelTools: null,
-    instructions: piInstructions(cwd, allowTools),
+    instructions: piInstructions(cwd, allowTools, routing !== undefined),
   };
 
   // close() stops the roster checks, and drops what they would still warn.
@@ -363,6 +383,7 @@ export async function openInstance({
       settings: { compaction: { enabled: true } },
     }, context);
     const root = await harness.root(context, configureAgent ? { agent } : undefined);
+    if (routing && configureAgent) await routing.initialize(context);
     // root({ agent }) only applies choices on creation. Every work launch must
     // overwrite them on reopen, especially tools enabled by an earlier launch.
     // Inspection deliberately leaves the persisted agent untouched.
@@ -392,13 +413,25 @@ export async function openInstance({
       memory,
       models,
       kits,
+      submit(text, requestId, target, steer) {
+        if (!configureAgent) return Promise.reject(new Error('An inspection cannot submit input.'));
+        if (routing) return routing.submit(text, requestId, target, context, steer);
+        if (target !== undefined) return Promise.reject(new Error('Machine routing is not enabled.'));
+        return root.submit({ type: 'input', content: text, ...requestId === undefined ? {} : { requestId },
+          ...steer ? { whenBusy: 'steer' } : {} }, context);
+      },
       async setModel(next) {
         await reconfigure({ model: next });
         const { compactionModel, jobs } = compactionFor(next, models);
         memory?.setSummarizer(createPiAiSummarizer({ models, model: compactionModel }), jobs);
       },
-      setTools: enabled => reconfigure({ tools: piTools([Unii, Agents], enabled), instructions: piInstructions(cwd, enabled) }),
       setThinkingLevel: level => reconfigure({ thinkingLevel: level }),
+      async setTools(enabled) {
+        // Disabling takes effect even for an already-resolved tool invocation, before configuration commits.
+        if (!enabled) toolsAllowed = false;
+        await reconfigure({ tools: piTools([Unii, Agents], enabled), instructions: piInstructions(cwd, enabled, routing !== undefined) });
+        toolsAllowed = enabled;
+      },
       exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
         checks.abort();

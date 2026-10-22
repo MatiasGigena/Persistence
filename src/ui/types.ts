@@ -52,6 +52,8 @@ export interface SessionStatus {
   readonly model: string;
   readonly thinkingLevel: string;
   readonly toolsEnabled: boolean;
+  /** Destination of new tool-bearing requests from this client, when remotely attached. */
+  readonly machine?: MachineTarget;
   /** A run is working on Pi's conversation. */
   readonly busy: boolean;
   /** Inputs queued behind the running one. */
@@ -89,10 +91,14 @@ export interface ChatFeed {
   close(): Promise<void>;
 }
 
-/**
- * The UI's whole view of the host. Implemented in process by src/ui/session.ts, and over the wire protocol by
- * src/client/remote-session.ts. Every method may reject (a remote one when the link drops); none blocks.
- */
+/** Immutable execution destination; machineId "server" is reserved for the host. */
+export interface MachineTarget {
+  readonly machineId: string;
+  readonly cwd: string;
+  readonly label: string;
+}
+
+/** The shared chat contract. Every method may reject; none waits for a model answer. */
 export interface UiSession {
   /** Pi's conversation. */
   readonly chat: ChatFeed;
@@ -104,7 +110,7 @@ export interface UiSession {
    * instead of after its run. With `requestId`, a repeat of the same id is admitted once (pi-durable's submission
    * dedup), so a client may resend after losing the answer to a reconnect.
    */
-  send(text: string, requestId?: string, steer?: boolean): Promise<void>;
+  send(text: string, requestId?: string, steer?: boolean, target?: MachineTarget): Promise<void>;
   /** Interrupts Pi's running work (Esc). Durable work stays resumable. */
   abort(): Promise<void>;
   /**

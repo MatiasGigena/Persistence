@@ -17,6 +17,7 @@ import type { UiSessionHandle } from '../ui/session.ts';
 import { Devices } from './auth.ts';
 import { backup } from './backup.ts';
 import { Hub } from './hub.ts';
+import { MachineBroker } from './machines.ts';
 import { createPush } from './push.ts';
 import type { PushService } from './push.ts';
 import { assetsHash } from './static.ts';
@@ -46,10 +47,12 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
   if (!settings) throw new Error('serve needs its settings');
   if (!config.socketPath) throw new Error(`The socket path for ${config.databasePath} is over 107 bytes and XDG_RUNTIME_DIR is unset; use a shorter --database path`);
   const paths = statePaths(config.databasePath);
-  // Coding tools are on unless --no-tools (ADR 0025), held to the protected folders like a local launch's.
-  const instance = await openInstance({ ...config, models, protection: protection(config), onWarning: log,
-    onReport: report => log(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   let unix: UnixListener | undefined, web: WebListener | undefined, session: UiSessionHandle | undefined, hub: Hub | undefined;
+  const machines = new MachineBroker({ authorized: () => session?.status().toolsEnabled ?? false,
+    notice: text => { log(text); session?.notify(text, 'info'); } });
+  // Preserve the host's protected-tools policy; each remote connector separately starts without local permission.
+  const instance = await openInstance({ ...config, models, protection: protection(config), onWarning: log, dispatcher: machines,
+    onReport: report => log(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   const { error: consoleError, warn: consoleWarn } = console;
   try {
     if (signal.aborted) return;
@@ -71,7 +74,7 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
       ...push ? { push, revoked: (name: string) => push.forgetDevice(name) } : {},
       ...devices ? { devices } : {},
       backup: out => backup(config, instance.exclusive, out === undefined ? {} : { out }),
-      log,
+      machines, log,
     });
     unix = await listenUnix(config.socketPath, hub);
     log(`listening on ${unix.path}`);
@@ -108,6 +111,7 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
     console.error = consoleError;
     console.warn = consoleWarn;
     await hub?.close(CloseCode.restart, 'The server is stopping.');
+    machines.close();
     await Promise.allSettled([unix?.close(), web?.close()]);
     try { await session?.close(); } finally { await instance.close(); }
   }

@@ -1,6 +1,7 @@
 // Parsing wire messages from text: JSON, then every field checked and copied by hand from `unknown`. Unknown fields
 // are dropped, so a parsed message holds exactly its type's fields. Shared by Node and the browser.
 import { ENABLE_TOOLS, ERROR_CODES, LIMITS, OPS } from './messages.ts';
+import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
 import type {
   AgentStatus, AppendField, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
   PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, SessionStatus, ToolsPolicy, ViewLine,
@@ -109,6 +110,7 @@ export function sessionStatus(x: unknown): SessionStatus {
     busy: bool(o, 'busy'), queued: int(o, 'queued'),
     memory: o.memory === undefined || o.memory === null ? undefined : memoryStats(o.memory),
     agents: list(o, 'agents', agentStatus),
+    ...o.machine === undefined ? {} : { machine: machineShape(() => machineTarget(o.machine)) },
   };
 }
 
@@ -149,6 +151,10 @@ export function itemOp(x: unknown): ItemOp {
   }
 }
 
+function machineShape<T>(parse: () => T): T {
+  try { return parse(); } catch (error) { throw new Bad(error instanceof Error ? error.message : String(error)); }
+}
+
 function toolsPolicy(x: unknown): ToolsPolicy {
   const o = obj(x, 'tools');
   const remote = oneOf(o, 'remote', ['confirm', 'off']);
@@ -159,8 +165,13 @@ function toolsPolicy(x: unknown): ToolsPolicy {
 
 /** Each op's request, from its id and raw params. Typed per op, so every op is listed and checked. */
 const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
-  send: (id, p) => ({ t: 'req', id, op: 'send',
-    params: withOptional(withOptional({ text: str(p, 'text') }, 'requestId', optStr(p, 'requestId')), 'steer', optBool(p, 'steer')) }),
+  send: (id, p) => ({ t: 'req', id, op: 'send', params: withOptional(withOptional(withOptional({ text: str(p, 'text') },
+    'requestId', optStr(p, 'requestId')), 'steer', optBool(p, 'steer')), 'target',
+    p.target === undefined ? undefined : machineShape(() => machineTarget(p.target))) }),
+  'machine.register': (id, p) => ({ t: 'req', id, op: 'machine.register', params: { registration: machineShape(() => machineRegistration(p.registration)) } }),
+  'machine.set': (id, p) => ({ t: 'req', id, op: 'machine.set', params: withOptional({ enabled: bool(p, 'enabled') }, 'confirm',
+    p.confirm === undefined ? undefined : oneOf(p, 'confirm', CONFIRMS)) }),
+  'machine.list': id => ({ t: 'req', id, op: 'machine.list', params: {} }),
   abort: id => ({ t: 'req', id, op: 'abort', params: {} }),
   stopAgents: (id, p) => ({ t: 'req', id, op: 'stopAgents', params: withOptional({}, 'name', optStr(p, 'name')) }),
   'feed.open': (id, p) => ({ t: 'req', id, op: 'feed.open', params: { name: str(p, 'name') } }),
@@ -185,6 +196,10 @@ const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
 /** Each op's successful response, from its id and raw result. */
 const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> } = {
   send: id => ({ t: 'res', id, op: 'send', ok: true, result: null }),
+  'machine.register': id => ({ t: 'res', id, op: 'machine.register', ok: true, result: null }),
+  'machine.set': id => ({ t: 'res', id, op: 'machine.set', ok: true, result: null }),
+  'machine.list': (id, r) => ({ t: 'res', id, op: 'machine.list', ok: true,
+    result: { machines: list(obj(r, 'result'), 'machines', item => machineShape(() => machineRegistration(item))) } }),
   abort: id => ({ t: 'res', id, op: 'abort', ok: true, result: null }),
   stopAgents: (id, r) => ({ t: 'res', id, op: 'stopAgents', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
   'feed.open': (id, r) => ({ t: 'res', id, op: 'feed.open', ok: true, result: { feed: str(obj(r, 'result'), 'feed') } }),
@@ -250,6 +265,8 @@ export function parseClientMessage(text: string): ClientMessage | ParseError {
     case 'hello': return checked(() => ({ t: 'hello', protocol: int(o, 'protocol'), client: str(o, 'client'), visible: bool(o, 'visible') }));
     case 'visible': return checked(() => ({ t: 'visible', visible: bool(o, 'visible') }));
     case 'ping': return checked(() => ({ t: 'ping', n: int(o, 'n') }));
+    case 'machine.result': return checked(() => ({ t: 'machine.result', id: machineShape(() => executionId(o.id)),
+      result: machineShape(() => machineToolResult(o.result)) }));
     case 'req': {
       const id = checked(() => int(o, 'id'));
       if (typeof id !== 'number') return id;
@@ -276,8 +293,12 @@ export function parseServerMessage(text: string): ServerMessage | ParseError {
         t: 'welcome', protocol: int(o, 'protocol'), server: str(o, 'server'), boot: str(o, 'boot'), assets: str(o, 'assets'),
         peer: oneOf(o, 'peer', ['socket', 'web']), cwd: str(o, 'cwd'), tools: toolsPolicy(o.tools),
       } as const;
-      return withOptional(withOptional(base, 'pushKey', optStr(o, 'pushKey')), 'device', optStr(o, 'device'));
+      if (o.machines !== undefined && o.machines !== true) throw new Bad('machines must be true');
+      return withOptional(withOptional(withOptional(base, 'pushKey', optStr(o, 'pushKey')), 'device', optStr(o, 'device')),
+        'machines', o.machines === true ? true as const : undefined);
     });
+    case 'machine.call': return checked(() => machineShape(() => machineCall(o)));
+    case 'machine.cancel': return checked(() => ({ t: 'machine.cancel', id: machineShape(() => executionId(o.id)) }));
     case 'ready': return { t: 'ready' };
     case 'status': return checked(() => ({ t: 'status', status: sessionStatus(o.status) }));
     case 'snapshot': return checked(() => ({ t: 'snapshot', feed: str(o, 'feed'), items: list(o, 'items', chatItem) }));

@@ -169,8 +169,11 @@ test('reject malformed and conflicting CLI inputs', () => {
   }
 });
 
-test('help works without loading runtime/authentication', async () => {
-  const { stdout } = await exec(launcher, ['--help']);
+test('help works without loading runtime/authentication', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-help-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const env = { ...process.env, PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
+  const { stdout } = await exec(launcher, ['--help'], { env });
   assert.match(stdout, /Tools are ON/);
   assert.match(stdout, /--no-tools/);
 });
@@ -182,7 +185,8 @@ test('inspection of absent state creates no directory', async t => {
   const options = await resolveOptions(parseArgs(['--status', '--data-dir', dataDir, '--cwd', folder]));
   assert.equal(options.exists, false);
   await assert.rejects(stat(dataDir), { code: 'ENOENT' });
-  const { stdout } = await exec(launcher, ['--history', '--data-dir', dataDir, '--cwd', folder]);
+  const env = { ...process.env, PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
+  const { stdout } = await exec(launcher, ['--history', '--data-dir', dataDir, '--cwd', folder], { env });
   assert.match(stdout, /No saved session/);
   await assert.rejects(stat(dataDir), { code: 'ENOENT' });
 });
@@ -212,13 +216,14 @@ test('flock rejects a second host and a symlink alias; status needs no credentia
     'process.stdout.write("ready");setInterval(()=>{},10000)'], { stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => holder.kill('SIGKILL'));
   await new Promise((resolve, reject) => { holder.stdout.once('data', resolve); holder.once('error', reject); holder.once('exit', code => reject(new Error(`lock holder exited ${code}`))); });
+  const env = { ...process.env, PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
   for (const path of [databasePath, alias]) {
-    await assert.rejects(exec(launcher, ['--database', path, '--status']), { code: 75, stderr: /already open/ });
+    await assert.rejects(exec(launcher, ['--database', path, '--status'], { env }), { code: 75, stderr: /already open/ });
   }
   const ended = new Promise(resolve => holder.once('exit', resolve));
   holder.kill('SIGKILL');
   await ended;
-  const { stdout } = await exec(launcher, ['--database', alias, '--status', '--auth-file', join(folder, 'absent-auth.json')]);
+  const { stdout } = await exec(launcher, ['--database', alias, '--status', '--auth-file', join(folder, 'absent-auth.json')], { env });
   const status: unknown = JSON.parse(stdout);
   assert.ok(isRecord(status));
   assert.equal(status.pendingTasks, 0);
@@ -346,7 +351,8 @@ test('resolved serve and admin configs survive the trip to the host; admin comma
 test('the admin commands need a running server or a saved chat', async t => {
   const folder = await mkdtemp(join(tmpdir(), 'pi-durable-admin-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
-  const env = { ...process.env, PI_DURABLE_DATA_DIR: join(folder, 'state') };
+  const env = { ...process.env, PI_DURABLE_DATA_DIR: join(folder, 'state'),
+    PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
   for (const args of [['serve', 'pair'], ['serve', 'devices'], ['serve', 'devices', '--revoke', 'phone']]) {
     await assert.rejects(exec(launcher, args, { env }), { code: 1, stderr: /No server is running for this chat/ }, args.join(' '));
   }

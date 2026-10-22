@@ -34,8 +34,9 @@ agents, and each agent is another conversation in the same database.
 - **Launcher** (`bin/pi-durable`): finds a Node.js 22.19 or newer and runs `src/cli.ts`.
   Node strips the types at load: there is no build step ([ADR 0011](decisions/0011-typescript-without-build.md)).
 - **CLI** (`src/cli.ts`): sets umask 077, parses arguments, resolves paths, and
+  handles `connect`/`bridge` and selects an SSH remote before opening any local chat state, or
   starts the host under `flock`. `--help`, `--version`, and inspection of a missing
-  database finish here without a lock. An interactive full-screen launch first probes the
+  database finish here without a lock. With no selected remote, an interactive full-screen launch probes the
   chat's socket and, when a server answers, attaches to it instead (below).
 - **Attached client** (`src/client/`, [ADR 0018](decisions/0018-tui-attach.md)): `attach.ts` decides whether a
   launch probes (`--local`, `--plain`, `-p`, a pipe, `--status`, `--history` and `--resume` never do; `--attach`
@@ -44,6 +45,16 @@ agents, and each agent is another conversation in the same database.
   status, requests with ids and timeouts. `unix-link.ts` is the reconnecting link: NDJSON on `<db>.sock` (its
   owner checked first), hello within 1.5 s, a ping every 20 s, backoff from 0.25 s to 5 s. Exiting detaches;
   the server keeps working.
+- **SSH workstation client** (`src/client/`, [ADR 0028](decisions/0028-remote-machines-over-ssh.md)):
+  `config.ts` keeps the stable machine identity and SSH preferences separately from the chat;
+  `remote.ts` selects the remote TUI, registers its exact canonical cwd, and defaults its own coding/read
+  permission to off. `ssh-link.ts` uses strict known-host verification and noninteractive SSH;
+  `bridge.ts`, on the server, proxies native NDJSON to the existing owner-checked Unix socket. Neither opens a
+  local database, flock, model runtime or transcript, nor adds a public port or generic MCP server.
+  `machine-executor.ts` runs native coding/read tools through `GuardedEnv` and a fsynced execution ledger.
+  Its client config and ledger are hidden along with standard protected paths. Exit drains admitted calls
+  before closing; a command with no timeout can delay exit. Remote-target network kits are unsupported and
+  refuse instead of executing on the VPS.
 - **Host** (`src/host/`): creates the model runtime, registers the `claude-cli`
   provider, checks the model and credentials (refusing a subscription token on
   `anthropic`), opens the instance, resumes pending work, then runs the chosen mode:
@@ -71,11 +82,14 @@ host only through `src/ui/types.ts`.
   (`transport-unix.ts`) and, when configured, the web listener (`transport-ws.ts`), then serves one
   `createUiSession()` through the hub. `hub.ts` fans the session out: one `Connection` per peer
   (`connection.ts`: handshake, ops, per-feed sync by `diffItems`, backpressure, keepalive), agent feeds opened
-  once by refcount, the remote tools policy and idle tools-off, and the push triggers. `admin.ts` is the CLI's
+  once by refcount, the remote tools policy and optional idle tools-off, and the push triggers.
+  `machines.ts` brokers tool calls to the authenticated connector matching their immutable machine/cwd,
+  waits when it is offline or disabled, and never falls back to server tools. `admin.ts` is the CLI's
   side of `backup`, `serve pair` and `serve devices`; `backup.ts` writes backups as the writer (ADR 0022);
   `store.ts` holds `serve/`'s JSON files.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,
-  installs the three extensions and the tool kits' (`browser`, `web-fetch`), and configures Pi for this launch.
+  installs the coding/routing, memory and agents extensions plus the tool kits' (`browser`, `web-fetch`),
+  and configures Pi for this launch.
   `Instance.close` closes the Harness, then every Chromium the browser kit launched, then the memory.
 - **Memory** (`src/memory/`): the UniiChat log, tree, view, and compactor, plus the
   `uniichat` extension that feeds the view to Pi.
@@ -84,6 +98,11 @@ host only through `src/ui/types.ts`.
 - **Tools** (`src/tools/`, [ADR 0027](decisions/0027-standing-agents.md)): extensions behind the standing agents'
   `browser` and `web_fetch` kits. `browser.ts` drives a headless Chromium per agent, shared by all its sessions (Playwright, a
   persistent profile in `chat.unii/browser/<agent name>/`; `browserKey` in `runtime.ts` maps a session to its agent); `web-fetch.ts` fetches a public page as Markdown. Pi has neither.
+- **Machine routing** (`src/machines/routing.ts`): binds request IDs, root runs and agent conversations to
+  immutable execution destinations, separately from the re-derived agent configuration. Spawn and standing-agent
+  delegation inherit the caller's destination. New agent deliveries atomically inherit their exact source session's
+  route, so report-only runs can continue the same task. Busy root sends reject; unmapped/legacy or mixed-machine
+  inputs and unpinned sessions fail closed. Execution IDs use the persisted chat namespace plus durable tool task ID.
 - **Providers** (`src/providers/`): the `claude-cli` model provider, which runs
   each request through the official `claude` CLI and returns its tool calls to
   the Harness, and the `anthropic` subscription check. See [models.md](models.md).
@@ -115,8 +134,11 @@ host only through `src/ui/types.ts`.
    is logged alone by the next request. Every log line has a `src` key, so a replay
    never logs it twice.
 5. Tool calls run as tool tasks. Coding tools are present unless the launch has `--no-tools` or `/tools off` was used.
-   They run in the guarded environment (`src/runtime/guard.ts`, ADR 0025): the chat's state and credentials are
-   hidden, system folders read-only, and bash runs in bubblewrap.
+   In server mode, routing first resolves the immutable run/session destination and records the tool intent.
+   Server-target tools run here; remote-target coding/read tools wait for that exact connector, whose own
+   per-process grant must also be on. Both use the guarded environment (`src/runtime/guard.ts`, ADR 0025):
+   state and credentials hidden, system folders read-only, bash in bubblewrap. Remote browser/web-fetch calls
+   refuse; server-target sessions retain their network kits.
 6. The final answer is committed as a `pi.assistant` entry. The host's reply watcher
    subscribes to the root's view and prints each new `pi.assistant` and
    `agents.report` entry, including replies to agent reports that no prompt waited for.
@@ -168,7 +190,9 @@ Details: [agents.md](agents.md), [decisions/](decisions/).
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
 | `chat.unii/browser/<agent name>/` | a Chromium profile per agent that used the browser, shared by all its sessions (any other caller: its conversation ID): cookies, localStorage | Chromium, under the host | Chromium's own; not backed up |
 | `chat.sqlite.lock` | nothing; the flock target | `flock` | none needed |
-| `settings.json` (beside the database) | `{ model }`: the default model chosen with `/model` | `writeSettings` (`src/host/config.ts`), on `/model` | written to a temp file, fsynced, renamed |
+| `settings.json` (beside the database) | default model, effort, optional standing-agent roster | `writeSettings` (`src/host/config.ts`), on `/model` and `/effort` (preserves other keys) | written to a temp file, fsynced, renamed |
+| workstation `client.json` and `machine-id` | stable machine identity and optional SSH preferences, never a tools grant | `src/client/config.ts` | private files, fsynced before publication |
+| workstation `machine-tools/<execution hash>/` | call intent/fingerprint and cached result, not a local chat | `MachineExecutor` | intent and directory fsynced before effects; result atomically replaced and fsynced |
 | `serve/devices.json`, `push.json`, `vapid.json` | paired devices, push subscriptions, the VAPID keys | the server (`store.ts` `writeJson`) | written to a temp file, fsynced, renamed, directory fsynced |
 | `backups/<UTC time>/` | `VACUUM INTO` copy, `.unii` (without `browser/`) and `settings.json` copies | `backup.ts`, as the writer | every file and directory fsynced |
 | `chat.sqlite.sock` | nothing; the server's socket | `serve` | removed at stop; a stale one is replaced under the flock |
@@ -182,6 +206,13 @@ The two stores are not committed together. The memory follows SQLite:
 - A log ahead of `view.json` after a crash gets its missing view lines at open.
 - A gap in the log refuses to open. An unreadable `view.json` is rebuilt from the log.
 - Inspection launches (`--status`, `--history`) do not open the memory directory.
+
+Machine-routing documents in SQLite (`machines.routing`, `machines.submission-route`, `machines.run-route`,
+`machines.agent-route`) hold the execution namespace and immutable request/run/conversation pins. Reconfiguration
+never rewrites them. A tool task's `machines.intent` memo freezes destination, execution ID, tool and arguments.
+The workstation ledger joins duplicate live calls and caches results; unresolved intents after a worker crash
+return `INDETERMINATE`, not a replay. This does not make arbitrary bash effects transactional or exactly-once.
+A server restart may settle an unsafe native tool as interrupted/unknown instead of resuming dispatch.
 
 Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 
@@ -217,7 +248,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | File | Purpose |
 |---|---|
 | `bin/pi-durable` | Bash launcher: picks Node (`PI_DURABLE_NODE`, `node`, or Pi's private Node) and runs `src/cli.ts` |
-| `src/cli.ts` | Entry: parses arguments, checks Node, resolves paths, runs the host under `flock` |
+| `src/cli.ts` | Entry: parses arguments, checks Node, selects SSH/bridge before local state; otherwise resolves paths and runs the host under `flock` |
 | `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file, `PI_DURABLE_CHROMIUM`) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
 | `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read` or `coding`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
@@ -237,15 +268,23 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/tools/browser.ts` | `createBrowserExtension`: the `browser` extension's eight `browser_*` tools, a headless Chromium and persistent profile per key (`keyOf`: the agent's name, from the host), one queue and a 60 s timeout per operation, URL redaction, `close()` |
 | `src/tools/web-fetch.ts` | `createWebFetchExtension`: the `web-fetch` extension's `web_fetch` tool, a page as Markdown (Readability, Turndown) or a PDF as text; refuses private destinations, redirects included |
 | `src/agents/index.ts` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
-| `src/protocol/messages.ts` | Wire protocol v1: every message, the op table (`Ops`), item ops, error and close codes, limits |
+| `src/machines/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |
+| `src/protocol/machines.ts` | Machine targets, registrations, tool calls/results/cancels and JSON narrowing shared by server and connector |
+| `src/protocol/messages.ts` | Wire protocol v3: every message, the op table (`Ops`), item ops, error and close codes, limits |
 | `src/protocol/parse.ts` | `parseClientMessage`, `parseServerMessage`: JSON checked field by field from `unknown` |
 | `src/protocol/diff.ts` | `diffItems` (item ops between what a peer has and the current items), `wireItem` and `clip` |
 | `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |
 | `src/protocol/version.ts` | `PROTOCOL` |
 | `src/client/attach.ts` | `probes`, `connect` (the probe), `attachChat` (the CLI's attach routing), `runAttached` (the TUI on a server, "Detached; the server keeps working."), `serverAnswers` |
 | `src/client/remote-session.ts` | `RemoteSession`: a `UiSession` over a `ServerLink`; mirrors, status, notices, requests, `send` resent with its requestId after a reconnect, agent feeds re-opened; `attached` for `TuiInfo` |
+| `src/client/config.ts` | Stable machine identity, private `client.json`, saved SSH destination and fail-closed remote selection |
+| `src/client/remote.ts` | SSH TUI and per-process machine grant, registration/re-registration, call/result handling and drain-on-close |
+| `src/client/ssh-link.ts` | Strict-known-host, noninteractive SSH transport to the native bridge, no forwarding |
+| `src/client/bridge.ts` | Stdio proxy to the existing owner-checked Unix socket; no database, runtime or flock |
+| `src/client/machine-executor.ts` | Native guarded coding/read tools, fsynced intent/result ledger, duplicate joining, crash-unknown refusal and cancellation |
 | `src/client/unix-link.ts` | `ClientLink` (hello and welcome, ping, `bye`, reconnect with backoff), `unixConnector` (NDJSON over the socket, owner checked), `checkSocket` |
 | `src/server/serve.ts` | `serve`: opens the chat with tools on (protected folders), the socket, the web listener and push when configured, the session and the hub; resumes pending work; stops on the signal with `bye` 1012 |
+| `src/server/machines.ts` | `MachineBroker`: per-connector registration/grant, exact machine/cwd dispatch, reconnect waiting, results and cancellation |
 | `src/server/hub.ts` | `Hub` (the `PeerHub`): connections, the op handlers, agent feeds by refcount, notices, the tools policy and idle tools-off, push triggers and their suppression |
 | `src/server/connection.ts` | `Connection`: one peer's handshake, requests (peer checks, in-flight limit), feed and status sync (`diffItems`, ≤50 ms, gated on `buffered()`, status ≤4/s), slow-peer and silence closes, visibility |
 | `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing; `lineSplitter` |
@@ -272,7 +311,8 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `test/memory/` | Log, tree, view, compactor, extension |
 | `test/agents/` | Roles, messaging, stops, reports, `zoom("Name")` pages, exactly-once delivery across close and SIGKILL; an agent's view and compaction through the host wiring |
 | `test/client/` | `RemoteSession` against the fake server (snapshot and ops, resync, status and notices, request errors, reconnects, resent sends), the link over real sockets (framing, probe failures, pings, `bye`, backoff), attach routing and the launcher's exit 75 hint, and an end-to-end attach to `serve` with a restart |
-| `test/protocol/` | Random feed sequences through `diffItems` and `applyOps`, clipping, every message through JSON and the parsers, malformed input |
+| `test/machines/` | Immutable routing, session inheritance and fail-closed targets; connector ledger replay/crash behavior |
+| `test/protocol/` | Machine messages and targets; random feed sequences through `diffItems` and `applyOps`, clipping, every message through JSON and the parsers, malformed input |
 | `test/server/` | The hub with a fake session and in-memory links (handshake, version, ops, peer checks, feed refcounts, slow peers, status coalescing, keepalive, tools policy and idle off, push triggers); the Unix socket; `serve` end to end in a child process with a faux model and through the launcher; backups that open, and pruning. Auth: allow-list, Origin, pairing codes, cookies, revoke; static files: stripping, CSP, traversal; the web listener: refused upgrades, links, close codes, frame limits, pairing over HTTP. Push: RFC 8291's vector, the VAPID JWT, endpoint checks, sends to a local server (201, 410, 429, 5xx) |
 | `test/providers/` | `claude-cli` against a fake CLI, through the Harness; the stub MCP server; the subscription check |
 | `test/fixtures/` | Faux models, the fake `claude` CLI, child-process instances (`serve-faux.ts`: the server on a faux model), `server-fakes.ts` (a fake `UiSession`, `PeerLink` and push for hub tests), and `fake-server.ts` (an in-memory, transport-agnostic server written from protocol.md, for client tests) |

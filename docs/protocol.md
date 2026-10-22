@@ -1,18 +1,20 @@
-# Wire protocol v1
+# Wire protocol v3
 
-The protocol between `pi-durable serve` and its clients: the terminal UI attached over a Unix socket, and the web
-app over a WebSocket. It carries one `UiSession` ([src/ui/types.ts](../src/ui/types.ts)) across a link: the client
+The protocol between `pi-durable serve` and its clients: the terminal UI over a Unix socket or SSH stdio bridge,
+and the web app over a WebSocket. It carries one `UiSession` ([src/ui/types.ts](../src/ui/types.ts)) across a link: the client
 mirrors the chat items and the status, and calls the session's methods as requests.
 
 This document is the reference. [src/protocol/](../src/protocol/) holds its types, constants, parser and sync code,
 shared by Node and the browser; where the two differ, fix one of them. Decisions: ADRs
 [0016](decisions/0016-server-mode.md), [0017](decisions/0017-wire-protocol.md),
-[0018](decisions/0018-tui-attach.md) and [0019](decisions/0019-private-access.md).
+[0018](decisions/0018-tui-attach.md), [0019](decisions/0019-private-access.md),
+[0025](decisions/0025-protected-folders.md) and [0028](decisions/0028-remote-machines-over-ssh.md).
 
 | File | Exports |
 |---|---|
 | `src/protocol/version.ts` | `PROTOCOL` |
 | `src/protocol/messages.ts` | every message type, `Ops`/`Op`/`Params`/`Result`, `ItemOp`, `ErrorCode`, `CloseCode`, `LIMITS`, `ROOT_FEED`, `OPS`, `SOCKET_ONLY`, `WEB_ONLY`, `ENABLE_TOOLS` |
+| `src/protocol/machines.ts` | `MachineRegistration`, `MachineCall`, `MachineCancel`, `MachineResult`, `MachineToolResult`, machine/JSON narrowing |
 | `src/protocol/parse.ts` | `parseClientMessage`, `parseServerMessage`, `isParseError`, `ParseError`; `chatItem`, `sessionStatus`, `itemOp` |
 | `src/protocol/diff.ts` | `diffItems`, `wireItem`, `clip` (server side) |
 | `src/protocol/mirror.ts` | `applyOps` (client side) |
@@ -31,6 +33,11 @@ Every message is one JSON object with a string field `t`, its type. Text is UTF-
 | Auth | the socket file is mode 600 in the user's own directory | see [Authentication](#authentication) |
 | `welcome.peer` | `socket` | `web` |
 
+SSH adds no server listener: a noninteractive, strict-known-host `ssh -T` process
+runs `pi-durable bridge`, which proxies these same NDJSON messages to the existing
+owner-checked Unix socket. The peer remains `socket`. The bridge opens no database,
+flock, model runtime or generic external MCP endpoint; no SSH forwarding is used.
+
 - The server never listens elsewhere: not on a public address, not on `0.0.0.0`. See the invariant in AGENTS.md.
 - Before connecting, a socket client checks that the socket is owned by its own uid, and refuses otherwise.
 - A client message longer than `LIMITS.clientMessage` (4 Mi code units) is not parsed (on the socket, the line
@@ -39,14 +46,15 @@ Every message is one JSON object with a string field `t`, its type. Text is UTF-
 - Malformed messages (`parseClientMessage` returns a `ParseError`): with a readable request `id`, the server
   answers that id with `unknown_op` (for `invalid: 'unknown_op'`) or `bad_request`; an unknown `t` is ignored;
   anything else gets `bad_request` with `id` -1. None closes the connection.
-- Server messages have no size limit; clipping (below) keeps them in the hundreds of KiB at most.
+- The socket/WebSocket protocol has no server-message size limit; clipping (below) limits individual tool
+  outputs. The SSH transport additionally refuses an NDJSON line over 32 Mi code units and bounds its writes.
 
 ## Connection lifecycle
 
 ```
 client                                         server
-  │ hello {protocol:1, client, visible}  ─────►  │  (within LIMITS.helloMs, or bye 4000)
-  │ ◄───── welcome {protocol, boot, assets, peer, cwd, tools, pushKey?, device?}
+  │ hello {protocol:3, client, visible}  ─────►  │  (within LIMITS.helloMs, or bye 4000)
+  │ ◄───── welcome {protocol, boot, assets, peer, cwd, tools, machines?, pushKey?, device?}
   │ ◄───── status {status}
   │ ◄───── snapshot {feed:"root", items}
   │ ◄───── ready
@@ -143,12 +151,15 @@ stops them; the checks hold only together. The VPS is assumed to have one user.
 | `req` | `id: number` (integer ≥ 0), `op: Op`, `params: object` | A request; see [Ops](#ops). A missing `params` reads as `{}`. |
 | `visible` | `visible: boolean` | The user can or cannot see this client now (a tab in front, a terminal attached). |
 | `ping` | `n: number` (integer ≥ 0) | Liveness; answered by `pong` with the same `n`. |
+| `machine.result` | `id: string`, `result: MachineToolResult` | Result of a dispatched execution; accepted only from the assigned, registered socket connector. |
 
 ## Server messages
 
 | `t` | Fields | Meaning |
 |---|---|---|
-| `welcome` | `protocol`, `server` (version), `boot`, `assets`, `peer: 'socket' \| 'web'`, `cwd`, `tools: {remote: 'confirm' \| 'off', idleMinutes?}`, `pushKey?`, `device?` | The answer to `hello`. `boot` changes at every server start; `assets` is a hash of the web app's files. `pushKey` is the VAPID public key (base64url), for web peers when push works. `device` is the web device's name. |
+| `welcome` | `protocol`, `server` (version), `boot`, `assets`, `peer: 'socket' \| 'web'`, `cwd`, `tools: {remote: 'confirm' \| 'off', idleMinutes?}`, `machines?: true`, `pushKey?`, `device?` | The answer to `hello`. `boot` changes at every server start; `assets` is a hash of the web app's files. `pushKey` is the VAPID public key (base64url), for web peers when push works. `device` is the web device's name. |
+| `machine.call` | `id: string`, `target: MachineTarget`, `name: 'read' \| 'write' \| 'edit' \| 'bash'`, `args: JsonObject` | Execute on the exact registered machine/cwd, with a stable execution ID. |
+| `machine.cancel` | `id: string` | Explicitly cancel a dispatched call; not rollback of effects. |
 | `ready` | — | The initial state is complete. |
 | `status` | `status: SessionStatus` | The whole status, each time it changed (compared as JSON). |
 | `snapshot` | `feed: string`, `items: ChatItem[]` | A feed's whole item list: replaces the client's mirror. |
@@ -168,7 +179,10 @@ reads as `undefined`, and `memory` may also be `null`.
 
 | Op | Params | Result | Peers | Errors besides `bad_request` |
 |---|---|---|---|---|
-| `send` | `text`, `requestId?`, `steer?` | `null` | both | `unavailable` |
+| `send` | `text`, `requestId?`, `steer?`, `target?: MachineTarget` | `null` | both | `unavailable`, `failed` |
+| `machine.register` | `registration: {target: MachineTarget, enabled: boolean}` | `null` | socket | `forbidden`, `unavailable`, `failed` |
+| `machine.set` | `enabled: boolean`, `confirm?: 'enable-tools'` | `null` | socket | `forbidden`, `unavailable`, `failed` |
+| `machine.list` | — | `{machines: MachineRegistration[]}` | both | |
 | `abort` | — | `null` | both | |
 | `stopAgents` | `name?` | `{names}` | both | |
 | `feed.open` | `name` | `{feed}` | both | `not_found` |
@@ -194,9 +208,14 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 - **`send`** is `UiSession.send`: admitted durably, answered when admitted, not when Pi answers (the feed shows
   that). Text that is empty after trimming is `bad_request`. With `requestId` (1 to 128 characters, unique per
   message: e.g. `<client>-<random>-<counter>`), the server submits with pi-durable's request id, so a repeat is
-  admitted once. A client resends a `send` whose `res` a dropped link lost only with its `requestId`. With
-  `steer: true`, a busy Pi gets the text between its steps (pi-durable's `whenBusy: 'steer'`) instead of after its
-  run; an idle Pi starts a run as usual. The web app steers whatever it sends while Pi works.
+  admitted once. A client resends a `send` whose `res` a dropped link lost only with its `requestId`. An idle Pi
+  starts a run. Protocol 3's machine-routed admission rejects a busy-root user send (including `steer: true`)
+  rather than queueing or steering it; rejection is a `failed` response. The optional `steer` field remains
+  parseable, but cannot override this policy. The web app may still request steering while Pi works, and receives
+  the same rejection. A remote TUI always
+  supplies `target`; without it, a routed server uses its own server destination. Routing binds the request ID
+  before admission, and a repeat ID cannot change destination, even if its original admission was rejected.
+  See [Machine routing and execution](#machine-routing-and-execution).
 - **`abort`**, **`stopAgents`**: as the session's `abort` and `stopAgents`; `names` lists the agents stopped,
   sub agents first, and is empty for an unknown name.
 - **`feed.open`** opens an agent's conversation by name (case-insensitive) and returns its feed id, an opaque
@@ -246,6 +265,77 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   in `out` older than 14 days are deleted, and nothing else there.
 - **`admin.pair`**, **`admin.devices`**, **`admin.revoke`**: see [Web peers](#web-peers). They answer
   `unavailable` when `serve/devices.json` could not be read at the server's start.
+
+## Machine routing and execution
+
+`welcome.machines: true` advertises immutable run/session routing and execution
+connectors. It is optional for protocol compatibility, but the remote CLI
+requires it **before sending any user message**; matching protocol 3 alone does
+not replace this capability check. The machine messages, ops and optional fields
+are additive in shape, but `PROTOCOL` is bumped to 3 because routed admission now
+rejects busy-root user sends instead of queueing or steering them. This changes
+existing `send` semantics; clients and server must be updated together.
+
+A `MachineTarget` is `{machineId, cwd, label}`. Each field is a nonempty string
+without control characters: `machineId` is at most 128 code units, starting with
+an ASCII letter/digit and containing only letters, digits, `.`, `_`, `:` or `-`;
+`cwd` is an absolute path of at most 4096 code units; `label` is display text of at
+most 256. The remote CLI canonicalizes its launch cwd. `machineId: 'server'` is
+reserved for the host; connectors cannot register it. The exact machine ID and
+cwd select execution; a label is not authorization.
+
+- **`machine.register`** registers one socket connection's target and current
+  process grant. It is sent after `ready` and again after reconnect. A connection
+  cannot change its machine/cwd, and two active connectors cannot register the
+  same machine/cwd. `enabled` reflects this process's explicit local permission,
+  not a persisted capability or a server-wide grant.
+- **`machine.set`** changes only this connector's grant. Enabling requires
+  `confirm: 'enable-tools'`; disabling requires none and may cancel its assigned
+  work. A connector must register first. Both the server's coding-tools gate and
+  the connector grant must be on to dispatch. Local launches and `serve` default
+  to guarded tools on; remote connectors independently default off unless
+  `--allow-tools` or confirmed `/tools on` is used.
+- **`machine.list`** returns live registrations, not a durable device registry or
+  authority to retarget an existing run.
+- A submitted message's request ID, root run, and each spawned agent/delegated
+  standing-agent session have immutable destinations. Existing sessions never
+  move when messaged or reconfigured. New agent delivery request IDs inherit the
+  exact source session's route atomically before submission, including report-only
+  root runs. Unmapped legacy inputs, conflicting destinations and old unpinned
+  sessions fail closed; there is no implicit server fallback.
+
+`machine.call.id` is the persisted chat namespace plus durable tool task ID,
+not a connection-local request counter (at most 512 code units, no controls).
+`args` is a JSON object; nonfinite numbers and nesting deeper than 64 are refused.
+The broker waits for the exact enabled machine/cwd, never dispatches to another
+computer, and accepts `machine.result` only from the connector assigned that ID.
+A lost link does not cancel local work. Reconnection resends the same execution
+ID so the executor can join live work or return its cached result. Explicit
+abort, disabling tools or server shutdown may send `machine.cancel`; this cannot
+undo effects already made.
+
+`MachineToolResult` accepts optional `output` (text or base64 image blocks),
+`structuredOutput`, `details`, `isError`, and diagnostics
+`{severity: 'info' | 'warn' | 'error', message, code?}`. Image MIME types are PNG,
+JPEG, GIF, WebP or BMP. Other structured values are JSON data. The executor bounds
+the encoded result to `LIMITS.clientMessage` in both code units and UTF-8 bytes;
+a larger result is discarded and cached as `RESULT_TOO_LARGE`.
+
+Before effects, the workstation fsyncs an intent and payload fingerprint under
+its hashed execution-ID ledger. Duplicate payloads join/return cached work;
+changed payloads refuse. An unresolved intent after a worker crash returns
+`INDETERMINATE`, never reruns automatically. Native tool replay policy stays in
+force: a server restart can settle an unsafe tool as interrupted/unknown instead
+of dispatching again. This is **not** exactly-once arbitrary bash or transactional
+side effects. Retain the ledger and inspect uncertain changes before creating a
+new execution. Graceful connector close currently drains admitted calls, so an
+unbounded shell command may delay exit.
+
+Only native coding/read tools are supported on the workstation. They run through
+`GuardedEnv`, including hidden local state/auth, client config and ledger,
+read-only system folders and bubblewrap bash. Remote-target `browser_*` and
+`web_fetch` calls refuse instead of silently running on the server. Server-target
+sessions retain their network kits and egress policy.
 
 ## Feeds and item ops
 
@@ -348,7 +438,9 @@ Any other code, or a close without `bye`: reconnect.
 
 ## Versioning
 
-- `PROTOCOL` is 1. `hello` and `welcome` carry it, and the server refuses another (4000).
+- `PROTOCOL` is 3. `hello` and `welcome` carry it, and the server refuses another (4000).
+  Version 3 changes routed `send` admission: a busy root rejects user sends, including steering requests,
+  instead of queueing/steering them. This semantic incompatibility requires updating clients and server together.
 - Additive changes keep the version: a new message type, op, error code, close code or optional field. Receivers
   therefore ignore what they do not know: a message with an unknown `t` is ignored, unknown fields are dropped by
   the parser, an unknown op gets `unknown_op`, an unknown error code reads as `failed`.
@@ -358,8 +450,8 @@ Any other code, or a close without `bye`: reconnect.
 ## Example
 
 ```
-→ {"t":"hello","protocol":1,"client":"pi-durable-tui 0.1.0","visible":true}
-← {"t":"welcome","protocol":2,"server":"0.1.0","boot":"k3j","assets":"9f2","peer":"socket","cwd":"/home/me/projects","tools":{"remote":"confirm","idleMinutes":30}}
+→ {"t":"hello","protocol":3,"client":"pi-durable-tui 0.1.0","visible":true}
+← {"t":"welcome","protocol":3,"server":"0.1.0","boot":"k3j","assets":"9f2","peer":"socket","cwd":"/home/me/projects","tools":{"remote":"confirm"},"machines":true}
 ← {"t":"status","status":{"model":"claude-cli/sonnet","thinkingLevel":"high","toolsEnabled":false,"busy":false,"queued":0,"memory":{"messages":12,"unsummarized":0,"active":0,"failed":0,"viewBytes":2048,"viewLines":3},"agents":[]}}
 ← {"t":"snapshot","feed":"root","items":[{"kind":"user","id":"e40","text":"hi"},{"kind":"assistant","id":"e41","text":"Hello!","streaming":false}]}
 ← {"t":"ready"}

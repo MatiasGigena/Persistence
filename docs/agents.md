@@ -16,6 +16,7 @@ pi-durable conversation (a standing agent, one per task), in the same database a
 - [Background execution](#background-execution)
 - [Exactly-once delivery](#exactly-once-delivery)
 - [Settings and tools on each launch](#settings-and-tools-on-each-launch)
+- [Execution machines and session pins](#execution-machines-and-session-pins)
 - [Reading an agent's chat](#reading-an-agents-chat)
 - [Context size](#context-size)
 - [The host: /agents and --resume](#the-host-agents-and---resume)
@@ -327,7 +328,8 @@ await syncAgents(harness, context, { childAgent, roster, kits });   // create mi
 2. **Standing agents and their subs.** A standing agent's roster entry overrides model, thinking level and tools: its
    tools become the five agent tools plus its kits' tools, and each kit's extension is selected. A sub of a standing
    agent takes its main agent's entry, then `subModel` and `subThinkingLevel` when given. The local kits (`coding`,
-   `read`) apply only while Pi's coding tools are on; `browser` and `web_fetch` stay, since they touch no local files.
+   `read`) apply only while Pi's coding tools are on; `browser` and `web_fetch` stay offered, since they touch no local
+   files. Their calls refuse in remote-target sessions until remote network-kit support exists.
    Its instructions are Pi's with Pi's coding-tools line (the one naming bash) replaced by its own: the kit tools it
    has now, the protected-folders note only while it has a local kit's tools, which of its local tools are off, and
    that it cannot change files or run commands when it lacks bash. So the Researcher is never told it has `bash`.
@@ -349,6 +351,55 @@ ad-hoc agents only; `--no-tools` and `/tools off` remove their local kits. The t
 `/tools` take the same two steps mid-launch (`Instance.setModel`, `setThinkingLevel`, `setTools`), so agents follow
 them from their next request. A standing agent's past sessions are re-derived with its current one, since a past
 session can still run: `/tools off` reaches them too.
+
+## Execution machines and session pins
+
+With machine routing enabled ([ADR 0028](decisions/0028-remote-machines-over-ssh.md)),
+model requests, agent state and delivery stay on the central server; coding/read
+tools run on an immutable `{machineId, cwd, label}` destination:
+
+- A routed user message binds its request ID and root run to its destination. A
+  busy root rejects routed user sends, rather than steering an existing run onto
+  another machine.
+- `spawn_agent` inherits the caller's destination in the same transaction that
+  creates the child. The pin is separate from its agent config, so `/model`,
+  `/effort`, `/tools`, launch cwd and recovery cannot retarget it.
+- `delegate` pins a standing agent's new session to the delegating run. The
+  standing agent's earlier sessions and their subs keep their original pins.
+  A first, empty session may take its first task, but an existing pin is never
+  overwritten. `send_message` addresses an existing session, not the sender's
+  machine: it never moves that session's tools.
+- Every **new** delivery to Pi from a pinned agent binds `agents:<delivery task ID>`
+  to its actual source conversation in the same commit that schedules the delivery,
+  before its input can be submitted. An automatic report inherits the conversation
+  whose answer it carries; `send_message("Pi", ...)` inherits the calling session.
+  Neither looks up the standing agent's mutable current session. A report-only root
+  run can therefore use coding tools and delegate the next stage on that same machine
+  (for example, Coder → Pi → Reviewer), without another user message.
+- Every input in a root run must have an explicit, matching destination. Reports
+  joining user input are validated too: distinct machines/cwds, or any unmapped
+  legacy input, block execution rather than selecting either destination.
+- Older agents/sessions and already-scheduled deliveries without a pin fail closed
+  for coding tools and spawning/delegation; they do not acquire an implicit server
+  destination or borrow a neighboring input's pin. Their text is still delivered
+  and Pi may answer. Submit a new user task with an explicit destination to restart
+  the workflow.
+- An offline or disabled connector leaves calls waiting for the same machine and
+  exact launch cwd, never another workstation or the VPS. Its own per-process
+  coding/read grant is required in addition to the server gate; it starts off
+  unless the remote launch explicitly uses `--allow-tools` or `/tools on`.
+- The initial workstation connector supports coding/read kits only. A
+  remote-target session's `browser_*` and `web_fetch` calls refuse, never run on
+  the server as a fallback. This includes the Researcher's fetches. Server-target
+  sessions keep the browser/web-fetch kits and their existing egress checks.
+
+The execution machine uses `GuardedEnv`: state and credentials hidden, system
+folders read-only, bash in bubblewrap. Its cwd pin is routing scope, not a
+project-only sandbox. Calls have stable execution IDs and a local fsynced ledger;
+unknown outcomes after a worker crash return `INDETERMINATE` instead of rerunning.
+Exactly-once **agent delivery** does not promise exactly-once arbitrary bash
+side effects. Details and shutdown limitations:
+[operations.md](operations.md#remote-workstations-over-ssh).
 
 ## Reading an agent's chat
 

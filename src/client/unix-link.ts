@@ -77,7 +77,8 @@ export function unixConnector(path: string): Connector {
 
 /**
  * The link's state: `connecting` until the first welcome, `open` while a connection is welcomed, `reconnecting`
- * while it retries after a drop, `closed` for good (a `bye` 1000, 4000 or 4001, a foreign socket, or `close()`).
+ * while it retries after a drop, `closed` for good (a final `bye`, a foreign socket, or `close()`). A welcomed
+ * connection's `bye` 1000 is final unless `reconnectNormal` is set; 4000 and 4001 are always final.
  */
 export type LinkStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
 
@@ -86,6 +87,9 @@ export interface LinkOptions {
   /** `hello.client`: free text for the server's journal. */
   readonly client: string;
   readonly visible?: boolean;
+  /** Reconnect after an established connection's normal bye (e.g. a sleeping laptop's silence timeout).
+   * Default false. Explicit close(), version mismatch and unauthorized still stop for good. */
+  readonly reconnectNormal?: boolean;
   /** A connection without a welcome this long after it opened is dropped. Default 1500 ms. */
   readonly helloMs?: number;
   /** A ping goes this often while open; nothing heard for twice this drops the connection. Default 20 s. */
@@ -259,7 +263,7 @@ export class ClientLink {
     this.current = undefined;
     this.stopTicker();
     const { bye } = connection;
-    if (bye && FINAL.has(bye.code)) {
+    if (bye && FINAL.has(bye.code) && !(bye.code === CloseCode.normal && this.options.reconnectNormal)) {
       this.reason = byeText(bye);
       this.setStatus('closed');
       return;
