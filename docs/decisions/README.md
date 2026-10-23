@@ -33,6 +33,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0027](0027-standing-agents.md) | Standing agents with their own models, tools and a session per task (amends 0003) |
 | [0028](0028-remote-machines-over-ssh.md) | One central chat, workstation tools over native SSH (extends 0018, 0025, 0027) |
 | [0029](0029-reviewer-autoreview-p2.md) | Reviewer always uses the installed autoreview skill through a dedicated P2 tool |
+| [0030](0030-pi-ssh-agent.md) | bash sees Pi's own SSH agent, never the user's (amends 0025) |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".

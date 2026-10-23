@@ -138,7 +138,8 @@ host only through `src/ui/types.ts`.
    In server mode, routing first resolves the immutable run/session destination and records the tool intent.
    Server-target tools run here; remote-target coding/read tools wait for that exact connector, whose own
    per-process grant must also be on. Both use the guarded environment (`src/runtime/guard.ts`, ADR 0025):
-   state and credentials hidden, system folders read-only, bash in bubblewrap. Remote browser/web-fetch calls
+   state, credentials and the user's agents hidden, system folders read-only, bash in bubblewrap with only Pi's own SSH
+   agent (`src/runtime/ssh-agent.ts`, ADR 0030). Remote browser/web-fetch calls
    refuse; server-target sessions retain their network kits.
 6. The final answer is committed as a `pi.assistant` entry. The host's reply watcher
    subscribes to the root's view and prints each new `pi.assistant` and
@@ -252,8 +253,9 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/cli.ts` | Entry: parses arguments, checks Node, selects SSH/bridge before local state; otherwise resolves paths and runs the host under `flock` |
 | `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file, `PI_DURABLE_CHROMIUM`) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
-| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`, `autoreview`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read`, `coding` or `autoreview`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
+| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`, `autoreview`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers and Pi's SSH agent included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read`, `coding` or `autoreview`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
+| `src/runtime/ssh-agent.ts` | `startSshAgent`: Pi's own `ssh-agent` with `PI_DURABLE_SSH_KEYS` only, bash's `SSH_AUTH_SOCK` (ADR 0030); started by `openInstance` and by an SSH connector |
 | `src/runtime/recovery.ts` | `resumeInstance` (pending tasks and queued input), `settleAgents` (wait until agents are idle) |
 | `src/memory/index.ts` | Public exports of the memory |
 | `src/memory/memory.ts` | `Memory`: log, tree, views, compactor scheduling, zoom, date, status; `openMemory` |
@@ -309,7 +311,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `tsconfig.json` | Strict TypeScript for `tsc` (no emit): erasable syntax only, `.ts` import specifiers |
 | `eslint.config.ts` | typescript-eslint rules: no `any`, written or inferred, and no suppression comments |
 | `test/host/` | CLI parsing, paths, global chat, flock, shutdown |
-| `test/runtime/` | Reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript |
+| `test/runtime/` | Reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript, protected folders, Pi's SSH agent |
 | `test/memory/` | Log, tree, view, compactor, extension |
 | `test/agents/` | Roles, messaging, stops, reports, `zoom("Name")` pages, exactly-once delivery across close and SIGKILL; an agent's view and compaction through the host wiring |
 | `test/client/` | `RemoteSession` against the fake server (snapshot and ops, resync, status and notices, request errors, reconnects, resent sends), the link over real sockets (framing, probe failures, pings, `bye`, backoff), attach routing and the launcher's exit 75 hint, and an end-to-end attach to `serve` with a restart |

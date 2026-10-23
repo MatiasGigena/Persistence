@@ -9,7 +9,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 
 - `src/cli.ts`: entry. Parses arguments, takes the flock, spawns the host.
 - `src/host/`: `host.ts` (terminal chat, /commands, reply watcher), `config.ts` (CLI options, paths).
-- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap).
+- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks; `roster.ts`: the standing agents and kit names.
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and

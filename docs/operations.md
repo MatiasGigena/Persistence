@@ -331,12 +331,18 @@ the same guarded environment on the execution machine. Tools act as your user, e
 | The chat's state | the data directory; the database, its WAL, lock and socket; `chat.unii/` (with the browser profiles); `settings.json`; `serve/`; `backups/` | cannot read or change |
 | Connector state (on a workstation) | client config directory (including `client.json` and `machine-id`), `machine-tools/` ledger | cannot read or change |
 | Credentials | Pi's `auth.json`, `~/.ssh`, `~/.gnupg`, `~/.claude`, `~/.claude.json`, `~/.config/gh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc` | cannot read or change |
+| Your agents | the socket `SSH_AUTH_SOCK` names, `$XDG_RUNTIME_DIR/keyring`, `$XDG_RUNTIME_DIR/gnupg` | cannot reach |
 | System | `/etc`, `/usr`, `/boot`, `/opt`, `/bin`, `/sbin`, `/lib*`, `/srv`, `/var/lib` | can read, not change |
 
 read, write and edit refuse such a path with "… is protected"; inside bash, a hidden folder is empty and a hidden
 file unreadable, and a system folder is a read-only file system. The model is told about them.
 
-- `PI_DURABLE_UNPROTECT=~/.ssh:~/.config/gh` gives paths back, for example so Pi can `git push` with your keys.
+- `PI_DURABLE_SSH_KEYS=~/.ssh/id_ed25519_github` lets Pi `git push` over SSH with those keys only (ADR 0030): the
+  launch starts Pi's own `ssh-agent` with them, and bash's `SSH_AUTH_SOCK` names it. Keys need no passphrase (the
+  launch warns about one that has). Host keys come from `/etc/ssh/ssh_known_hosts`, since `~/.ssh/known_hosts` is
+  hidden: `ssh-keyscan github.com | sudo tee -a /etc/ssh/ssh_known_hosts`, then check the fingerprints against
+  GitHub's. On an SSH connector, set it where you run `pi-durable` on the workstation: its tools run there.
+- `PI_DURABLE_UNPROTECT=~/.ssh:~/.config/gh` gives paths back, all your keys included.
 - `PI_DURABLE_PROTECT=~/secrets:/srv/keys` hides more.
 
 Both take `:`-separated paths, `~` for the home directory; set them in the service's environment file or the
@@ -517,6 +523,7 @@ PI_DURABLE_ALLOW_LOGIN=me@github
 # PI_DURABLE_PORT=7433             # the loopback port tailscale serve proxies to
 # PI_DURABLE_REMOTE_TOOLS=confirm  # off: only a terminal on the VPS may turn coding tools on
 # PI_DURABLE_TOOLS_IDLE_MIN=off    # minutes without a run before coding tools turn off; off (default): never
+# PI_DURABLE_SSH_KEYS=~/.ssh/id_ed25519_github  # keys for Pi's own SSH agent, bash's only one (':'-separated)
 # PI_DURABLE_UNPROTECT=~/.ssh      # let the tools use these protected paths (':'-separated)
 # PI_DURABLE_PROTECT=~/secrets     # hide more paths from the tools (':'-separated)
 # PI_DURABLE_PUSH_PREVIEW=off      # on: notifications show the reply's first words
@@ -678,6 +685,7 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `pi-durable requires flock` | Install util-linux. |
 | "Coding tools: bash is off. bwrap is not installed" | `sudo apt install bubblewrap`, or without root the `~/.local/bin` recipe in [Requirements](#requirements); then restart. |
 | "bash is off: bubblewrap cannot run here: … Operation not permitted" | Unprivileged user namespaces are off (`sysctl kernel.unprivileged_userns_clone`, or AppArmor's `kernel.apparmor_restrict_unprivileged_userns` on Ubuntu 24.04). Allow them for bwrap, or run without bash. |
+| `git push` says `Host key verification failed` or `Permission denied (publickey)` | Add the host to `/etc/ssh/ssh_known_hosts` and set `PI_DURABLE_SSH_KEYS` ([Protected folders](#protected-folders)). |
 | A tool says "… is protected" | The path is a [protected folder](#protected-folders). Set `PI_DURABLE_UNPROTECT` if the tools should use it. |
 | `No credentials for PROVIDER` | Run `npm exec -- pi` in the install dir, then `/login`; or set the provider's API-key variable; or pass `--auth-file`. The message names the auth file it read. |
 | `No Claude Code login for claude-cli` | Run `claude auth login` (or `claude`, then `/login`). More `claude-cli` symptoms are in [models.md](models.md#troubleshooting). |

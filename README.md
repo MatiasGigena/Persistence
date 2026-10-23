@@ -195,7 +195,8 @@ coding-tools gate. Neither grant is saved; an enabled server or another connecto
 When on, tools act with your user permissions except in protected folders: the chat's state and credentials
 (`~/.ssh`, `~/.claude`, `~/.config/gh`, `~/.aws`, …) are hidden, and system folders (`/etc`, `/usr`, …) are
 read-only. Connectors also hide their client configuration and execution ledger. bash runs in bubblewrap;
-without working bubblewrap it refuses. `PI_DURABLE_UNPROTECT=~/.ssh` gives a path back,
+without working bubblewrap it refuses. Your SSH and GPG agents are unreachable; `PI_DURABLE_SSH_KEYS` gives bash an
+agent with only those keys ([ADR 0030](docs/decisions/0030-pi-ssh-agent.md)). `PI_DURABLE_UNPROTECT=~/.ssh` gives a path back,
 `PI_DURABLE_PROTECT` hides more ([ADR 0025](docs/decisions/0025-protected-folders.md)). A machine/cwd pin is
 routing scope, not project-only confinement. There is no per-command approval; inspect uncertain shell outcomes
 before requesting another execution.
