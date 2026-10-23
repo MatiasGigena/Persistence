@@ -310,8 +310,8 @@ function messageRefusal(agents: Readonly<Record<string, AgentRecord>>, roster: R
 
 /** The local tools' safety note, as in Pi's instructions (src/runtime/runtime.ts `piInstructions`). */
 const protectedText = (bash: boolean, routed = false) => `These tools act on ${routed ? 'the pinned machine with its runner permissions' : 'the local machine with the host process permissions'}. Some folders are `
-  + 'protected: this chat\'s own state and the user\'s credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, '
-  + `and system folders (/etc, /usr, ...) are read-only${bash ? '; bash runs in a sandbox that enforces this' : ''}. A refusal that names a `
+  + 'protected: this chat\'s own state and the user\'s credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, the user\'s SSH '
+  + `agent is not reachable, and system folders (/etc, /usr, ...) are read-only${bash ? '; bash runs in a sandbox that enforces this' : ''}. A refusal that names a `
   + 'protected path is deliberate: do not try to get around it, and say in your report if the task needs that path. Use the tools '
   + 'only when your task needs them, and do nothing destructive or otherwise sensitive that it does not ask for.';
 

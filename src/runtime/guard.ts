@@ -1,7 +1,8 @@
 // Protected folders for Pi's coding tools (ADR 0025). The chat's own state and the user's credentials are hidden:
 // the tools can neither read nor change them. System folders are read-only. read, write and edit are checked here, by
 // real path (symlinks followed); every bash command runs in bubblewrap, where hidden folders are empty and system
-// folders are mounted read-only, so the shell is held to the same rules.
+// folders are mounted read-only, so the shell is held to the same rules. The user's SSH and GPG agents are hidden too, since
+// an agent signs with every key it holds; bash sees only Pi's own agent (src/runtime/ssh-agent.ts, ADR 0030), if any.
 import { execFile } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import { access, lstat, realpath } from 'node:fs/promises';
@@ -17,6 +18,8 @@ import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 export interface Protection {
   readonly hidden: readonly string[];
   readonly readOnly: readonly string[];
+  /** The socket of Pi's own SSH agent: bash's only SSH_AUTH_SOCK. Without it bash has none. */
+  readonly sshAgent?: string | undefined;
 }
 
 /** The chat's files, as the host's config names them. */
@@ -59,8 +62,16 @@ export function protection(state: StateFiles, env: NodeJS.ProcessEnv = process.e
     state.settingsPath, state.serveDir, join(dirname(db), 'backups'), ...state.socketPath ? [state.socketPath] : []];
   const unprotect = new Set(list(env.PI_DURABLE_UNPROTECT, home));
   const keep = (path: string): boolean => !unprotect.has(resolve(path));
-  const hidden = [...chat, state.authFile, ...CREDENTIALS.map(path => join(home, path)), ...list(env.PI_DURABLE_PROTECT, home)];
+  // The user's agents: the SSH agent, GNOME Keyring's folder (its SSH agent and secrets) and gpg-agent's sockets.
+  const runtime = env.XDG_RUNTIME_DIR ? [join(env.XDG_RUNTIME_DIR, 'keyring'), join(env.XDG_RUNTIME_DIR, 'gnupg')] : [];
+  const agents = [...env.SSH_AUTH_SOCK ? [env.SSH_AUTH_SOCK] : [], ...runtime];
+  const hidden = [...chat, state.authFile, ...CREDENTIALS.map(path => join(home, path)), ...agents, ...list(env.PI_DURABLE_PROTECT, home)];
   return { hidden: [...new Set(hidden.map(path => resolve(path)))].filter(keep), readOnly: SYSTEM.filter(keep) };
+}
+
+/** PI_DURABLE_SSH_KEYS: the private keys Pi's own SSH agent holds, `:`-separated, `~` the home directory. */
+export function sshKeys(env: NodeJS.ProcessEnv = process.env, home = homedir()): string[] {
+  return list(env.PI_DURABLE_SSH_KEYS, home);
 }
 
 /** `path` with symlinks resolved as far as it exists; the rest appended as given. */
@@ -83,8 +94,9 @@ const within = (path: string, root: string): boolean => path === root || path.st
 type Access = 'read' | 'write' | 'remove';
 
 /** Bubblewrap's argv prefix for `protection`, from what exists now: hidden folders become empty, hidden files unreadable. */
-async function sandboxArgs(bin: string, { hidden, readOnly }: Protection): Promise<string[]> {
-  const args = [bin, '--die-with-parent', '--dev-bind', '/', '/'];
+async function sandboxArgs(bin: string, { hidden, readOnly, sshAgent }: Protection): Promise<string[]> {
+  const args = [bin, '--die-with-parent', '--dev-bind', '/', '/', '--unsetenv', 'SSH_AGENT_PID',
+    ...sshAgent ? ['--setenv', 'SSH_AUTH_SOCK', sshAgent] : ['--unsetenv', 'SSH_AUTH_SOCK']];
   for (const path of readOnly) {
     // A symlink (/bin -> usr/bin) is covered by its target.
     const info = await lstat(path).catch(() => undefined);
@@ -122,7 +134,8 @@ function probe(args: readonly string[]): Promise<string | undefined> {
 
 /** Why bash cannot run under `guarded` on this machine, or undefined when it can: checked at launch, so it is said early. */
 export async function sandboxProblem(guarded: Protection, bwrap = bwrapBinary()): Promise<string | undefined> {
-  const canonical = { hidden: await Promise.all(guarded.hidden.map(real)), readOnly: await Promise.all(guarded.readOnly.map(real)) };
+  const canonical = { hidden: await Promise.all(guarded.hidden.map(real)), readOnly: await Promise.all(guarded.readOnly.map(real)),
+    sshAgent: guarded.sshAgent };
   return probe(await sandboxArgs(bwrap, canonical));
 }
 
@@ -155,6 +168,7 @@ export class GuardedEnv extends NodeExecutionEnv {
     this.roots ??= (async () => ({
       hidden: await Promise.all(this.guarded.hidden.map(real)),
       readOnly: await Promise.all(this.guarded.readOnly.map(real)),
+      sshAgent: this.guarded.sshAgent,
     }))();
     return this.roots;
   }

@@ -44,6 +44,8 @@ test('protection(): the chat state and credentials hidden, system read-only, adj
   assert.ok(custom.hidden.includes('/h/secrets') && custom.hidden.includes('/data/keys'));
   assert.ok(!custom.hidden.includes('/h/.ssh'), 'unprotected');
   assert.ok(!custom.readOnly.includes('/opt'));
+  const agents = protection(state, { SSH_AUTH_SOCK: '/tmp/ssh-x/agent.1', XDG_RUNTIME_DIR: '/run/user/7' }, '/h');
+  for (const path of ['/tmp/ssh-x/agent.1', '/run/user/7/keyring', '/run/user/7/gnupg']) assert.ok(agents.hidden.includes(path), path);
 });
 
 test('read, write and edit operations: hidden paths refused, symlinks followed, the rest untouched', async t => {
