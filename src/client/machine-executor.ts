@@ -22,6 +22,8 @@ export interface MachineExecutorOptions {
   readonly enabled?: boolean;
   /** Additional hidden paths; cannot remove the default state/credential protections. */
   readonly protectedPaths?: readonly string[];
+  /** The socket of Pi's own SSH agent on this machine (ADR 0030): bash's only SSH_AUTH_SOCK. */
+  readonly sshAgent?: string | undefined;
   /** Launch environment for protection paths, upstream protection overrides and bubblewrap selection. */
   readonly env?: NodeJS.ProcessEnv;
   /** Test seam only; production always invokes native tools through GuardedEnv. */
@@ -76,7 +78,7 @@ function bounded(id: string, result: MachineToolResult): MachineToolResult {
 }
 function unsupported(): never { throw new Error('Durable conversation/document operations are unavailable on an execution machine'); }
 
-function machineProtection(ledgerDir: string, env: NodeJS.ProcessEnv, extra: readonly string[]): Protection {
+function machineProtection(ledgerDir: string, env: NodeJS.ProcessEnv, extra: readonly string[], sshAgent: string | undefined): Protection {
   const home = homedir();
   const dataDir = resolve(env.PI_DURABLE_DATA_DIR ?? join(env.XDG_STATE_HOME || join(home, '.local', 'state'), 'pi-durable'));
   const databasePath = join(dataDir, 'chat.sqlite');
@@ -85,7 +87,7 @@ function machineProtection(ledgerDir: string, env: NodeJS.ProcessEnv, extra: rea
   const defaults = protection({ dataDir, databasePath, memoryDir: paths.memoryDir, settingsPath: paths.settings,
     serveDir: paths.serveDir, socketPath: paths.socket, authFile: join(env.PI_CODING_AGENT_DIR || join(home, '.pi', 'agent'), 'auth.json') }, env, home);
   return { hidden: [...new Set([...defaults.hidden, ledgerDir, dirname(clientConfigPath(env)), ...extra].map(path => resolve(path)))],
-    readOnly: defaults.readOnly };
+    readOnly: defaults.readOnly, sshAgent };
 }
 
 /** Invoke the installed CodingTools themselves, including their argument repair and validation. */
@@ -159,7 +161,7 @@ export class MachineExecutor {
     this.ledgerDir = resolve(options.ledgerDir);
     this.enabled = options.enabled === true;
     const env = { ...options.env ?? process.env };
-    const guarded = machineProtection(this.ledgerDir, env, options.protectedPaths ?? []);
+    const guarded = machineProtection(this.ledgerDir, env, options.protectedPaths ?? [], options.sshAgent);
     const bwrap = bwrapBinary(env);
     this.runner = options.execute ?? ((call, signal) => executeNative(call, signal, guarded, bwrap));
   }

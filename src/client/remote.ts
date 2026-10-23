@@ -31,10 +31,14 @@ export async function remoteChat(options: Options, env: NodeJS.ProcessEnv = proc
   const id = await machineId(env, selected.saved);
   const link = new ClientLink({ connect: sshConnector(selected.target), client: CLIENT, helloMs: 15_000, reconnectNormal: true });
   // Local launches and the stdio bridge must not load tool implementations or a model catalog.
-  const { MachineExecutor } = await import('./machine-executor.ts');
+  const [{ MachineExecutor }, { sshKeys }, { startSshAgent }] = await Promise.all([import('./machine-executor.ts'),
+    import('../runtime/guard.ts'), import('../runtime/ssh-agent.ts')]);
   const target: MachineTarget = { machineId: id, cwd, label: hostname() };
   let enabled = options.remoteAllowTools === true;
-  const executor = new MachineExecutor({ target, enabled, env, protectedPaths: [dirname(clientConfigPath(env))],
+  // Pi's own SSH agent for the tools here (ADR 0030); its warnings wait for the TUI.
+  const agentWarnings: string[] = [];
+  const sshAgent = await startSshAgent(sshKeys(env), warning => agentWarnings.push(warning), env);
+  const executor = new MachineExecutor({ target, enabled, env, protectedPaths: [dirname(clientConfigPath(env))], sshAgent: sshAgent?.socket,
     ledgerDir: join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'pi-durable', 'machine-tools') });
   const session = new RemoteSession(link, { clientId: `tui-${crypto.randomUUID()}`, target, requireMachines: true,
     machineToolsEnabled: () => enabled,
@@ -67,12 +71,14 @@ export async function remoteChat(options: Options, env: NodeJS.ProcessEnv = proc
     ]);
     clearTimeout(timer);
     await registered;
+    for (const warning of agentWarnings) session.notify(warning, 'warn');
     if (enabled) await session.setTools(true);
     return await runAttached(session, { cwd, initialNotice: `Shared chat: ${selected.target.host}. Tools execute on ${target.label}: ${cwd}.` });
   } finally {
     clearTimeout(timer);
     off();
     await executor.close();
+    await sshAgent?.close();
     await session.close();
   }
 }

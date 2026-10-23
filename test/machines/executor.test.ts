@@ -137,6 +137,13 @@ test('default guard derives local protection without creating or reading local c
   await assert.rejects(stat(join(root, 'agent')), { code: 'ENOENT' });
 });
 
+test('native bash sees only the connector\'s own SSH agent, never the launch environment\'s', { skip: !hasBwrap && 'working bubblewrap required' }, async t => {
+  const { executor, call } = await fixture(t, { sshAgent: '/run/pi-ssh-test/agent', env: { ...process.env, SSH_AUTH_SOCK: '/tmp/user-agent' } });
+  assert.equal(text(await executor.execute(call('agent', 'bash', { command: 'printf "$SSH_AUTH_SOCK"' }))), '/run/pi-ssh-test/agent');
+  const none = await fixture(t, { env: { ...process.env, SSH_AUTH_SOCK: '/tmp/user-agent' } });
+  assert.equal(text(await none.executor.execute(none.call('none', 'bash', { command: 'printf "[$SSH_AUTH_SOCK]"' }))), '[]');
+});
+
 test('without working bubblewrap native bash fails closed, caches refusal and never runs bare', async t => {
   const { cwd, executor, call } = await fixture(t, { env: { ...process.env, PI_DURABLE_BWRAP: '/nonexistent/pi-durable-test-bwrap' } });
   const request = call('no-bwrap', 'bash', { command: 'printf UNSAFE > escaped' });
