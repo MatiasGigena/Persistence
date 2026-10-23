@@ -8,7 +8,7 @@ import { cleanupSessionResources } from '@earendil-works/pi-ai';
 import type { Message, Models } from '@earendil-works/pi-ai';
 import type { ConversationView } from '@earendil-works/pi-durable';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { protection, sandboxProblem } from '../runtime/guard.ts';
+import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
 import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { resumeInstance, settleAgents } from '../runtime/recovery.ts';
@@ -175,7 +175,7 @@ async function main(): Promise<void> {
     const problem = await sandboxProblem(protection(config));
     if (problem) console.error(`Coding tools: bash is off. ${problem}`);
   }
-  instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly, protection: protection(config),
+  instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly, protection: protection(config), sshKeys: sshKeys(),
     onWarning: message => console.error(`Pi Durable: ${message}`),
     onReport: report => console.error(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   if (stopping) return;

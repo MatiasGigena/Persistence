@@ -24,6 +24,7 @@ import { createBrowserExtension } from '../tools/browser.ts';
 import type { BrowserOptions } from '../tools/browser.ts';
 import { createWebFetchExtension } from '../tools/web-fetch.ts';
 import { GuardedEnv } from './guard.ts';
+import { startSshAgent } from './ssh-agent.ts';
 import type { Protection } from './guard.ts';
 import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { Access, CatalogModels } from './models.ts';
@@ -48,6 +49,8 @@ export interface InstanceOptions {
   readonly allowTools?: boolean;
   /** Folders the coding tools may not touch (src/runtime/guard.ts); without it they run unguarded (tests). */
   readonly protection?: Protection;
+  /** PI_DURABLE_SSH_KEYS: with `protection`, bash's SSH agent holds these keys alone (ADR 0030); default none. */
+  readonly sshKeys?: readonly string[];
   /** false inspects: no memory opened, the persisted agent left untouched. */
   readonly configureAgent?: boolean;
   readonly models: Models;
@@ -108,7 +111,7 @@ export interface Instance {
    * no commit lands during it and, since it is synchronous, no memory write either. For online backups (ADR 0022).
    */
   exclusive<T>(step: (database: DatabaseSync) => T): Promise<T>;
-  /** Close the Harness, then every browser the `browser` kit launched, then the memory. */
+  /** Close the Harness, then every browser the `browser` kit launched, then Pi's SSH agent, then the memory. */
   close(): Promise<void>;
 }
 
@@ -285,6 +288,7 @@ export async function openInstance({
   thinkingLevel = 'high',
   allowTools = false,
   protection,
+  sshKeys = [],
   configureAgent = true,
   models,
   onReport,
@@ -298,6 +302,9 @@ export async function openInstance({
   dispatcher,
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
+  // Started even with the tools off: /tools on needs no restart. Inspection runs no tools.
+  const sshAgent = protection && configureAgent ? await startSshAgent(sshKeys, message => onWarning?.(message)) : undefined;
+  const guarded = protection && sshAgent ? { ...protection, sshAgent: sshAgent.socket } : protection;
   // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
   const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models) }) : undefined;
   let opened: Harness | undefined;
@@ -381,7 +388,7 @@ export async function openInstance({
     const harness = opened = await Harness.open(storage, {
       models,
       registry,
-      env: ({ cwd: directory }) => protection ? new GuardedEnv({ cwd: directory ?? cwd, protection })
+      env: ({ cwd: directory }) => guarded ? new GuardedEnv({ cwd: directory ?? cwd, protection: guarded })
         : new NodeExecutionEnv({ cwd: directory ?? cwd }),
       onReport,
       // pi-durable compacts agents, which have no view, so their contexts stay bounded (ADR 0015). Pi's own
@@ -442,7 +449,9 @@ export async function openInstance({
       close: async () => {
         checks.abort();
         try { await harness.close(context); } finally {
-          try { await Browser.close(); } finally { await memory?.close(); }
+          try { await Browser.close(); } finally {
+            try { await sshAgent?.close(); } finally { await memory?.close(); }
+          }
         }
       },
     };
@@ -452,6 +461,7 @@ export async function openInstance({
       else if (storage) await storage.close(context);
       else if (database) await database.close();
       await Browser.close();
+      await sshAgent?.close();
       await memory?.close();
     } catch {
       // Preserve the opening failure, including when an API already closed

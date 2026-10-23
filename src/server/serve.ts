@@ -9,7 +9,7 @@ import type { Config } from '../host/config.ts';
 import { errorMessage, isRecord, statePaths, VERSION } from '../host/config.ts';
 import { CloseCode } from '../protocol/messages.ts';
 import { resumeInstance } from '../runtime/recovery.ts';
-import { protection, sandboxProblem } from '../runtime/guard.ts';
+import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
 import { openInstance } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { createUiSession } from '../ui/session.ts';
@@ -51,7 +51,7 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
   const machines = new MachineBroker({ authorized: () => session?.status().toolsEnabled ?? false,
     notice: text => { log(text); session?.notify(text, 'info'); } });
   // Preserve the host's protected-tools policy; each remote connector separately starts without local permission.
-  const instance = await openInstance({ ...config, models, protection: protection(config), onWarning: log, dispatcher: machines,
+  const instance = await openInstance({ ...config, models, protection: protection(config), sshKeys: sshKeys(), onWarning: log, dispatcher: machines,
     onReport: report => log(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   const { error: consoleError, warn: consoleWarn } = console;
   try {

@@ -75,7 +75,8 @@ Protected folders: the chat's own state and your credentials (~/.ssh, ~/.claude,
 ~/.config/gh, ~/.aws, ...) are hidden from the tools, and system folders (/etc,
 /usr, ...) are read-only; bash runs in bubblewrap (apt install bubblewrap) to
 enforce it. PI_DURABLE_PROTECT adds hidden paths, PI_DURABLE_UNPROTECT removes
-defaults (each ':'-separated, ~ allowed). No approval prompts.
+defaults (each ':'-separated, ~ allowed). Your SSH agent is hidden too:
+PI_DURABLE_SSH_KEYS gives bash an agent with only those keys. No approval prompts.
 Standing agents (Coder, Reviewer, Researcher; settings.json's "agents") have
 their own models and tool kits; the browser kit needs Chromium (npx
 playwright-core install chromium, or PI_DURABLE_CHROMIUM). See docs/agents.md.
