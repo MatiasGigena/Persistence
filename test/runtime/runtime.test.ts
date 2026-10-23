@@ -244,7 +244,7 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       const agent = await instance.root.agent(instance.context);
       assert.deepEqual(coding(agent), []);
       assert.deepEqual(agent.tools.map((tool) => tool.name).sort(),
-        ['date', 'delegate', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
+        ['date', 'delegate', 'delete_agent', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
     } finally {
       await instance.close();
     }
@@ -265,7 +265,7 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       const agent = await instance.root.agent(instance.context);
       assert.deepEqual(coding(agent), []);
       assert.deepEqual(agent.tools.map((tool) => tool.name).sort(),
-        ['date', 'delegate', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
+        ['date', 'delegate', 'delete_agent', 'last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent', 'zoom']);
       assert.equal((await ask(instance, 'Which tools can you use?', 'tools-off')).text,
         'No tools are available.');
       const history = await transcript(instance.root, instance.context);

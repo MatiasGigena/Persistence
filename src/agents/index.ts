@@ -76,8 +76,11 @@ export type AgentRecord = {
   conversationId: ConversationId; role: AgentRole; parent: string; reported: EntryId[];
   standing?: boolean; past?: ConversationId[]; session?: ConversationId;
 };
-/** `calls` maps a tool task ID to the result its first run returned. */
-export type AgentsState = { agents: Record<string, AgentRecord>; calls: Record<string, string> };
+/**
+ * `calls` maps a tool task ID to the result its first run returned. `deleted` maps the name of each agent removed with
+ * `delete_agent` to its conversations, oldest first, so `zoom("Name")` still reads its chat; absent until the first one.
+ */
+export type AgentsState = { agents: Record<string, AgentRecord>; calls: Record<string, string>; deleted?: Record<string, ConversationId[]> };
 /** An agent's input entry: a message from another agent, or a report to its parent (`id` once placed). */
 export type MessageEntry = { kind: typeof MESSAGE_KIND; data: { from: string; text: string } };
 /** `session`: the standing agent's session (from 1) a report to Pi came from, for its link (see `piReportText`). */
@@ -264,7 +267,7 @@ export interface AgentsSetup {
 const AGENT_TOOLS = ['spawn_agent', 'list_agents', 'send_message', 'last_message', 'stop_agent'];
 const SUB_HIDDEN = ['spawn_agent', 'stop_agent'];
 /** Pi's alone: agents copy Pi's tools, then lose these. */
-const PI_ONLY = ['delegate'];
+const PI_ONLY = ['delegate', 'delete_agent'];
 const TASK_OPTIONS: TaskOptions = { ownership: { kind: 'conversation' }, background: true };
 
 /** The roster entry whose choices agent `name` takes: its own for a standing main, its main's for a sub of one. */
@@ -474,6 +477,77 @@ export async function stopAgents(source: AgentsStopper, context: Context = BACKG
   return order.map(([each]) => each);
 }
 
+/** A deleted agent's kept conversations, as a record `agentTranscript` reads; undefined if no such name was deleted. */
+function deletedAgent(registry: Readonly<AgentsState> | undefined, name: string) {
+  const found = Object.entries(registry?.deleted ?? {}).find(([each]) => each.toLowerCase() === String(name).toLowerCase());
+  const sessions = found?.[1] ?? [];
+  const current = sessions.at(-1);
+  return found && current !== undefined ? { name: found[0], conversationId: current, past: sessions.slice(0, -1), standing: false } : undefined;
+}
+
+/** The outcome of deleting an agent: the names removed (its subs first, the agent last), or why nothing was. */
+export type DeleteResult = { readonly deleted: readonly string[] } | { readonly error: string };
+
+/** The text `delete_agent` returns for a result. */
+export const deleteText = (result: DeleteResult): string => {
+  if ('error' in result) return result.error;
+  const [name = '', ...rest] = [...result.deleted].reverse();
+  const also = rest.length ? ` and its sub agents ${rest.reverse().join(', ')}` : '';
+  return `Deleted ${name}${also}. ${rest.length ? 'Their chats stay' : 'Its chat stays'} readable with zoom("${name}").`;
+};
+
+/**
+ * Remove agent `name` (a main agent with its sub agents) from the registry, in the commit of `tx`. Refused for an
+ * unknown name, a standing agent (`standing`, or a roster name), an agent with a run in any of its conversations or
+ * one of its subs with one (`busy`: names), and while an input to any of them is still on its way (an unfinished
+ * `agents.deliver` task): stop it first. The conversations are not erased (the SDK has no such operation): they stay in
+ * the database, owned by their finished anchor tasks, and `deleted` keeps their ids for `zoom("Name")`. The name is free
+ * again for spawn_agent. Idempotent per call through `once`; a second delete of the same name finds no agent.
+ */
+async function removeAgent(tx: Tx, registry: Draft<AgentsState>, name: string, busy: ReadonlySet<string>,
+  roster: Roster | undefined): Promise<DeleteResult> {
+  const found = find(registry.agents, name);
+  if (String(name).toLowerCase() === PI.toLowerCase()) return { error: 'Pi cannot be deleted.' };
+  if (!found) return { error: `No agent named ${name}.` };
+  if (found.standing || (roster && rosterEntry(roster, found.name))) {
+    return { error: `${found.name} is a standing agent; it can be deleted only after it leaves the roster.` };
+  }
+  const subs = found.role === 'main'
+    ? Object.entries(registry.agents).filter(([, agent]) => agent.role === 'sub' && agent.parent === found.name).map(([each]) => each) : [];
+  const chosen = [...subs, found.name];
+  const working = chosen.filter((each) => busy.has(each));
+  if (working.length) return { error: `${working.join(', ')} ${working.length === 1 ? 'is' : 'are'} busy; stop_agent ${found.name} first, then delete it.` };
+  const targets = await deliveryTargets(tx, registry.agents);
+  const queued = chosen.filter((each) => sessionsOf(registry.agents[each] ?? found).some((id) => targets.has(id)));
+  if (queued.length) return { error: `A message to ${queued.join(', ')} is still on its way; stop_agent ${found.name} first, then delete it.` };
+  // A value assigned to a draft is stored as a detached copy: edit it through the draft.
+  registry.deleted ??= {};
+  const deleted = registry.deleted;
+  for (const each of chosen) {
+    const agent = registry.agents[each];
+    if (!agent) continue;
+    // A name deleted before (then spawned again) keeps only its newest chat.
+    for (const key of Object.keys(deleted)) if (key.toLowerCase() === each.toLowerCase()) delete deleted[key];
+    deleted[each] = sessionsOf(agent);
+    delete registry.agents[each];
+  }
+  return { deleted: chosen };
+}
+
+/** The names of the agents with a run in any of their conversations. */
+const busyNames = async (source: DocumentReader, context: Context): Promise<Set<string>> =>
+  new Set((await listAgents(source, context)).filter((agent) => agent.busy).map((agent) => agent.name));
+
+/**
+ * Delete agent `name` and its sub agents for the host (see `removeAgent`): never Pi or a standing agent, never a busy
+ * one. `roster` refuses its names even before a launch synced them. Returns the names deleted, or why none was.
+ */
+export async function deleteAgent(source: AgentsSource, context: Context = BACKGROUND_CONTEXT, name: string,
+  roster?: Roster): Promise<DeleteResult> {
+  const busy = await busyNames(source, context);
+  return source.commit(async (tx) => removeAgent(tx, await tx.doc(AgentsDoc), name, busy, roster), context);
+}
+
 /** Every spawned agent with its role, parent, conversation, and busy state (a run in any of its conversations). */
 export async function listAgents(source: DocumentReader, context: Context = BACKGROUND_CONTEXT): Promise<AgentInfo[]> {
   const registry = await source.snapshot(AgentsDoc, context);
@@ -517,8 +591,9 @@ export async function agentTranscript(
   const registry = await source.snapshot(AgentsDoc, context);
   // "Name#n" is a standing agent's session n, 1 the oldest; plain "Name" its current one.
   const [, base = String(name), number] = /^(.*?)#(\d+)$/.exec(String(name).trim()) ?? [];
+  const gone = deletedAgent(registry, base);
   const agent = base.toLowerCase() === PI.toLowerCase()
-    ? { name: PI, conversationId: ROOT_CONVERSATION_ID, standing: false, past: [] } : find(registry?.agents ?? {}, base);
+    ? { name: PI, conversationId: ROOT_CONVERSATION_ID, standing: false, past: [] } : find(registry?.agents ?? {}, base) ?? gone;
   if (!agent) throw new Error(`No agent named ${base}`);
   const sessions = [...agent.past ?? [], agent.conversationId];
   const index = number === undefined ? sessions.length : Number(number);
@@ -527,8 +602,11 @@ export async function agentTranscript(
     return `No session ${number}: ${agent.name} has ${sessions.length === 1 ? '1 session' : `${sessions.length} sessions`}.`;
   }
   // A standing agent's (or any with past sessions) transcript says which session it is.
-  const header = agent.standing || sessions.length > 1
-    ? [`session ${index} of ${sessions.length}${index === sessions.length ? ' (current)' : ''}`] : [];
+  const header = [
+    ...agent === gone ? [`${agent.name} was deleted; its chat is kept`] : [],
+    ...agent.standing || sessions.length > 1
+      ? [`session ${index} of ${sessions.length}${index === sessions.length ? ' (current)' : ''}`] : [],
+  ];
   const entries: EntryRecord[] = [];
   let cursor: Cursor | undefined;
   do {
@@ -582,7 +660,7 @@ const NEVER_WAIT = 'Agents work in the background. Never wait for one (no sleep,
 const ROLE_TEXT: Readonly<Record<Caller['role'], (me: { readonly name: string; readonly parent?: string }) => string[]>> = {
   root: () => [
     'You are Pi, the session agent of this chat.',
-    'You can start background agents ("main agents") with spawn_agent(name, task), and use list_agents, send_message(to, text), last_message(name), and stop_agent(name) to steer them.',
+    'You can start background agents ("main agents") with spawn_agent(name, task), and use list_agents, send_message(to, text), last_message(name), and stop_agent(name) to steer them. delete_agent(name) removes an idle agent the user no longer wants (never a standing one); its chat stays readable.',
     'An agent sees your view at its spawn and the user\'s instructions, but knows what you want only from its task: say all it needs.',
     'Agents work in the background. Never wait for one (no sleep, no polling): go on, or end your turn and tell the user what is running.',
     'When a main agent finishes a run, its final reply arrives here as a message starting with [Name]; main agents can also message you mid-run the same way.',
@@ -997,13 +1075,29 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
     },
   });
 
+  const deleteAgentTool = defineTool({
+    name: 'delete_agent',
+    description: 'Delete an agent you no longer need, with its sub agents, so it leaves list_agents and takes no more work. '
+      + 'Pi only. Refused for standing agents, and while the agent or one of its sub agents is busy or has a message on its way: '
+      + 'stop_agent it first. Its chat stays readable with zoom("Name"), and the name is free again.',
+    parameters: Type.Object({ name: Type.String() }),
+    replay: 'safe',
+    execute: async ({ name }, api, context) => {
+      const caller = await me(api, context);
+      if (caller?.role !== 'root') return reply('Only Pi can delete agents.');
+      const busy = await busyNames(api, context);
+      return once(api, context, async (tx, registry) => deleteText(await removeAgent(tx, registry, name, busy, roster)));
+    },
+  });
+
   // Tool-level guard, before a call's intent is recorded: what a role may not do never runs.
   const guard = hook(ToolTask, {
     beforeTool: async (call, api, context) => {
-      if (!['spawn_agent', 'stop_agent', 'send_message', 'last_message', 'delegate'].includes(call.name)) return undefined;
+      if (!['spawn_agent', 'stop_agent', 'send_message', 'last_message', 'delegate', 'delete_agent'].includes(call.name)) return undefined;
       const registry = await api.snapshot(AgentsDoc, context);
       const caller = whoIs(registry, api.conversationId);
       if (call.name === 'delegate') return caller?.role === 'root' ? undefined : { block: 'Only Pi can delegate; use send_message.' };
+      if (call.name === 'delete_agent') return caller?.role === 'root' ? undefined : { block: 'Only Pi can delete agents.' };
       if (call.name === 'send_message' && caller) {
         const to = String(call.arguments?.to);
         const name = to.toLowerCase() === PI.toLowerCase() ? PI : find(registry?.agents ?? {}, to)?.name;
@@ -1024,7 +1118,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
   return {
     name: 'agents',
     tasks: [Anchor, Deliver],
-    tools: [spawnAgent, delegate, listAgentsTool, sendMessage, lastMessage, stopAgent],
+    tools: [spawnAgent, delegate, listAgentsTool, sendMessage, lastMessage, stopAgent, deleteAgentTool],
     hooks: [guard],
     sections: [section('agents', async (input, context) => {
       const registry = await input.read.snapshot(AgentsDoc, context);
