@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `delete_agent(name)`, Pi only: removes an idle, non-standing agent and its sub agents from the registry, so they
+  leave `list_agents`, the agents panel and every status. Refused for standing agents and while busy or with a message
+  on its way (`stop_agent` first). Chats are kept in the database and stay readable with `zoom("Name")`; the name is
+  free again. The registry gains an optional `deleted` map; older registries read unchanged.
+
 ### Changed
 
 - Web app: no "TOOLS ON" bar over the header. The tools are on by default and held to protected folders

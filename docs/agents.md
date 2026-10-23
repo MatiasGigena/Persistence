@@ -39,8 +39,13 @@ Pi (root, session agent)
     └── C (sub)
 ```
 
-Sub agents cannot spawn, so the tree is at most three levels deep. Agents are never deleted; `stop_agent` only stops
-their current work.
+Sub agents cannot spawn, so the tree is at most three levels deep. `stop_agent` only stops an agent's current work;
+Pi's `delete_agent` (or the host's `deleteAgent()`) removes an idle, non-standing agent and its sub agents from the
+registry. Their conversations are not erased (the SDK has no such operation): they stay in the database, owned by
+their finished anchor tasks, and the registry's `deleted` map keeps their ids, so `zoom("Name")` still reads the chat
+(headed `Name was deleted; its chat is kept`). The name is free again for `spawn_agent`; a later delete of the same
+name keeps only the newest chat's ids. Deleting is refused for Pi, a standing agent (or any roster name), and while
+the agent or one of its subs is busy or has an `agents.deliver` input still on its way: `stop_agent` it first.
 
 The registry is the session-scoped document `agents.registry`:
 
@@ -49,7 +54,8 @@ The registry is the session-scoped document `agents.registry`:
                       standing?: true,               // a main agent of the roster
                       past?: [conversationIds],      // a standing agent's earlier sessions, oldest first
                       session?: conversationId } },  // a standing agent's sub: the session it works for
-  calls: { [toolTaskId]: resultText } }
+  calls: { [toolTaskId]: resultText },
+  deleted?: { [name]: [conversationIds] } }          // agents removed with delete_agent, for zoom
 ```
 
 `conversationId` is always the agent's current conversation. `standing`, `past` and `session` are absent on agents
@@ -180,6 +186,7 @@ kits as well. A past session is still the same agent (its role text and tools wo
 | `spawn_agent` | yes: creates a main agent | yes: creates a sub agent | no |
 | `delegate` | standing agents only | no | no |
 | `stop_agent` | any agent | its own sub agents only | no |
+| `delete_agent` | idle, non-standing agents | no | no |
 | addressing `Pi` | (itself) | yes | no |
 
 Nobody can `send_message` to itself. A main agent may message another main agent and its sub agents; only stopping is
@@ -198,7 +205,7 @@ follows the roster's kits, not `/tools`.
 The limits are enforced three times:
 
 1. **Offer.** A sub's `modelTools` hide `spawn_agent` and `stop_agent`, so the model never sees them. No agent is
-   offered `delegate`: `deriveAgent` drops it from the tools it copies from Pi. A confined agent's role text, and
+   offered `delegate` or `delete_agent`: `deriveAgent` drops them from the tools it copies from Pi. A confined agent's role text, and
    `send_message`'s description, state its messaging limit.
 2. **Guard.** A `beforeTool` hook blocks `spawn_agent` and `stop_agent` from a sub, `send_message` or `last_message`
    that address `Pi`, a confined agent's `send_message` outside its team, and `delegate` from anyone but Pi, before
@@ -218,6 +225,7 @@ What the model sees (descriptions abridged to their content):
 | `send_message` | `to`, `text` | `Sent to X.`; at once |
 | `last_message` | `name` | `X is busy or idle. Last message:\n<text>` (`Last message (session n, an earlier task):` when it is from a past session) or `X is busy or idle. No message yet.` |
 | `stop_agent` | `name` | `Stopped X.`, `Stopped X and its sub agents A, B.`; Pi stopping a sub also gets `Its main agent M is not told; message it if it should know.` |
+| `delete_agent` | `name` | `Deleted X. Its chat stays readable with zoom("X").` or `Deleted X and its sub agents A, B. Their chats stay readable with zoom("X").`; refusals: `Only Pi can delete agents.`, `Pi cannot be deleted.`, `X is a standing agent; ...`, `X is busy; stop_agent X first, then delete it.`, `A message to X is still on its way; ...` |
 
 Refusals are plain texts such as `No agent named X.`, `An agent named X already exists; use send_message.`,
 `Invalid name: use a letter, then up to 31 letters, digits, _ or -, and not "Pi".`, `Sub agents cannot address Pi;
