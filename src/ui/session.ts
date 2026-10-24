@@ -58,6 +58,13 @@ export async function createUiSession(
     switching = next.catch(() => {});
     return next;
   };
+  /**
+   * Whether `requestId` was already admitted to Pi's conversation: a client retrying after a lost acknowledgement. Its
+   * images went in with the first admission, so a model switched since then must not refuse the retry, which would
+   * make the client restore (and later resend) a message Pi already has.
+   */
+  const admitted = async (requestId: string | undefined): Promise<boolean> => requestId !== undefined
+    && await harness.commit(tx => tx.submissionByRequest(root.id, requestId), context) !== undefined;
   const currentModel = (): ModelRef => chosenModel ?? chat.state().agent.model ?? config.model;
   let current = compute();
   let shown = JSON.stringify(current);
@@ -123,13 +130,18 @@ export async function createUiSession(
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    async send(text, requestId, steer, target, images) {
-      if (images?.length) {
-        const problem = imagesProblem(instance.models, currentModel());
-        if (problem) throw new Error(problem);
-      }
-      // Standalone keeps follow-up/steering; routed admission pins the target and explicitly rejects busy runs.
-      await instance.submit(text, requestId, target, steer, images);
+    send(text, requestId, steer, target, images) {
+      // Through the switching queue: while setModel() configures Pi and syncs its agents, chosenModel is not yet the
+      // model Pi uses, so the image check and the admission wait for the switch to finish.
+      return serially(async () => {
+        if (images?.length && !await admitted(requestId)) {
+          const problem = imagesProblem(instance.models, currentModel());
+          if (problem) throw new Error(problem);
+        }
+        // Standalone keeps follow-up/steering; routed admission pins the target and explicitly rejects busy runs. An
+        // admitted request ID returns its first submission (dedup), after the route check.
+        await instance.submit(text, requestId, target, steer, images);
+      });
     },
     async abort() {
       // Pi's current run only: queued inputs are withdrawn; agents' background deliveries keep going.

@@ -453,6 +453,46 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     assert.equal(session.status().thinkingLevel, 'low');
   });
 
+  /** Pi on faux/sees (takes images) beside faux/blind (text only). */
+  async function openSighted(t: TestContext) {
+    const faux = fauxProvider({ models: [{ id: 'sees' }, { id: 'blind', input: ['text'] }] });
+    faux.setResponses(Array.from({ length: 10 }, () => fauxAssistantMessage('ok')));
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-sighted-'));
+    const model = { provider: faux.getModel().provider, modelId: 'sees' };
+    const instance = await openInstance({ databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools: false, models, model });
+    const session = await createUiSession(instance, { model, thinkingLevel: 'off', allowTools: false }, { refreshMs: 50 });
+    t.after(async () => { await session.close(); await instance.close(); await rm(cwd, { recursive: true, force: true }); });
+    return { instance, session, provider: model.provider };
+  }
+  const shot = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUg==' };
+  const users = (session: UiSessionHandle) => session.chat.items().filter(item => item.kind === 'user').length;
+
+  test('a retried image send (lost acknowledgement) dedups even after a switch to a model without images', async (t) => {
+    const { session, provider } = await openSighted(t);
+    await session.send('look', 'img-1', false, undefined, [shot]);
+    await until(() => answers(session) === 1, 'the answer', session.chat);
+    await session.setModel(provider, 'blind');
+    // The same request ID: already admitted, so the retry resolves and nothing is admitted twice.
+    await session.send('look', 'img-1', false, undefined, [shot]);
+    await idle(session);
+    assert.equal(users(session), 1);
+    // A new request with images is still refused.
+    await assert.rejects(session.send('again', 'img-2', false, undefined, [shot]), /does not take images/);
+    assert.equal(users(session), 1);
+  });
+
+  test('an image send during a switch to a model without images waits for it, then refuses', async (t) => {
+    const { session, provider } = await openSighted(t);
+    const switched = session.setModel(provider, 'blind');
+    const sent = session.send('look', 'img-during', false, undefined, [shot]);
+    await switched;
+    await assert.rejects(sent, /does not take images; nothing was sent/);
+    await idle(session);
+    assert.equal(users(session), 0);
+  });
+
   test('an inspection switches nothing and writes no settings', async (t) => {
     const { session, settingsPath } = await openRoutes(t, { inspect: true });
     await assert.rejects(session.setModel('faux', 'two'), /inspection cannot change/);
