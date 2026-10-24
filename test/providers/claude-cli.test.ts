@@ -17,7 +17,7 @@ import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
 import { isRetryableAssistantError } from '@earendil-works/pi-ai/utils/retry';
 import { anthropicSubscriptionSource } from '../../src/providers/anthropic.ts';
 import type { AnthropicAuthModels } from '../../src/providers/anthropic.ts';
-import { claudeArgs, claudeCliProvider, CONVENTION, MODELS, renderPrompt } from '../../src/providers/claude-cli.ts';
+import { claudeArgs, claudeCliProvider, CONVENTION, MODELS, renderInput, renderPrompt } from '../../src/providers/claude-cli.ts';
 import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
 import type { FakeClaudeStep } from '../fixtures/fake-claude.ts';
 
@@ -67,12 +67,14 @@ const result = (extra: Json) => ({ type: 'result', subtype: 'success', is_error:
 const reply = (...parts: string[]): FakeClaudeStep => ({ lines: [init, start, ...text(0, ...parts), ...end('end_turn'), result({ result: parts.join('') })], exit: 0 });
 
 /** What the fake CLI logged for one call (see test/fixtures/fake-claude.ts); a SIGTERM logs `killed` alone. */
-interface Call { argv: string[]; stdin: string; cwd: string; env: unknown; system: string | null; mcp: unknown; tools: unknown[];
+/** `stdin` is the prompt text the CLI read (stream-json's text blocks); `images` its image blocks. */
+interface Call { argv: string[]; stdin: string; images: unknown[]; cwd: string; env: unknown; system: string | null; mcp: unknown; tools: unknown[];
   killed: boolean }
 
 function parseCall(line: string): Call {
   const value = parseJson(line), o: Json = isJson(value) ? value : {};
-  return { argv: isList(o.argv) ? o.argv.filter(isString) : [], stdin: isString(o.stdin) ? o.stdin : '',
+  return { argv: isList(o.argv) ? o.argv.filter(isString) : [], stdin: isString(o.prompt) ? o.prompt : '',
+    images: isList(o.images) ? o.images : [],
     cwd: isString(o.cwd) ? o.cwd : '', env: o.env, system: isString(o.system) ? o.system : null, mcp: o.mcp,
     tools: isList(o.tools) ? o.tools : [], killed: o.killed === true };
 }
@@ -236,6 +238,18 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.ok(await until(async () => (await cli.calls()).some(c => c.killed)), 'the CLI was killed');
   });
 
+  test('the images of the latest user message reach the CLI as stream-json image blocks', async (t) => {
+    const cli = await fakeCli(t, [reply('green')]);
+    assert.deepEqual(cli.model.input, ['text', 'image']);
+    await collect(cli.models.streamSimple(cli.model, { messages: [user([{ type: 'text', text: 'Which colour?' },
+      { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }])] }));
+    const [call] = await cli.calls();
+    assert.ok(call);
+    assert.equal(call.argv[call.argv.indexOf('--input-format') + 1], 'stream-json');
+    assert.equal(call.stdin, 'Which colour?');
+    assert.deepEqual(call.images, [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } }]);
+  });
+
   test('history is folded into one tagged prompt, tool results included', async (t) => {
     const cli = await fakeCli(t, [reply('It says hi.')]);
     const assistant: AssistantMessage = { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret' }, { type: 'text', text: 'Sure.' },
@@ -253,7 +267,15 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.ok(!call.stdin.includes('secret'));
     const next = renderPrompt([{ role: 'system', content: 'S', timestamp: 0 }, user('a'), { ...assistant, content: [{ type: 'text', text: 'b' }] },
       user([{ type: 'text', text: 'c' }, { type: 'image', mimeType: 'image/png', data: 'AA' }])]);
-    assert.equal(next, '<transcript>\n<user>\na\n</user>\n\n<assistant>\nb\n</assistant>\n</transcript>\n\nc\n[image: image/png, not shown]');
+    assert.equal(next, '<transcript>\n<user>\na\n</user>\n\n<assistant>\nb\n</assistant>\n</transcript>\n\nc');
+    // History keeps a placeholder for its images; the latest user message's images go as stream-json image blocks.
+    const older = renderPrompt([user([{ type: 'image', mimeType: 'image/gif', data: 'R0' }]), { ...assistant, content: [{ type: 'text', text: 'b' }] }, user('c')]);
+    assert.equal(older, '<transcript>\n<user>\n[image: image/gif, not shown]\n</user>\n\n<assistant>\nb\n</assistant>\n</transcript>\n\nc');
+    assert.deepEqual(parseJson(renderInput([user([{ type: 'text', text: 'what?' }, { type: 'image', mimeType: 'image/png', data: 'AA' }])])),
+      { type: 'user', message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA' } },
+        { type: 'text', text: 'what?' }] } });
+    assert.deepEqual(parseJson(renderInput([user([{ type: 'image', mimeType: 'image/png', data: 'AA' }])])),
+      { type: 'user', message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA' } }] } });
   });
 
   test('toolChoice "none" gives Claude no tools at all', async (t) => {

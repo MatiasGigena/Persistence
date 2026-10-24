@@ -40,7 +40,7 @@ export const CONVENTION = [
 
 export type ClaudeCliModel = Model<typeof API>;
 const MODEL: Omit<ClaudeCliModel, 'id' | 'name'> = { api: API, provider: CLAUDE_CLI, baseUrl: 'local:claude', reasoning: true,
-  input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 64_000,
+  input: ['text', 'image'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 64_000,
   thinkingLevelMap: { off: null, minimal: 'low', xhigh: 'xhigh', max: 'max' } };
 /** The CLI's own aliases, so each one follows the CLI to the latest model of its family. */
 export const MODELS: readonly ClaudeCliModel[] = [
@@ -50,7 +50,7 @@ export const MODELS: readonly ClaudeCliModel[] = [
   { id: 'fable', name: 'Claude Fable 5.1 (Claude Code)' },
 ].map(model => ({ ...MODEL, ...model }));
 
-// The stream-json lines of `claude -p --output-format stream-json --verbose --include-partial-messages`, as far as
+// The stream-json lines of `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`, as far as
 // this provider reads them. Lines are parsed as unknown and narrowed below; anything else is ignored.
 
 /** Token counts of the Anthropic Messages API. */
@@ -163,6 +163,9 @@ function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 const textOf = (content: string | (TextContent | ImageContent)[]) => typeof content === 'string' ? content
   : content.map(b => b.type === 'text' ? b.text : `[image: ${b.mimeType}, not shown]`).join('\n');
+/** The text of the latest user message alone: its images go with the prompt as image blocks (see renderInput). */
+const textOnly = (content: string | (TextContent | ImageContent)[]) => typeof content === 'string' ? content
+  : content.flatMap(b => b.type === 'text' ? [b.text] : []).join('\n');
 const attr = (value: string) => JSON.stringify(String(value));
 
 type Turn = Exclude<Message, SystemMessage>;
@@ -178,18 +181,38 @@ function renderMessage(m: Turn): string {
     .filter(Boolean).join('\n');
 }
 
-/**
- * The one user prompt for a request: the context's messages folded into a tagged transcript (see CONVENTION),
- * then the latest user message as is. A lone user message is sent unchanged.
- */
-export function renderPrompt(messages: readonly Message[]): string {
+/** The context's turns, and the latest user message split off when the context ends with one. */
+function split(messages: readonly Message[]) {
   const body = messages.filter((m): m is Turn => m.role !== 'system');
   const tail = body.at(-1);
   const last = tail?.role === 'user' ? tail : undefined;
   if (last) body.pop();
+  return { body, last };
+}
+
+/**
+ * The text of the one user prompt for a request: the context's messages folded into a tagged transcript (see
+ * CONVENTION), then the latest user message's text. A lone user message is sent unchanged. Images in history become
+ * `[image: <type>, not shown]`; the latest user message's images go as image blocks instead (renderInput).
+ */
+export function renderPrompt(messages: readonly Message[]): string {
+  const { body, last } = split(messages);
   const history = body.map(renderMessage).filter(Boolean).join('\n\n');
-  if (!history) return last ? textOf(last.content) : '';
-  return `<transcript>\n${history}\n</transcript>\n\n${last ? textOf(last.content) : 'Continue from the last tool result.'}`;
+  if (!history) return last ? textOnly(last.content) : '';
+  return `<transcript>\n${history}\n</transcript>\n\n${last ? textOnly(last.content) : 'Continue from the last tool result.'}`;
+}
+
+/**
+ * The stdin of a request (`--input-format stream-json`): one user message line whose content is the latest user
+ * message's images, as Anthropic base64 image blocks, then the prompt text (renderPrompt).
+ */
+export function renderInput(messages: readonly Message[]): string {
+  const { last } = split(messages);
+  const images = typeof last?.content === 'string' ? [] : (last?.content ?? []).flatMap(b => b.type === 'image'
+    ? [{ type: 'image', source: { type: 'base64', media_type: b.mimeType, data: b.data } }] : []);
+  const text = renderPrompt(messages);
+  const content = [...images, ...text || !images.length ? [{ type: 'text', text }] : []];
+  return `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
 }
 
 export interface ClaudeArgsOptions {
@@ -202,7 +225,7 @@ export interface ClaudeArgsOptions {
 
 /** argv for one request: `systemFile` holds the system prompt; `toolsFile`, when given, the stub's tool list. */
 export function claudeArgs(model: Pick<Model<Api>, 'id'>, { systemFile, toolsFile, reasoning }: ClaudeArgsOptions): string[] {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--no-session-persistence', '--tools', '', '--strict-mcp-config', '--disable-slash-commands',
     '--setting-sources', '', '--settings', SETTINGS, '--model', model.id, '--max-turns', '1',
     '--system-prompt-file', systemFile,
@@ -429,8 +452,8 @@ function streamClaude(model: Model<Api>, context: TranscriptContext, options: Si
         finish({ error: `claude-cli: claude exited (${sig ?? `status ${code}`}) without a reply${stderr.trim() ? `: ${stderr.trim().split('\n').at(-1)}` : ''}` });
       });
       proc.stdin.on('error', () => {}); // a CLI that exits early closes its stdin; close reports why
-      // The prompt goes on stdin, not argv, so its length is not limited by the OS.
-      proc.stdin.end(renderPrompt(messages));
+      // The prompt goes on stdin, not argv, so its length is not limited by the OS; stream-json carries its images.
+      proc.stdin.end(renderInput(messages));
     } catch (error) {
       finish({ error: `claude-cli: ${error instanceof Error ? error.message : String(error)}` });
     }

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// A stand-in for the `claude` CLI (PI_DURABLE_CLAUDE_BIN). Every call appends { argv, stdin, cwd, env, system, mcp,
-// tools } to FAKE_CLAUDE_LOG, reading the system prompt and tool files now (the provider deletes them later); a
+// A stand-in for the `claude` CLI (PI_DURABLE_CLAUDE_BIN). Every call appends { argv, stdin, prompt, images, cwd, env,
+// system, mcp, tools } to FAKE_CLAUDE_LOG (with `--input-format stream-json`, `prompt` is the text and `images` the image
+// blocks of the user message lines on stdin; otherwise `prompt` is stdin and `images` empty), reading the system prompt and tool files now (the provider deletes them later); a
 // SIGTERM appends { killed: true }. `auth status` prints FAKE_CLAUDE_AUTH. A print-mode call plays the n-th entry of
 // the JSON array in FAKE_CLAUDE_SCRIPT: { lines: [stream-json objects], stderr, exit }; without `exit` it then waits
 // to be killed, like a CLI about to act on its reply.
@@ -44,7 +45,14 @@ const system = argv.includes('--system-prompt-file') ? readFileSync(after('--sys
 const mcp = argv.includes('--mcp-config') ? parseJson(after('--mcp-config')) : null;
 const toolsFile = field(field(field(field(mcp, 'mcpServers'), 'pi'), 'args'), 1);
 const tools = typeof toolsFile === 'string' ? parseJson(readFileSync(toolsFile, 'utf8')) : null;
-record({ argv, stdin, cwd: process.cwd(), env, system, mcp, tools });
+const streamed = after('--input-format') === 'stream-json';
+const blocks = streamed ? stdin.split('\n').filter(Boolean).flatMap(line => {
+  const content = field(field(parseJson(line), 'message'), 'content');
+  return isList(content) ? content : [];
+}) : [];
+const prompt = streamed ? blocks.flatMap(b => field(b, 'type') === 'text' ? [String(field(b, 'text'))] : []).join('\n') : stdin;
+const images = blocks.filter(b => field(b, 'type') === 'image');
+record({ argv, stdin, prompt, images, cwd: process.cwd(), env, system, mcp, tools });
 process.on('SIGTERM', () => { record({ killed: true }); process.exit(143); });
 const script = parseJson(readFileSync(process.env.FAKE_CLAUDE_SCRIPT ?? '', 'utf8'));
 const step = parseStep(field(script, calls)) ?? { lines: [], exit: 1, stderr: 'no scripted reply' };
