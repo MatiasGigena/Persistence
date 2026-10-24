@@ -79,7 +79,7 @@ Give each test its own temporary data directory.
 
 - Keep persisted identifiers stable. Existing databases and memory directories
   depend on them:
-  - extension names `uniichat`, `agents`, `browser`, `web-fetch` and `autoreview`;
+  - extension names `uniichat`, `agents`, `browser`, `web-fetch`, `autoreview` and `show-image`;
   - entry kinds `agents.report`, `agents.message`, `host.resume-boundary`;
   - task kinds `agents.anchor` and `agents.deliver`, and their versions;
   - the doc kind `agents.registry`, and its agents' fields, `standing`, `past` and `session` among them;
@@ -88,7 +88,7 @@ Give each test its own temporary data directory.
   - tool names `zoom`, `date`, `spawn_agent`, `list_agents`, `send_message`,
     `last_message`, `stop_agent`, `delegate`, `web_fetch`, `autoreview`, and the browser's `browser_goto`,
     `browser_eval`, `browser_console`, `browser_network`, `browser_fill`, `browser_click`,
-    `browser_screenshot`, `browser_close`;
+    `browser_screenshot`, `browser_close`, and `show_image`;
   - memory kinds `user`, `pi`, `tool`, `echo`, `work`, `note`, and the `src` key formats;
   - the file names `chat.sqlite`, `<database>.lock`, `settings.json` and its `model`,
     `thinkingLevel` and `agents` keys (each agent's `model`, `thinkingLevel`, `tools`,

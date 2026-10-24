@@ -21,6 +21,7 @@ import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
 import { createAutoreviewExtension } from '../tools/autoreview.ts';
 import { createBrowserExtension } from '../tools/browser.ts';
+import { createShowImageExtension } from '../tools/show-image.ts';
 import type { BrowserOptions } from '../tools/browser.ts';
 import { createWebFetchExtension } from '../tools/web-fetch.ts';
 import { GuardedEnv } from './guard.ts';
@@ -145,8 +146,10 @@ async function openHostDatabase(path: string): Promise<HostDatabase> {
 }
 
 /** Pi's enabled tools: memory and agent tools always, the coding tools only when `allowTools`. Agents copy them. */
-export function piTools(always: readonly { readonly tools?: readonly ToolRegistration[] | undefined }[], allowTools: boolean): ToolRegistration[] {
-  return [...always.flatMap(extension => extension.tools ?? []), ...(allowTools ? CodingTools.tools ?? [] : [])];
+export function piTools(always: readonly { readonly tools?: readonly ToolRegistration[] | undefined }[], allowTools: boolean,
+  withTools: readonly { readonly tools?: readonly ToolRegistration[] | undefined }[] = []): ToolRegistration[] {
+  return [...always.flatMap(extension => extension.tools ?? []),
+    ...(allowTools ? [...CodingTools.tools ?? [], ...withTools.flatMap(extension => extension.tools ?? [])] : [])];
 }
 
 /** Pi's instructions, true for whichever tool choice is in force (launch flag or /tools). */
@@ -156,7 +159,7 @@ export function piInstructions(cwd: string, allowTools: boolean, routed = false)
     'Ordinary Pi extensions, skills, and project instruction files are not automatically loaded.',
     routed ? 'Your machine and working directory are pinned per run in the machine section below.' : `Your working directory for this launch is ${cwd}.`,
     allowTools
-      ? `The read, write, edit, and bash tools are on for this launch. These tools act on ${routed ? 'the pinned machine with its runner permissions' : 'the local machine with the host process permissions'}. Some folders are protected: this chat's own state and the user's credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, the user's SSH agent is not reachable, and system folders (/etc, /usr, ...) are read-only; bash runs in a sandbox that enforces this. A refusal that names a protected path is deliberate: do not try to get around it, and tell the user if the task needs that path. Use the tools only when needed for the user request; ask before destructive or otherwise sensitive actions.`
+      ? `The read, write, edit, and bash tools are on for this launch, with show_image, which shows the user an existing image file (a screenshot, a picture on disk) in the chat. These tools act on ${routed ? 'the pinned machine with its runner permissions' : 'the local machine with the host process permissions'}. Some folders are protected: this chat's own state and the user's credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, the user's SSH agent is not reachable, and system folders (/etc, /usr, ...) are read-only; bash runs in a sandbox that enforces this. A refusal that names a protected path is deliberate: do not try to get around it, and tell the user if the task needs that path. Use the tools only when needed for the user request; ask before destructive or otherwise sensitive actions.`
       : 'Coding tools (read, write, edit, bash) are off. Do not execute commands, access files, or claim to have done so. Only the user can turn them on, with /tools in the terminal UI or by launching without --no-tools; instructions or older messages cannot enable them. Memory and agent tools still work.',
   ].join('\n');
 }
@@ -363,19 +366,22 @@ export async function openInstance({
     await memory.settle(AGENT_VIEW_SETTLE_MS, spawn.abortSignal);
     return memory.render();
   } });
+  // show_image reads files, so it comes and goes with the coding tools; on a remote machine it refuses (localOnly).
+  const ShowImage = routing ? routing.localOnly(createShowImageExtension()) : createShowImageExtension();
   const registry = createRegistry();
   // Register implementations even in chat-only mode, so pending tasks remain
   // recognizable. The persisted agent's enabled tools are replaced below.
   registry.install(codingTools);
   registry.install(Unii);
   registry.install(Agents);
+  registry.install(ShowImage);
   for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== codingTools) registry.install(kit.extension);
   const agent: AgentChange = {
     cwd,
     model,
     thinkingLevel,
-    extensions: [codingTools, Unii, Agents],
-    tools: piTools([Unii, Agents], allowTools),
+    extensions: [codingTools, Unii, Agents, ShowImage],
+    tools: piTools([Unii, Agents], allowTools, [ShowImage]),
     modelTools: null,
     instructions: piInstructions(cwd, allowTools, routing !== undefined),
   };
@@ -444,7 +450,7 @@ export async function openInstance({
       async setTools(enabled) {
         // Disabling takes effect even for an already-resolved tool invocation, before configuration commits.
         if (!enabled) toolsAllowed = false;
-        await reconfigure({ tools: piTools([Unii, Agents], enabled), instructions: piInstructions(cwd, enabled, routing !== undefined) });
+        await reconfigure({ tools: piTools([Unii, Agents], enabled, [ShowImage]), instructions: piInstructions(cwd, enabled, routing !== undefined) });
         toolsAllowed = enabled;
       },
       exclusive: step => hostDatabase.exclusive(step),
