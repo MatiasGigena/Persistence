@@ -54,8 +54,12 @@ export interface MachineRouting {
   initialize(context: Context): Promise<void>;
   submit(text: string, requestId: string | undefined, target: MachineTarget | undefined, context: Context, steer?: boolean,
     images?: readonly ChatImage[]): Promise<Submission>;
-  /** Preserve local tool implementations and protections, but explicitly refuse unsupported remote network kits. */
-  localOnly(extension: Extension): Extension;
+  /**
+   * Preserve local tool implementations and protections, but explicitly refuse unsupported remote network kits. With
+   * `allowed` (a tool that comes and goes with the coding tools), permission is checked again once the destination
+   * resolves, as the routed coding tools do, so `/tools off` stops an invocation already resolving.
+   */
+  localOnly(extension: Extension, allowed?: () => boolean): Extension;
   /** Called inside the spawning tool's once-only transaction, immediately after creating the child. */
   pinSpawn(tx: Tx, parent: ConversationId, child: ConversationId): Promise<void>;
   /** Persist a new root delivery's exact source-session route in the transaction that creates its task. */
@@ -163,16 +167,19 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
   return {
     tools,
     initialize: context => harness().commit(async tx => { await tx.doc(RoutingDoc); }, context),
-    localOnly: extension => ({
+    localOnly: (extension, allowed) => ({
       ...extension,
       tools: extension.tools?.map(tool => ({
         ...tool,
         async execute(args: JsonObject, api, context) {
+          if (allowed && !allowed()) throw new Error('Coding tools are off for this launch.');
           const target = await resolve(api.conversationId, context);
           if (target.machineId !== 'server') {
             throw new Error(`Tool ${tool.name} is not supported on remote machine ${JSON.stringify(target.label)}; it will not run on the server instead.`);
           }
           requireSame(host, target);
+          // Permission is launch state: /tools off may have landed while the destination resolved.
+          if (allowed && !allowed()) throw new Error('Coding tools are off for this launch.');
           return tool.execute(args, api, context);
         },
       })),

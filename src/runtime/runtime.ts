@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, Harness } from '@earendil-works/pi-durable';
 import type {
-  AgentChange, Conversation, ConversationId, Cursor, DocumentReader, EntryRecord, ModelRef, Submission, SubmissionRecord, ToolRegistration,
+  AgentChange, Conversation, ConversationId, Cursor, DocumentReader, EntryRecord, Extension, ModelRef, Submission, SubmissionRecord, ToolRegistration,
 } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
@@ -196,6 +196,20 @@ const rosterEntry = (roster: Roster, name: string): StandingAgent | undefined =>
  * entry has a kit that reads local files (`read`, `coding`, `autoreview`), so its browser cannot carry those files off the machine.
  * The roster's own names count even before the registry knows them.
  */
+/** `extension` with each tool refusing once `allowed()` is false: launch permission, checked when the call runs. */
+export function whileAllowed(extension: Extension, allowed: () => boolean): Extension {
+  return {
+    ...extension,
+    tools: extension.tools?.map(tool => ({
+      ...tool,
+      execute(args, api, context) {
+        if (!allowed()) return Promise.reject(new Error('Coding tools are off for this launch.'));
+        return tool.execute(args, api, context);
+      },
+    })),
+  };
+}
+
 export function localOnlyBrowser(agents: Readonly<Record<string, AgentRecord>>, key: string, roster: Roster): boolean {
   const readsFiles = (name: string): boolean => (rosterEntry(roster, name)?.tools ?? []).some(kit => kit === 'read' || kit === 'coding' || kit === 'autoreview');
   if (readsFiles(key)) return true;
@@ -367,7 +381,9 @@ export async function openInstance({
     return memory.render();
   } });
   // show_image reads files, so it comes and goes with the coding tools; on a remote machine it refuses (localOnly).
-  const ShowImage = routing ? routing.localOnly(createShowImageExtension()) : createShowImageExtension();
+  // Both paths check the launch's permission when the call runs, so /tools off stops an invocation in progress.
+  const ShowImage = routing ? routing.localOnly(createShowImageExtension(), () => toolsAllowed)
+    : whileAllowed(createShowImageExtension(), () => toolsAllowed);
   const registry = createRegistry();
   // Register implementations even in chat-only mode, so pending tasks remain
   // recognizable. The persisted agent's enabled tools are replaced below.
