@@ -61,7 +61,8 @@ export function contentSecurityPolicy(origin: string, html: string): string {
     "default-src 'self'",
     `script-src 'self' ${importMapHashes(html).join(' ')}`.trim(),
     "style-src 'self'",
-    "img-src 'self'",
+    // data: for chat images (ADR 0031): they come inside protocol messages, never from another origin.
+    "img-src 'self' data:",
     "font-src 'self'",
     `connect-src 'self' ${socket}`,
     "manifest-src 'self'",

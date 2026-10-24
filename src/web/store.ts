@@ -2,7 +2,7 @@
 // not yet in the feed. No DOM: `handle` folds one server message in and returns what the caller must do about it
 // (ask for a resync, reload), so the whole sync logic runs in Node tests.
 import { ROOT_FEED } from '../protocol/messages.ts';
-import type { ChatItem, ItemOp, NoticeLevel, ServerMessage, SessionStatus, Welcome } from '../protocol/messages.ts';
+import type { ChatImage, ChatItem, ItemOp, NoticeLevel, ServerMessage, SessionStatus, Welcome } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
 
 /** A message sent from this client: `sending` until the server admits it, then `queued` until it shows in the feed. */
@@ -13,6 +13,8 @@ export interface PendingItem {
   readonly state: 'sending' | 'queued';
   /** Sent to steer Pi's running work rather than to follow it up. */
   readonly steer?: boolean;
+  /** Images sent with the text (ADR 0031). */
+  readonly images?: readonly ChatImage[];
 }
 
 /** What a chat view draws: the feed's items, local notices among them, and pending sends at the end. */
@@ -196,10 +198,11 @@ export class Store {
   }
 
   /** Adds a message being sent, shown at the end of the chat until it is in the feed. */
-  addPending(id: string, text: string, steer = false): void {
+  addPending(id: string, text: string, steer = false, images: readonly ChatImage[] = []): void {
     const baseline = new Set(this.root.items.filter(item => item.kind === 'user').map(item => item.id));
     const item: PendingItem = { kind: 'pending', id, text, state: 'sending' };
-    this.pending.push({ item: steer ? { ...item, steer } : item, baseline });
+    const marked = steer ? { ...item, steer } : item;
+    this.pending.push({ item: images.length ? { ...marked, images } : marked, baseline });
     this.changed();
   }
 
@@ -216,13 +219,17 @@ export class Store {
     this.changed();
   }
 
-  /** Drops admitted pending sends whose text now shows as a user item that was not there when they were sent. */
+  /**
+   * Drops admitted pending sends whose text (and number of images) now shows as a user item that was not there when
+   * they were sent.
+   */
   private settlePending(): void {
     if (!this.pending.length) return;
     const used = new Set<string>();
     this.pending = this.pending.filter(p => {
       if (p.item.state !== 'queued') return true;
-      const match = this.root.items.find(item => item.kind === 'user' && !p.baseline.has(item.id) && !used.has(item.id) && item.text === p.item.text);
+      const match = this.root.items.find(item => item.kind === 'user' && !p.baseline.has(item.id) && !used.has(item.id)
+        && item.text === p.item.text && (item.images?.length ?? 0) === (p.item.images?.length ?? 0));
       if (!match) return true;
       used.add(match.id);
       return false;

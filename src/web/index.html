@@ -121,7 +121,12 @@ SOFTWARE.
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
       Latest
     </button>
+    <ul id="attachments" class="attachments" aria-label="Images to send" hidden></ul>
     <form id="composer" class="composer">
+      <input id="attach-file" class="sr-only" type="file" accept="image/*" multiple tabindex="-1" aria-hidden="true">
+      <button id="attach" class="round-button round-attach" type="button" aria-label="Attach images" title="Attach images">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h6"/><path d="M19 2v6"/><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><circle cx="9" cy="9" r="2"/></svg>
+      </button>
       <label class="sr-only" for="input">Message Pi</label>
       <textarea id="input" class="composer-input" rows="1" placeholder="Message Pi" autocomplete="off" enterkeyhint="enter"></textarea>
       <button id="send" class="round-button round-send" type="submit" aria-label="Send" data-mode="send">
@@ -148,6 +153,13 @@ SOFTWARE.
     </div>
     <div id="sheet-body" class="sheet-body"></div>
   </div>
+</dialog>
+
+<dialog id="viewer" class="viewer" aria-label="Image">
+  <img id="viewer-image" class="viewer-image" alt="">
+  <button id="viewer-close" class="icon-button viewer-close" type="button" aria-label="Close">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+  </button>
 </dialog>
 
 <dialog id="tools-confirm" class="confirm" aria-labelledby="tools-confirm-title" aria-describedby="tools-confirm-text">

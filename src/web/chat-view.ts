@@ -1,10 +1,12 @@
 // Renders a feed into a list: one element per item, kept by id, so an update touches only its own element. Changes
 // are drawn at most once per animation frame, and the list sticks to the bottom while the reader is there.
+import { imageUrl } from './attach.ts';
 import { addCodeCopies, copyButton } from './copy.ts';
 import { prettyArgs, toolCommand, toolSummary } from './format.ts';
 import { renderMarkdown } from './markdown.ts';
 import { turnEnds } from './store.ts';
 import type { ViewItem } from './store.ts';
+import type { ChatImage } from '../protocol/messages.ts';
 
 type ToolItem = Extract<ViewItem, { kind: 'tool' }>;
 
@@ -22,6 +24,60 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ''
   if (className) element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;
+}
+
+/** The tool whose images show in the chat, not folded away (ADR 0031). */
+const SHOW_IMAGE = 'show_image';
+
+/** The full-screen image viewer (index.html #viewer): a tap on any chat image opens it, a tap anywhere closes it. */
+let viewer: { readonly dialog: HTMLDialogElement; readonly image: HTMLImageElement } | undefined;
+
+/** Wires the viewer up; call once at start. */
+export function initViewer(): void {
+  const dialog = document.getElementById('viewer'), image = document.getElementById('viewer-image');
+  if (!(dialog instanceof HTMLDialogElement) || !(image instanceof HTMLImageElement)) return;
+  viewer = { dialog, image };
+  dialog.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => { image.removeAttribute('src'); });
+}
+
+/** Thumbnails of `images`, each a button that opens it full size; one without data is a placeholder. */
+function imageStrip(images: readonly ChatImage[], label: string): HTMLElement {
+  const strip = el('div', 'images');
+  images.forEach((image, k) => {
+    const url = imageUrl(image);
+    const name = images.length > 1 ? `${label} ${k + 1}` : label;
+    if (!url) {
+      strip.append(el('span', 'image-missing', `${name}: too large to show here`));
+      return;
+    }
+    const button = el('button', 'image-open');
+    button.type = 'button';
+    button.setAttribute('aria-label', `Enlarge ${name.toLowerCase()}`);
+    const img = el('img', 'image-thumb');
+    img.alt = name;
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.src = url;
+    button.append(img);
+    button.addEventListener('click', () => {
+      if (!viewer) return;
+      viewer.image.src = url;
+      viewer.image.alt = name;
+      viewer.dialog.showModal();
+    });
+    strip.append(button);
+  });
+  return strip;
+}
+
+/** Puts `images` (or none) in `root`'s strip, before `before` when given; redrawn only when the list changed. */
+function setImages(root: HTMLElement, images: readonly ChatImage[] | undefined, was: readonly ChatImage[] | undefined,
+  label: string, place: (strip: HTMLElement) => void): void {
+  const old = root.querySelector(':scope > .images');
+  if (old && images === was) return;
+  old?.remove();
+  if (images?.length) place(imageStrip(images, label));
 }
 
 const TOOL_MARK: Readonly<Record<ToolItem['status'], string>> = { running: '', done: '✓', error: '✗' };
@@ -197,6 +253,7 @@ function fillTool(details: HTMLDetailsElement, li: HTMLLIElement): void {
   if (item.output) {
     parts.push(block(li, item.status === 'error' ? 'tool-output is-error' : 'tool-output', 'Output', item.output, now => now.output));
   }
+  if (item.images?.length && item.name !== SHOW_IMAGE) parts.push(imageStrip(item.images, 'Image'));
   if (!parts.length) parts.push(el('p', 'fold-empty', item.status === 'running' ? 'Running…' : 'No output.'));
   body.replaceChildren(...parts);
 }
@@ -214,9 +271,13 @@ function update(li: HTMLLIElement, item: ViewItem, was: ViewItem | undefined): v
   switch (item.kind) {
     case 'user':
       setText(li, '.bubble', item.text);
+      li.querySelector('.bubble')?.toggleAttribute('hidden', !item.text);
+      setImages(li, item.images, was?.kind === 'user' ? was.images : undefined, 'Image', strip => li.prepend(strip));
       break;
     case 'pending':
       setText(li, '.bubble', item.text);
+      li.querySelector('.bubble')?.toggleAttribute('hidden', !item.text);
+      setImages(li, item.images, was?.kind === 'pending' ? was.images : undefined, 'Image', strip => li.prepend(strip));
       setText(li, '.meta', item.state === 'sending' ? 'Sending…' : item.steer ? 'Steering' : 'Queued');
       break;
     case 'assistant': {
@@ -242,6 +303,11 @@ function update(li: HTMLLIElement, item: ViewItem, was: ViewItem | undefined): v
       setText(li, '.tool-name', item.name);
       setText(li, '.tool-arg', toolSummary(item.name, item.args));
       setText(li, '.tool-state', `, ${TOOL_STATE[item.status]}`);
+      // show_image's pictures are for the user: in the chat, not folded. Other tools' (a screenshot the model looked
+      // at) show in the fold.
+      if (item.name === SHOW_IMAGE) {
+        setImages(li, item.images, was?.kind === 'tool' ? was.images : undefined, 'Image', strip => li.append(strip));
+      }
       const details = li.querySelector('details');
       if (details?.open) fillTool(details, li);
       break;

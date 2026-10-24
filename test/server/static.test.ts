@@ -105,6 +105,7 @@ test('a strict CSP with the import map hash, and nosniff and no-referrer, on eve
     assert.ok(csp.includes(`connect-src 'self' wss://vps.tail1.ts.net`), csp);
     assert.ok(csp.includes("object-src 'none'") && csp.includes("frame-ancestors 'none'") && csp.includes("base-uri 'none'"));
     assert.ok(!csp.includes('unsafe'), csp);
+    assert.ok(csp.includes("img-src 'self' data:"), 'chat images are data: URLs (ADR 0031)');
     assert.equal(headers['x-content-type-options'], 'nosniff');
     assert.equal(headers['referrer-policy'], 'no-referrer');
   }

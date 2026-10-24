@@ -7,7 +7,7 @@ const worker = ((): ServiceWorkerGlobalScope => {
   throw new Error('sw.ts runs only as a service worker');
 })();
 
-const CACHE = 'persistence-shell-2';
+const CACHE = 'persistence-shell-3';
 const OFFLINE = '/offline.html';
 /** Everything the app loads, cached at install so it can start offline. test/web checks the list stays complete. */
 const SHELL = [
@@ -15,6 +15,7 @@ const SHELL = [
   '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png', '/icons/badge-96.png',
   '/main.ts', '/link.ts', '/store.ts', '/chat-view.ts', '/markdown.ts', '/format.ts', '/push.ts',
   '/panels/sheet.ts', '/panels/agents.ts', '/panels/memory.ts', '/panels/chat-settings.ts', '/panels/tools.ts', '/copy.ts',
+  '/attach.ts', '/protocol/images.ts',
   '/protocol/messages.ts', '/protocol/machines.ts', '/protocol/mirror.ts', '/protocol/parse.ts', '/protocol/version.ts',
   '/vendor/marked.esm.js',
 ];

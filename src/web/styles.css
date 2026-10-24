@@ -211,6 +211,25 @@ button.status-part {
   background: var(--user); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .item-pending .bubble { opacity: 0.62; }
+
+/* Images in the chat (ADR 0031): thumbnails that open full size. */
+.images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.item-user .images, .item-pending .images { justify-content: flex-end; }
+.item-pending .images { opacity: 0.62; }
+.item-tool > .images { margin: 2px 0 0 calc(1em + 8px); }
+.fold-body .images { margin: 0 0 6px; }
+.image-open { padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); line-height: 0; }
+.image-thumb { display: block; max-width: min(100%, 18rem); max-height: 14rem; width: auto; height: auto; object-fit: contain; }
+.item-tool > .images .image-thumb { max-width: min(100%, 28rem); max-height: 22rem; }
+.image-missing { font-size: 0.8125rem; color: var(--faint); font-style: italic; }
+.viewer {
+  margin: 0; padding: 0; width: 100vw; height: 100dvh; max-width: 100vw; max-height: 100dvh;
+  border: 0; background: rgb(0 0 0 / 92%); display: none; place-items: center;
+}
+.viewer[open] { display: grid; }
+.viewer::backdrop { background: rgb(0 0 0 / 92%); }
+.viewer-image { max-width: 100vw; max-height: 100dvh; object-fit: contain; }
+.viewer-close { position: fixed; top: calc(8px + env(safe-area-inset-top)); right: 8px; margin: 0; color: var(--ink); background: rgb(0 0 0 / 45%); }
 .meta { font-size: 0.75rem; color: var(--faint); margin-top: 4px; }
 
 /* Chat shares Pi Cloud's monospace reading face. */
@@ -336,6 +355,21 @@ button.status-part {
   backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
 }
 .composer:focus-within { border-color: var(--edge); }
+.attachments {
+  list-style: none; max-width: var(--column); margin: 0 auto 8px; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.attachment { position: relative; width: 64px; height: 64px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
+.attachment-image { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attachment-reading { display: grid; place-items: center; font-size: 0.6875rem; color: var(--faint); }
+.attachment-remove {
+  position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: rgb(0 0 0 / 70%); color: #fff; padding: 0;
+}
+.attachment-remove svg { width: 14px; height: 14px; }
+.round-attach { background: transparent; color: var(--muted); }
+.round-attach:hover { color: var(--ink); background: var(--raised); }
+.round-attach svg { width: 18px; height: 18px; }
 .composer-input {
   flex: 1; min-width: 0; min-height: 36px; max-height: min(180px, 25dvh); padding: 7px 0; margin: 0;
   border: 0; background: transparent; resize: none; outline: none;

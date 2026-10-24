@@ -1,6 +1,7 @@
 // The web app: pairing, the chat, the header and composer, the sheets, and the link to the server. See
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
-import { ChatView, el } from './chat-view.ts';
+import { imageUrl, toChatImage } from './attach.ts';
+import { ChatView, el, initViewer } from './chat-view.ts';
 import { errorText, guessDeviceName, normalizeCode, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
@@ -13,7 +14,8 @@ import type { PanelContext } from './panels/sheet.ts';
 import { syncPush } from './push.ts';
 import { Store } from './store.ts';
 import type { Effect } from './store.ts';
-import type { NoticeLevel } from '../protocol/messages.ts';
+import { IMAGE_LIMITS } from '../protocol/images.ts';
+import type { ChatImage, NoticeLevel } from '../protocol/messages.ts';
 
 const CLIENT = 'web';
 const DRAFT_KEY = 'pd.draft';
@@ -153,6 +155,9 @@ function start(): void {
   const input = byId('input', HTMLTextAreaElement);
   const composer = byId('composer', HTMLFormElement);
   const sendButton = byId('send', HTMLButtonElement);
+  const attachButton = byId('attach', HTMLButtonElement);
+  const attachFile = byId('attach-file', HTMLInputElement);
+  const attachments = byId('attachments', HTMLUListElement);
   const banner = byId('banner', HTMLDivElement);
   const bannerText = byId('banner-text', HTMLSpanElement);
   const retry = byId('banner-retry', HTMLButtonElement);
@@ -167,6 +172,7 @@ function start(): void {
     onStuck: stuck => { jump.hidden = stuck; },
   });
   jump.addEventListener('click', () => view.toBottom());
+  initViewer();
 
   const notice = (text: string, level: NoticeLevel = 'info'): void => store.notice(text, level);
   let reopen: string[] = [];
@@ -188,11 +194,11 @@ function start(): void {
   // -------------------------------------------------------------- sending
 
   /** Sends not yet admitted, by request id: resent with the same id after a reconnect, so Pi gets each once. */
-  const outbox = new Map<string, { readonly text: string; readonly steer: boolean }>();
+  const outbox = new Map<string, { readonly text: string; readonly steer: boolean; readonly images: readonly ChatImage[] }>();
   const prefix = `web-${Math.random().toString(36).slice(2, 10)}`;
   let counter = 0;
-  const deliver = (id: string, text: string, steer: boolean): void => {
-    link.request('send', steer ? { text, requestId: id, steer } : { text, requestId: id }).then(
+  const deliver = (id: string, text: string, steer: boolean, images: readonly ChatImage[]): void => {
+    link.request('send', { text, requestId: id, ...steer ? { steer } : {}, ...images.length ? { images } : {} }).then(
       () => { outbox.delete(id); store.admitPending(id); drawSend(); },
       (error: unknown) => {
         if (error instanceof RequestError && error.code === 'lost') return;
@@ -200,6 +206,8 @@ function start(): void {
         drawSend();
         store.dropPending(id);
         if (!input.value) { input.value = text; autosize(); saveDraft(); }
+        // The images come back too, unless others were attached meanwhile.
+        if (images.length && !attached.length) { attached = [...images]; drawAttachments(); }
         notice(`Not sent: ${errorText(error)}`, 'error');
       },
     );
@@ -220,7 +228,7 @@ function start(): void {
   };
   const submit = (): void => {
     const text = input.value.trim();
-    if (!text) {
+    if (!text && !attached.length) {
       if (sendButton.dataset.mode === 'stop' && !sendButton.disabled) abort();
       return;
     }
@@ -229,14 +237,79 @@ function start(): void {
     hush = setTimeout(() => { hush = undefined; drawSend(); }, SEND_HUSH_MS);
     const id = `${prefix}-${++counter}`;
     const steer = busy();
-    outbox.set(id, { text, steer });
-    store.addPending(id, text, steer);
+    const images = attached;
+    outbox.set(id, { text, steer, images });
+    store.addPending(id, text, steer, images);
     input.value = '';
+    attached = [];
+    drawAttachments();
     autosize();
     saveDraft();
     view.toBottom();
-    deliver(id, text, steer);
+    deliver(id, text, steer, images);
   };
+
+  // -------------------------------------------------------------- images to send (ADR 0031)
+
+  /** Images attached to the next message: shown as thumbnails over the composer, each with a remove button. */
+  let attached: ChatImage[] = [];
+  /** Images being read or scaled: the send waits for them. */
+  let reading = 0;
+  const drawAttachments = (): void => {
+    attachments.hidden = !attached.length && !reading;
+    attachments.replaceChildren(...attached.map((image, k) => {
+      const li = el('li', 'attachment');
+      const img = el('img', 'attachment-image');
+      img.alt = `Image ${k + 1}`;
+      img.src = imageUrl(image) ?? '';
+      const remove = el('button', 'attachment-remove');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove image ${k + 1}`);
+      remove.title = 'Remove';
+      remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+      remove.addEventListener('click', () => {
+        attached = attached.filter(each => each !== image);
+        drawAttachments();
+        input.focus();
+      });
+      li.append(img, remove);
+      return li;
+    }), ...reading ? [el('li', 'attachment attachment-reading', 'Reading…')] : []);
+    drawSend();
+  };
+  const attach = (files: readonly File[]): void => {
+    const room = IMAGE_LIMITS.perMessage - attached.length - reading;
+    if (files.length > room) notice(`At most ${IMAGE_LIMITS.perMessage} images per message.`, 'warn');
+    for (const file of files.slice(0, Math.max(0, room))) {
+      reading++;
+      drawAttachments();
+      toChatImage(file).then(
+        image => { attached = [...attached, image]; },
+        (error: unknown) => notice(`Image not attached: ${errorText(error)}`, 'error'),
+      ).finally(() => { reading--; drawAttachments(); });
+    }
+  };
+  attachButton.addEventListener('click', () => attachFile.click());
+  attachFile.addEventListener('change', () => {
+    attach([...attachFile.files ?? []]);
+    attachFile.value = '';
+  });
+  // A pasted screenshot (or copied image file): attached, not pasted as text.
+  input.addEventListener('paste', event => {
+    const files = [...event.clipboardData?.files ?? []].filter(file => file.type.startsWith('image/'));
+    if (!files.length) return;
+    event.preventDefault();
+    attach(files);
+  });
+  composer.addEventListener('dragover', event => {
+    if ([...event.dataTransfer?.items ?? []].some(item => item.kind === 'file')) event.preventDefault();
+  });
+  composer.addEventListener('drop', event => {
+    const files = [...event.dataTransfer?.files ?? []].filter(file => file.type.startsWith('image/'));
+    if (!files.length) return;
+    event.preventDefault();
+    attach(files);
+  });
 
   // -------------------------------------------------------------- composer
 
@@ -247,12 +320,12 @@ function start(): void {
    */
   const drawSend = (): void => {
     if (!busy()) stopping = false;
-    const typed = Boolean(input.value.trim());
+    const typed = Boolean(input.value.trim()) || attached.length > 0;
     const working = linkReady && busy();
     const held = outbox.size > 0 || hush !== undefined;
     const mode = typed ? (working ? 'steer' : 'send') : working && !held ? 'stop' : 'send';
     sendButton.dataset.mode = mode;
-    sendButton.disabled = mode === 'stop' ? stopping : !typed;
+    sendButton.disabled = mode === 'stop' ? stopping : !typed || reading > 0;
     const label = mode === 'stop' ? 'Stop Pi' : mode === 'steer' ? 'Steer Pi' : 'Send';
     sendButton.setAttribute('aria-label', label);
     sendButton.title = label;
@@ -272,7 +345,7 @@ function start(): void {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing || !finePointer.matches) return;
     event.preventDefault();
     // Enter only sends: stopping Pi takes the button (or Esc in the terminal), never a stray keypress.
-    if (input.value.trim()) submit();
+    if ((input.value.trim() || attached.length) && !reading) submit();
   });
   composer.addEventListener('submit', event => {
     event.preventDefault();
@@ -351,6 +424,7 @@ function start(): void {
         return;
       case 'reload':
         // Messages not yet admitted would be lost with the page: they go back into the draft.
+        // Their images cannot be kept: only the text survives a reload.
         if (outbox.size) save(local, DRAFT_KEY, [...[...outbox.values()].map(sent => sent.text), input.value].filter(Boolean).join('\n\n'));
         await reloadOnce(`assets:${store.welcome?.assets ?? ''}`);
         return;
@@ -366,7 +440,7 @@ function start(): void {
       case 'ready': {
         save(session, RELOAD_KEY, '');
         show('chat');
-        for (const [id, { text, steer }] of outbox) deliver(id, text, steer);
+        for (const [id, { text, steer, images }] of outbox) deliver(id, text, steer, images);
         const names = reopen;
         reopen = [];
         for (const name of names) {

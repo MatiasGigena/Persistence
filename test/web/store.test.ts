@@ -99,6 +99,18 @@ test('a pending send shows until its user item arrives', () => {
   assert.deepEqual(ids(store), ['u1', 'u2']);
 });
 
+test('a pending send with images keeps them, and settles on a user item with as many images', () => {
+  const image = { mimeType: 'image/png', data: 'iVBORw0KGgo=' };
+  const store = connected([user('u1', 'hi')]);
+  store.addPending('r1', '', false, [image]);
+  assert.deepEqual(store.rootView().at(-1), { kind: 'pending', id: 'r1', text: '', state: 'sending', images: [image] });
+  store.admitPending('r1');
+  store.handle({ t: 'items', feed: 'root', ops: [{ op: 'put', item: user('u2', '') }] });
+  assert.equal(store.rootView().at(-1)?.kind, 'pending', 'a user item without the images is not this send');
+  store.handle({ t: 'items', feed: 'root', ops: [{ op: 'put', item: { kind: 'user', id: 'u3', text: '', images: [image] } }] });
+  assert.deepEqual(ids(store), ['u1', 'u2', 'u3']);
+});
+
 test('a steering send is marked as one, through admission, until it settles or drops', () => {
   const store = connected([user('u1', 'go')]);
   store.addPending('r1', 'not that one', true);
