@@ -14,7 +14,7 @@ import type { PanelContext } from './panels/sheet.ts';
 import { syncPush } from './push.ts';
 import { Store } from './store.ts';
 import type { Effect } from './store.ts';
-import { IMAGE_LIMITS } from '../protocol/images.ts';
+import { IMAGE_LIMITS, restoreImages } from '../protocol/images.ts';
 import type { ChatImage, NoticeLevel } from '../protocol/messages.ts';
 
 const CLIENT = 'web';
@@ -206,9 +206,18 @@ function start(): void {
         drawSend();
         store.dropPending(id);
         if (!input.value) { input.value = text; autosize(); saveDraft(); }
-        // The images come back too, unless others were attached meanwhile.
-        if (images.length && !attached.length) { attached = [...images]; drawAttachments(); }
+        // The images come back too, merged with any attached meanwhile; what does not fit is said, never dropped silently.
+        let dropped = 0;
+        if (images.length) {
+          const restored = restoreImages(attached, images, Math.max(0, IMAGE_LIMITS.perMessage - reading));
+          attached = restored.images;
+          dropped = restored.dropped;
+          drawAttachments();
+        }
         notice(`Not sent: ${errorText(error)}`, 'error');
+        if (dropped) {
+          notice(`${dropped} image${dropped === 1 ? '' : 's'} could not go back into the message (at most ${IMAGE_LIMITS.perMessage}); attach ${dropped === 1 ? 'it' : 'them'} again.`, 'warn');
+        }
       },
     );
   };

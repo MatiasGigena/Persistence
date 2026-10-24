@@ -77,3 +77,18 @@ const kib = (chars: number): string => `${Math.ceil(chars * 3 / 4 / 1024)} KiB`;
 export function wireImage(image: ChatImage): ChatImage {
   return image.data.length <= IMAGE_LIMITS.wireBytes ? image : { mimeType: image.mimeType, data: '' };
 }
+
+/**
+ * A failed send's `failed` images merged back into the composer's `draft` ones, the failed first (they were sent
+ * earlier), with duplicates removed and at most `max` kept; `dropped` counts those that did not fit, so the caller
+ * can say so instead of losing them silently.
+ */
+export function restoreImages(
+  draft: readonly ChatImage[], failed: readonly ChatImage[], max: number = IMAGE_LIMITS.perMessage,
+): { readonly images: ChatImage[]; readonly dropped: number } {
+  const merged: ChatImage[] = [];
+  for (const image of [...failed, ...draft]) {
+    if (!merged.some(each => each === image || (each.mimeType === image.mimeType && each.data === image.data))) merged.push(image);
+  }
+  return { images: merged.slice(0, max), dropped: Math.max(0, merged.length - max) };
+}

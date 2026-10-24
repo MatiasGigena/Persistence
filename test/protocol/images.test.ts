@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { wireItem } from '../../src/protocol/diff.ts';
-import { IMAGE_LIMITS, imageProblem, sniffBase64, sniffImage, wireImage } from '../../src/protocol/images.ts';
+import { IMAGE_LIMITS, imageProblem, restoreImages, sniffBase64, sniffImage, wireImage } from '../../src/protocol/images.ts';
 import type { ChatItem } from '../../src/protocol/messages.ts';
 import { chatItem } from '../../src/protocol/parse.ts';
 
@@ -52,4 +52,15 @@ test('chatItem reads images on user and tool items, and items without them have 
   assert.deepEqual(chatItem({ kind: 'user', id: 'u', text: 'x' }), { kind: 'user', id: 'u', text: 'x' });
   assert.throws(() => chatItem({ kind: 'user', id: 'u', text: 'x', images: [{ mimeType: 1 }] }));
   assert.deepEqual(chatItem({ kind: 'tool', id: 't', name: 'n', args: '', output: '', status: 'done', images: [image] }).kind, 'tool');
+});
+
+test('restoreImages puts a failed send back before the draft, drops duplicates, and counts what does not fit', () => {
+  const img = (n: number) => ({ mimeType: 'image/png', data: `${b64(PNG)}${n}` });
+  const a = img(1), b = img(2), c = img(3), d = img(4), e = img(5);
+  assert.deepEqual(restoreImages([], [a, b]), { images: [a, b], dropped: 0 });
+  assert.deepEqual(restoreImages([c], [a, b]), { images: [a, b, c], dropped: 0 });
+  assert.deepEqual(restoreImages([{ ...a }, c], [a]), { images: [a, c], dropped: 0 }, 'the same image is kept once');
+  assert.deepEqual(restoreImages([c, d, e], [a, b]), { images: [a, b, c, d], dropped: 1 });
+  assert.deepEqual(restoreImages([c], [a, b], 1), { images: [a], dropped: 2 });
+  assert.equal(IMAGE_LIMITS.perMessage, 4);
 });
