@@ -39,8 +39,10 @@ export async function toChatImage(file: Blob): Promise<ChatImage> {
     const fits = accepted(file.type) && base64Length(file.size) <= IMAGE_LIMITS.sendBytes
       && Math.max(width, height) <= IMAGE_LIMITS.maxSide;
     if (fits) return checked({ mimeType: file.type, data: await base64(file) });
-    // Redraw, smaller each round, until one encoding fits.
-    for (let side = Math.min(IMAGE_LIMITS.maxSide, Math.max(width, height)); side >= 320; side = Math.floor(side * 0.7)) {
+    // Redraw, smaller each round, until one encoding fits. The first round always runs, so a small picture that
+    // needs converting (an oversized GIF, a HEIC) is tried at its own size.
+    const first = Math.min(IMAGE_LIMITS.maxSide, Math.max(width, height));
+    for (let side = first; side === first || side >= 320; side = Math.floor(side * 0.7)) {
       const scale = side / Math.max(width, height);
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(width * scale));

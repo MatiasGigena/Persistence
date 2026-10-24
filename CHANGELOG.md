@@ -12,7 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with the message. At most 4 per message; large ones are scaled down. A model that takes no images (claude-cli)
   refuses the send with a clear error. A send that fails puts its images back into the composer beside any attached
   since; any beyond 4 are named in a warning, never dropped silently. A switch to a model without images is refused
-  while a queued message with images still waits for Pi. The protocol `send` op gains optional `images`; chat items gain `images`.
+  while a queued message with images still waits for Pi. A picture under 320 px that needs converting (an oversized GIF) is
+  converted to JPEG instead of refused. The protocol `send` op gains optional `images`; chat items gain `images`.
 - `show_image(path)`, with the coding tools: Pi shows the user an existing PNG, JPEG, GIF or WebP file (a browser
   screenshot, a picture on disk; at most 2.25 MiB) inline in the chat; tap to enlarge. It never creates images.
   Screenshots other tools return now show inside their fold. The terminal shows an `[image]` marker.
