@@ -1,10 +1,10 @@
 // Wire protocol v3: every message between the server (src/server/) and its clients (src/client/, src/web/).
 // docs/protocol.md is the prose spec; this file is its types and constants. Shared by Node and the browser, so it
 // holds plain types and constants only: no Node or DOM imports, and no runtime imports at all.
-import type { ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+import type { ChatImage, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult } from './machines.ts';
 
-export type { AgentStatus, ChatItem, MemoryStats, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+export type { AgentStatus, ChatImage, ChatItem, MemoryStats, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
 
 /** Pi's feed, open on every connection from `ready` on. Agent feeds get their id from `feed.open`. */
 export const ROOT_FEED = 'root';
@@ -103,9 +103,16 @@ export interface Ops {
   /**
    * Sends text to Pi: starts a run, or follows up the running one (`steer`: steers it, between its steps). With
    * `requestId`, a repeat of the same id is admitted once (pi-durable's submission dedup), so a client may resend
-   * after losing the `res` to a reconnect.
+   * after losing the `res` to a reconnect. `images` (images.ts IMAGE_LIMITS) go to the model with the text, which may
+   * then be empty; `failed` when Pi's model takes no images, `bad_request` for an image of the wrong type or size.
    */
-  readonly send: { readonly params: { readonly text: string; readonly requestId?: string; readonly steer?: boolean; readonly target?: MachineTarget }; readonly result: null };
+  readonly send: {
+    readonly params: {
+      readonly text: string; readonly requestId?: string; readonly steer?: boolean; readonly target?: MachineTarget;
+      readonly images?: readonly ChatImage[];
+    };
+    readonly result: null;
+  };
   readonly 'machine.register': { readonly params: { readonly registration: MachineRegistration }; readonly result: null };
   readonly 'machine.set': { readonly params: { readonly enabled: boolean; readonly confirm?: 'enable-tools' }; readonly result: null };
   readonly 'machine.list': { readonly params: NoParams; readonly result: { readonly machines: readonly MachineRegistration[] } };

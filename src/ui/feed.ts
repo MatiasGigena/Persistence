@@ -8,7 +8,7 @@ import type {
 } from '@earendil-works/pi-durable';
 import { MESSAGE_KIND, REPORT_KIND } from '../agents/index.ts';
 import { isRecord } from '../host/config.ts';
-import type { ChatFeed, ChatItem } from './types.ts';
+import type { ChatFeed, ChatImage, ChatItem } from './types.ts';
 
 /** Items kept per feed: the newest ones. */
 export const CAP = 200;
@@ -31,11 +31,22 @@ const liveBlock = (block: Block): LiveBlock => block.type === 'toolCall'
   ? { kind: 'tool', id: block.id, name: block.name, args: block.arguments }
   : block.type === 'thinking' ? { kind: 'thinking', text: block.thinking } : { kind: 'text', text: block.text };
 
-/** Text blocks joined; images as a marker. */
+/** Text blocks joined; images are `imagesOf`'s. */
 function textOf(content: Message['content']): string {
   if (typeof content === 'string') return content;
-  return content.map(block => block.type === 'text' ? block.text : block.type === 'image' ? '[image]' : '').join('');
+  return content.map(block => block.type === 'text' ? block.text : '').join('');
 }
+
+/** Image blocks as ChatImages, or undefined for none: an item without images has no `images` field. */
+function imagesOf(content: Message['content']): readonly ChatImage[] | undefined {
+  if (typeof content === 'string') return undefined;
+  const images = content.flatMap(block => block.type === 'image' ? [{ mimeType: block.mimeType, data: block.data }] : []);
+  return images.length ? images : undefined;
+}
+
+/** `item` with `images` when there are any. */
+const withImages = <T extends object>(item: T, images: readonly ChatImage[] | undefined): T =>
+  images === undefined ? item : { ...item, images };
 
 /** `value` with `delta` appended to the string at `path` (a streamed tool argument); anything else unchanged. */
 function appendAt(value: unknown, path: readonly (string | number)[], delta: string): unknown {
@@ -201,11 +212,11 @@ export class ConversationFeed implements ChatFeed {
     if (report) return this.push({ kind: 'report', id: `e${entry.id}`, ...report });
     (entry.model ?? []).forEach((message, m) => {
       const id = m === 0 ? `e${entry.id}` : `e${entry.id}.${m}`;
-      if (message.role === 'user') this.push({ kind: 'user', id, text: textOf(message.content) });
+      if (message.role === 'user') this.push(withImages({ kind: 'user', id, text: textOf(message.content) }, imagesOf(message.content)));
       else if (message.role === 'toolResult') {
-        this.patchTool(message.toolCallId, message.toolName, {
-          output: textOf(message.content), status: message.isError ? 'error' : 'done',
-        });
+        this.patchTool(message.toolCallId, message.toolName, withImages({
+          output: textOf(message.content), status: message.isError ? 'error' as const : 'done' as const,
+        }, imagesOf(message.content)));
       } else if (message.role === 'assistant') {
         const key = this.partial?.key ?? id;
         this.partial = undefined;
@@ -309,11 +320,21 @@ export class ConversationFeed implements ChatFeed {
   }
 }
 
-/** Whether two items show the same: every field is a primitive. */
+/** Whether two items show the same: every field is a primitive, or an `images` list compared image by image. */
 function same(a: ChatItem, b: ChatItem): boolean {
   const left: Record<string, unknown> = a, right: Record<string, unknown> = b;
   const keys = Object.keys(left);
-  return keys.length === Object.keys(right).length && keys.every(key => left[key] === right[key]);
+  return keys.length === Object.keys(right).length && keys.every(key => left[key] === right[key]
+    || (key === 'images' && sameImages(left[key], right[key])));
+}
+
+function sameImages(a: unknown, b: unknown): boolean {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  const x: readonly unknown[] = a, y: readonly unknown[] = b;
+  return x.every((image, k) => {
+    const other = y[k];
+    return isRecord(image) && isRecord(other) && image.mimeType === other.mimeType && image.data === other.data;
+  });
 }
 
 /** `item`, or the equal object shown before it. Items are never mutated: a change is a new object. */

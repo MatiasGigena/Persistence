@@ -430,8 +430,9 @@ Upstream's hosting, billing, devices, computer use, iOS app and chat imports are
 8. **The prompt is upstream's, adapted.** "Unii" becomes "Pi" and the reply kind `unii` becomes `pi`. Dropped: the
    `ai` kind (imported chats), the paragraph on the user's computers (no device tools), and "with its images" after
    `zoom(id, 1)`. Upstream stores each image under `docs/images/` and gives it back on a zoom; this log stores text
-   only, and an image block is logged as `[image]`. Users type text in a terminal, and images come only from tool
-   results on files Pi can read again.
+   only, and an image block is logged as `[image]`. Images come from tool results on files Pi can read again, or
+   from the user's message (pasted in the web app, ADR 0031): those go to the model with the run's message only,
+   also when a huge message goes as its tail.
 9. **No cache marks.** Upstream's `view` sends the view in blocks of `BLOCK = 4` lines and marks the last whole block
    for Anthropic's cache. Through pi-ai 1.3.0 that is impossible: `TextContent` has no cache field, and its Anthropic
    adapter places the breakpoints itself (system prompt, last tool, last user block). So on the Anthropic API each

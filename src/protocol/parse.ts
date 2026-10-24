@@ -3,7 +3,7 @@
 import { ENABLE_TOOLS, ERROR_CODES, LIMITS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
 import type {
-  AgentStatus, AppendField, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
+  AgentStatus, AppendField, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
   PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, SessionStatus, ToolsPolicy, ViewLine,
 } from './messages.ts';
 
@@ -75,14 +75,21 @@ function withOptional<T extends object, K extends string, V>(base: T, key: K, va
 
 // ------------------------------------------------------------------------------------------------ shared shapes
 
+/** An optional `images` list of `{ mimeType, data }`; absent when missing. Types and sizes are the server's check. */
+function optImages(o: Obj): readonly ChatImage[] | undefined {
+  if (o.images === undefined) return undefined;
+  return list(o, 'images', x => { const i = obj(x, 'image'); return { mimeType: str(i, 'mimeType'), data: str(i, 'data') }; });
+}
+
 /** One ChatItem, checked by its kind. */
 export function chatItem(x: unknown): ChatItem {
   const o = obj(x, 'item');
   const kind = o.kind, id = str(o, 'id');
   switch (kind) {
-    case 'user': return { kind, id, text: str(o, 'text') };
+    case 'user': return withOptional({ kind, id, text: str(o, 'text') }, 'images', optImages(o));
     case 'assistant': case 'thinking': return { kind, id, text: str(o, 'text'), streaming: bool(o, 'streaming') };
-    case 'tool': return { kind, id, name: str(o, 'name'), args: str(o, 'args'), output: str(o, 'output'), status: oneOf(o, 'status', TOOL_STATUS) };
+    case 'tool': return withOptional({ kind, id, name: str(o, 'name'), args: str(o, 'args'), output: str(o, 'output'),
+      status: oneOf(o, 'status', TOOL_STATUS) }, 'images', optImages(o));
     case 'report': return { kind, id, from: str(o, 'from'), text: str(o, 'text') };
     case 'notice': return { kind, id, text: str(o, 'text'), level: oneOf(o, 'level', NOTICE_LEVELS) };
     default: throw new Bad(`unknown item kind ${JSON.stringify(kind) ?? 'undefined'}`);
@@ -165,9 +172,9 @@ function toolsPolicy(x: unknown): ToolsPolicy {
 
 /** Each op's request, from its id and raw params. Typed per op, so every op is listed and checked. */
 const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
-  send: (id, p) => ({ t: 'req', id, op: 'send', params: withOptional(withOptional(withOptional({ text: str(p, 'text') },
+  send: (id, p) => ({ t: 'req', id, op: 'send', params: withOptional(withOptional(withOptional(withOptional({ text: str(p, 'text') },
     'requestId', optStr(p, 'requestId')), 'steer', optBool(p, 'steer')), 'target',
-    p.target === undefined ? undefined : machineShape(() => machineTarget(p.target))) }),
+    p.target === undefined ? undefined : machineShape(() => machineTarget(p.target))), 'images', optImages(p)) }),
   'machine.register': (id, p) => ({ t: 'req', id, op: 'machine.register', params: { registration: machineShape(() => machineRegistration(p.registration)) } }),
   'machine.set': (id, p) => ({ t: 'req', id, op: 'machine.set', params: withOptional({ enabled: bool(p, 'enabled') }, 'confirm',
     p.confirm === undefined ? undefined : oneOf(p, 'confirm', CONFIRMS)) }),

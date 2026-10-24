@@ -122,6 +122,20 @@ test('feed changes go as item ops within flushMs: puts with before, appends, the
   assert.equal(last(link)?.t, 'snapshot');
 });
 
+test('send with images: an image alone is a message; wrong types, fake bytes and too many are bad_request', async t => {
+  const { hub, session, connect, request } = setup(t);
+  hub.start(session);
+  const link = connect();
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).toString('base64');
+  const imaged = await request(link, 'send', { text: '', images: [{ mimeType: 'image/png', data: png }] });
+  assert.ok(imaged?.t === 'res' && imaged.ok, 'an image alone is a message');
+  assert.equal(session.calls.at(-1), 'send  - images:image/png');
+  const fake = await request(link, 'send', { text: 'x', images: [{ mimeType: 'image/jpeg', data: png }] });
+  assert.equal(fake?.t === 'res' && !fake.ok && fake.error.code, 'bad_request');
+  const many = await request(link, 'send', { text: 'x', images: Array.from({ length: 5 }, () => ({ mimeType: 'image/png', data: png })) });
+  assert.equal(many?.t === 'res' && !many.ok && many.error.code, 'bad_request');
+});
+
 test('requests: send with requestId, errors, unknown ops, malformed messages, ping', async t => {
   const { hub, session, connect, request } = setup(t);
   hub.start(session);

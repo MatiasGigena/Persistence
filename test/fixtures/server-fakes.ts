@@ -51,7 +51,10 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
     get chat() { return this.root; },
     status: () => status,
     onStatus(listener) { statusListeners.add(listener); return () => { statusListeners.delete(listener); }; },
-    send(text, requestId, steer) { calls.push(`send ${text} ${requestId ?? '-'}${steer ? ' steer' : ''}`); return Promise.resolve(); },
+    send(text, requestId, steer, _target, images) {
+      calls.push(`send ${text} ${requestId ?? '-'}${steer ? ' steer' : ''}${images?.length ? ` images:${images.map(i => i.mimeType).join(',')}` : ''}`);
+      return Promise.resolve();
+    },
     abort() { calls.push('abort'); return Promise.resolve(); },
     stopAgents(name) { calls.push(`stop ${name ?? '*'}`); return Promise.resolve(name ? [name] : []); },
     agentChat(name) {

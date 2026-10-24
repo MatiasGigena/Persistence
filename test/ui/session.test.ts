@@ -125,6 +125,31 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     assert.equal(tools.status().toolsEnabled, true);
   });
 
+  test('images go to the model with the text and show on the user item; a model without images refuses', async (t) => {
+    const image = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUg==' };
+    let seen: TranscriptContext | undefined;
+    const { session } = await open(t, [(context) => { seen = context; return fauxAssistantMessage('a screenshot'); }]);
+    await session.send('what is this?', undefined, false, undefined, [image]);
+    const user = await until(() => find(session.chat, 'user'), 'the user item', session.chat);
+    assert.deepEqual(user, { kind: 'user', id: user.id, text: 'what is this?', images: [image] });
+    await until(() => find(session.chat, 'assistant', item => item.text === 'a screenshot'), 'the answer', session.chat);
+    const last = seen?.messages.findLast(each => each.role === 'user');
+    assert.ok(last && typeof last.content !== 'string');
+    assert.deepEqual(last.content.filter(block => block.type === 'image'), [{ type: 'image', ...image }]);
+    assert.match(lastUserText(seen ?? { messages: [] } as unknown as TranscriptContext), /what is this\?/);
+
+    const blind = fauxProvider({ models: [{ id: 'blind', input: ['text'] }] });
+    const models = createModels();
+    models.setProvider(blind.provider);
+    const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-ui-'));
+    const model = { provider: blind.getModel().provider, modelId: 'blind' };
+    const instance = await openInstance({ databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools: false, models, model });
+    const other = await createUiSession(instance, { model, thinkingLevel: 'high', allowTools: false }, { refreshMs: 50 });
+    t.after(async () => { await other.close(); await instance.close(); await rm(cwd, { recursive: true, force: true }); });
+    await assert.rejects(other.send('look', undefined, false, undefined, [image]), /does not take images; nothing was sent/);
+    assert.equal(find(other.chat, 'user'), undefined, 'nothing was admitted');
+  });
+
   test('an answer with nothing to show ends with a notice, not in silence', async (t) => {
     const { session } = await open(t, [fauxAssistantMessage([fauxThinking('nothing to add')])]);
     await session.send('anything?');

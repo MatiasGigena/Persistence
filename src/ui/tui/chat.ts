@@ -135,8 +135,12 @@ class ItemBlock implements Component {
     const { theme } = this.state;
     const item = this.item;
     switch (item.kind) {
-      case 'user':
-        return gutter(theme.accent('❯'), wrap(clean(item.text).trimEnd(), width - 2));
+      case 'user': {
+        // Images (pasted in the web app, ADR 0031) cannot show in a terminal: a marker each.
+        const marks = (item.images ?? []).map(() => theme.dim('[image]')).join(' ');
+        const text = [clean(item.text).trimEnd(), marks].filter(Boolean).join('\n');
+        return gutter(theme.accent('❯'), wrap(text, width - 2));
+      }
       case 'assistant': {
         const text = item.text.trim();
         if (!text) return [];
@@ -182,7 +186,8 @@ class ItemBlock implements Component {
     const room = width - visibleWidth(head) - 1;
     const summary = toolSummary(item.name, item.args);
     const header = `${head}${room > 1 && summary ? ` ${theme.dim(truncateToWidth(summary, room, '…'))}` : ''}`;
-    const output = clean(item.output).replace(/\s+$/, '');
+    const images = item.images?.length ? `\n[${item.images.length === 1 ? 'image' : `${item.images.length} images`}: see the web app]` : '';
+    const output = (clean(item.output) + images).replace(/\s+$/, '');
     if (!output) return [header];
     const style = item.status === 'error' ? theme.error : theme.dim;
     const lines = output.split('\n');

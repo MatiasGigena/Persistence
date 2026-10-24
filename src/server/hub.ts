@@ -3,6 +3,7 @@
 // push notifier when Pi finishes or an agent reports while no one is looking.
 import { CloseCode, ENABLE_TOOLS, ErrorCode, ROOT_FEED } from '../protocol/messages.ts';
 import type { ChatItem, Device, NoticeLevel, SessionStatus, ToolsPolicy, Welcome } from '../protocol/messages.ts';
+import { IMAGE_LIMITS, imageProblem } from '../protocol/images.ts';
 import { PROTOCOL } from '../protocol/version.ts';
 import type { ChatFeed, UiSession } from '../ui/types.ts';
 import { Connection, OpError } from './connection.ts';
@@ -346,13 +347,18 @@ export class Hub implements PeerHub {
         return null;
       },
       'machine.list': async () => { this.need(); return { machines: this.options.machines?.list() ?? [] }; },
-      send: async ({ text, requestId, steer, target }) => {
-        if (!text.trim()) throw new OpError(ErrorCode.badRequest, 'The message is empty.');
+      send: async ({ text, requestId, steer, target, images }) => {
+        if (!text.trim() && !images?.length) throw new OpError(ErrorCode.badRequest, 'The message is empty.');
+        if (images && images.length > IMAGE_LIMITS.perMessage) {
+          throw new OpError(ErrorCode.badRequest, `At most ${IMAGE_LIMITS.perMessage} images per message.`);
+        }
+        const bad = images?.map(image => imageProblem(image)).find(problem => problem !== undefined);
+        if (bad) throw new OpError(ErrorCode.badRequest, bad);
         if (requestId !== undefined && (requestId.length < 1 || requestId.length > 128)) {
           throw new OpError(ErrorCode.badRequest, 'requestId must be 1 to 128 characters.');
         }
         if (target && !this.options.machines) throw new OpError(ErrorCode.unavailable, 'This server cannot route tools to execution machines; update it first.');
-        try { await this.need().send(text, requestId, steer === true, target); } catch (error) { throw failed(error); }
+        try { await this.need().send(text, requestId, steer === true, target, images?.length ? images : undefined); } catch (error) { throw failed(error); }
         return null;
       },
       abort: async () => { await this.need().abort(); return null; },

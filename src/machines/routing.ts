@@ -6,7 +6,8 @@ import type {
   ConversationId, Extension, Harness, JsonObject, Submission, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import type { MachineTarget } from '../ui/types.ts';
+import { userInput } from '../runtime/models.ts';
+import type { ChatImage, MachineTarget } from '../ui/types.ts';
 
 /** The dispatcher must wait for this destination to reconnect, never execute on another machine. */
 export interface RoutingDispatcher {
@@ -51,7 +52,8 @@ function requireSame(first: MachineTarget, second: MachineTarget): void {
 export interface MachineRouting {
   readonly tools: Extension;
   initialize(context: Context): Promise<void>;
-  submit(text: string, requestId: string | undefined, target: MachineTarget | undefined, context: Context, steer?: boolean): Promise<Submission>;
+  submit(text: string, requestId: string | undefined, target: MachineTarget | undefined, context: Context, steer?: boolean,
+    images?: readonly ChatImage[]): Promise<Submission>;
   /** Preserve local tool implementations and protections, but explicitly refuse unsupported remote network kits. */
   localOnly(extension: Extension): Extension;
   /** Called inside the spawning tool's once-only transaction, immediately after creating the child. */
@@ -175,7 +177,7 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
         },
       })),
     }),
-    async submit(text, requestId = randomUUID(), target = host, context, steer) {
+    async submit(text, requestId = randomUUID(), target = host, context, steer, images) {
       if (!target.machineId || !target.cwd || !target.label) throw new Error('Invalid machine destination.');
       if (target.machineId === 'server') requireSame(host, target);
       const pinned = detached(target);
@@ -196,7 +198,7 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
       // The public admission API cannot atomically compare a busy run's target and steer it. A separate
       // snapshot check would race another run's admission, so routed follow-ups and steering both reject.
       try {
-        return await root.submit({ type: 'input', content: text, requestId, whenBusy: 'reject' }, context);
+        return await root.submit({ type: 'input', content: userInput(text, images), requestId, whenBusy: 'reject' }, context);
       } catch (error) {
         if (steer && error instanceof ConversationBusy) {
           throw new Error('Cannot steer a busy routed run; wait for it to finish and resend to the same machine.', { cause: error });

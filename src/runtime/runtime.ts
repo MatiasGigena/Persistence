@@ -30,7 +30,8 @@ import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { Access, CatalogModels } from './models.ts';
 import { createMachineRouting } from '../machines/routing.ts';
 import type { RoutingDispatcher } from '../machines/routing.ts';
-import type { MachineTarget } from '../ui/types.ts';
+import type { ChatImage, MachineTarget } from '../ui/types.ts';
+import { userInput } from './models.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;
@@ -92,7 +93,8 @@ export interface Instance {
   /** The tool kits standing agents draw on, by kit (ADR 0027). */
   readonly kits: ToolKits;
   /** Admit UI input, pinning its destination before submission when routing is enabled. */
-  submit(text: string, requestId?: string, target?: MachineTarget, steer?: boolean): Promise<Submission>;
+  /** `images` go with the text as one user message; callers check the model takes images (`imagesProblem`). */
+  submit(text: string, requestId?: string, target?: MachineTarget, steer?: boolean, images?: readonly ChatImage[]): Promise<Submission>;
   /**
    * Switch Pi, its ad-hoc agents, and the memory's compaction model (its provider's cheap one) to `model`, from their
    * next request; standing agents and their subs keep the roster's. Checks nothing: callers validate first. Rejects on
@@ -426,11 +428,11 @@ export async function openInstance({
       memory,
       models,
       kits,
-      submit(text, requestId, target, steer) {
+      submit(text, requestId, target, steer, images) {
         if (!configureAgent) return Promise.reject(new Error('An inspection cannot submit input.'));
-        if (routing) return routing.submit(text, requestId, target, context, steer);
+        if (routing) return routing.submit(text, requestId, target, context, steer, images);
         if (target !== undefined) return Promise.reject(new Error('Machine routing is not enabled.'));
-        return root.submit({ type: 'input', content: text, ...requestId === undefined ? {} : { requestId },
+        return root.submit({ type: 'input', content: userInput(text, images), ...requestId === undefined ? {} : { requestId },
           ...steer ? { whenBusy: 'steer' } : {} }, context);
       },
       async setModel(next) {

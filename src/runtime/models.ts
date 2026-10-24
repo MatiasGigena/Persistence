@@ -2,10 +2,11 @@
 // each provider's credentials checked (and the anthropic subscription refused) the same way at launch and in session.
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
-import type { ModelRef } from '@earendil-works/pi-durable';
+import type { ModelRef, UserInput } from '@earendil-works/pi-durable';
 import { THINKING } from '../host/config.ts';
 import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
+import type { ChatImage } from '../ui/types.ts';
 
 /** What the listing and the checks read of pi-ai's Models (a pi-coding-agent ModelRuntime is one). */
 export type CatalogModels = Pick<Models, 'getModels' | 'getModel' | 'checkAuth' | 'getAuth'>;
@@ -75,6 +76,22 @@ export function accessProblem({ provider, modelId }: ModelRef, access: Access, a
     case 'timeout': return `Checking the credentials for ${provider} timed out.`;
     case 'error': return `Checking the credentials for ${provider} failed: ${access.detail}`;
   }
+}
+
+/** A user message's content: the text alone, or a text block (when not empty) and then the images. */
+export function userInput(text: string, images: readonly ChatImage[] = []): UserInput {
+  if (!images.length) return text;
+  return [...text ? [{ type: 'text' as const, text }] : [], ...images.map(({ mimeType, data }) => ({ type: 'image' as const, mimeType, data }))];
+}
+
+/**
+ * Why `model` cannot take images, or undefined when it can. pi-ai would otherwise replace them with a text note
+ * (`downgradeUnsupportedImages`), so the model would answer about images it never saw.
+ */
+export function imagesProblem(models: Pick<Models, 'getModel'>, { provider, modelId }: ModelRef): string | undefined {
+  const found = models.getModel(provider, modelId);
+  if (found?.input.includes('image')) return undefined;
+  return `${provider}/${modelId} does not take images; nothing was sent. Pick a model that does with /model, or send text only.`;
 }
 
 /** Why `model` is not in the catalog, or undefined when it is. */

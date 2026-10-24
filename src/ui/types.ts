@@ -2,9 +2,18 @@
 // over the wire protocol (src/protocol/) the attached TUI and the web app. The session knows pi-durable, memory and
 // agents; clients know only these types. This file imports nothing, so the browser can type-check against it.
 
+/**
+ * An image a message or tool result carries: base64 `data` of a `mimeType` in IMAGE_TYPES (src/protocol/images.ts).
+ * On the wire, `data` is empty when the image is too large to send (LIMITS.image); clients then show a placeholder.
+ */
+export interface ChatImage {
+  readonly mimeType: string;
+  readonly data: string;
+}
+
 /** One block of a conversation, in order. Streaming blocks are updated in place by `id`. */
 export type ChatItem =
-  | { readonly kind: 'user'; readonly id: string; readonly text: string }
+  | { readonly kind: 'user'; readonly id: string; readonly text: string; readonly images?: readonly ChatImage[] }
   | { readonly kind: 'assistant'; readonly id: string; readonly text: string; readonly streaming: boolean }
   | { readonly kind: 'thinking'; readonly id: string; readonly text: string; readonly streaming: boolean }
   | {
@@ -13,6 +22,8 @@ export type ChatItem =
     readonly args: string;
     readonly output: string;
     readonly status: 'running' | 'done' | 'error';
+    /** Images of the result: what the tool returned (read, browser_screenshot) or showed the user (show_image). */
+    readonly images?: readonly ChatImage[];
   }
   /** An agent's report or message, "[Name] text", reaching this conversation. */
   | { readonly kind: 'report'; readonly id: string; readonly from: string; readonly text: string }
@@ -108,9 +119,10 @@ export interface UiSession {
   /**
    * Sends text to Pi: starts a run, or follows up the running one; with `steer`, a busy Pi gets it between its steps
    * instead of after its run. With `requestId`, a repeat of the same id is admitted once (pi-durable's submission
-   * dedup), so a client may resend after losing the answer to a reconnect.
+   * dedup), so a client may resend after losing the answer to a reconnect. `images` go to the model with the text;
+   * the text may then be empty. Rejects when Pi's model takes no images, rather than dropping them.
    */
-  send(text: string, requestId?: string, steer?: boolean, target?: MachineTarget): Promise<void>;
+  send(text: string, requestId?: string, steer?: boolean, target?: MachineTarget, images?: readonly ChatImage[]): Promise<void>;
   /** Interrupts Pi's running work (Esc). Durable work stays resumable. */
   abort(): Promise<void>;
   /**

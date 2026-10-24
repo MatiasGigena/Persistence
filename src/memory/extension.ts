@@ -301,7 +301,9 @@ export function createUniiExtension({
       : { ...m, content: m.content.map(b => b.type === 'text' && b.text.length > CAP ? { ...b, text: clip(b.text) } : b) });
     const head = steps[0];
     const { blocks, message } = frozen;
-    if (head?.role === 'user') steps[0] = { ...head, content: [...blocks, ...headed(message ?? head.content)] };
+    // A huge input goes as its tail (text); its images still go with it, since the log keeps only `[image]`.
+    if (head?.role === 'user') steps[0] = { ...head, content: [...blocks, ...headed(message === undefined ? head.content : [
+      { type: 'text', text: message }, ...blocksOf(head.content).filter(b => b.type === 'image')])] };
     else steps.unshift({ role: 'user', content: blocks, timestamp: now().getTime() });
     const system = getCurrentSystemMessage(messages);
     return { messages: [...(system ? [system] : []), ...steps] };

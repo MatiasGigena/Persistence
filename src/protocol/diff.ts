@@ -1,7 +1,8 @@
 // The server's side of feed sync: what changed between the items a peer was sent and the current ones, as item ops
 // (messages.ts ItemOp), and the clipping that keeps a huge tool output off the wire. Shared by Node and the browser.
+import { wireImage } from './images.ts';
 import { LIMITS } from './messages.ts';
-import type { AppendField, ChatItem, ItemOp } from './messages.ts';
+import type { AppendField, ChatImage, ChatItem, ItemOp } from './messages.ts';
 
 /** Room kept for the marker `clip` puts between the head and the tail. */
 const MARK_ROOM = 64;
@@ -21,12 +22,37 @@ export function clip(text: string, max: number = LIMITS.clip): string {
   return `${text.slice(0, head)}\n… [${tail - head} characters clipped] …\n${text.slice(tail)}`;
 }
 
-/** The item as it goes on the wire: a tool's `output` and `args` clipped. The same object when nothing is clipped. */
+/** Wire forms of image lists, so an unchanged list keeps one wire array and `change` sees no change. */
+const wired = new WeakMap<readonly ChatImage[], readonly ChatImage[]>();
+
+/** `images` as they go on the wire (images.ts `wireImage`): the same array when every image fits. */
+function wireImages(images: readonly ChatImage[]): readonly ChatImage[] {
+  const known = wired.get(images);
+  if (known) return known;
+  const each = images.map(wireImage);
+  const out = each.every((image, k) => image === images[k]) ? images : each;
+  wired.set(images, out);
+  return out;
+}
+
+/**
+ * The item as it goes on the wire: a tool's `output` and `args` clipped, and images too large for a frame sent
+ * without their data. The same object when nothing changes.
+ */
 export function wireItem(item: ChatItem): ChatItem {
+  if (item.kind === 'user') {
+    const images = item.images && wireImages(item.images);
+    return images === item.images ? item : { ...item, images };
+  }
   if (item.kind !== 'tool') return item;
   const output = clip(item.output), args = clip(item.args);
-  return output === item.output && args === item.args ? item : { ...item, output, args };
+  const images = item.images && wireImages(item.images);
+  return output === item.output && args === item.args && images === item.images ? item
+    : withImages({ ...item, output, args }, images);
 }
+
+const withImages = <T extends object>(item: T, images: readonly ChatImage[] | undefined): T =>
+  images === undefined ? item : { ...item, images };
 
 /** The ids of `items` in order, or undefined when an id repeats. */
 function ids(items: readonly ChatItem[]): Map<string, ChatItem> | undefined {
@@ -44,7 +70,7 @@ const isAppendField = (key: string): key is AppendField => APPENDABLE.has(key);
 /** The ops that turn `a` into `b` (same id): none, appends when only text fields grew, else one put. */
 function change(a: ChatItem, b: ChatItem): ItemOp[] {
   if (a === b) return [];
-  // Every ChatItem field is a primitive, so a shallow look sees everything.
+  // Every ChatItem field is a primitive or an `images` list that is never mutated, so a shallow look sees everything.
   const x: Readonly<Record<string, unknown>> = a, y: Readonly<Record<string, unknown>> = b;
   const keys = Object.keys(y);
   if (keys.length !== Object.keys(x).length) return [{ op: 'put', item: b }];

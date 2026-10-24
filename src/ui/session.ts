@@ -5,7 +5,7 @@ import { listAgents, stopAgents } from '../agents/index.ts';
 import { errorMessage, isThinkingLevel, updateSettings } from '../host/config.ts';
 import type { Config } from '../host/config.ts';
 import { start } from '../memory/view.ts';
-import { modelChooser, thinkingLevels } from '../runtime/models.ts';
+import { imagesProblem, modelChooser, thinkingLevels } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
 import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from './types.ts';
@@ -123,9 +123,13 @@ export async function createUiSession(
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    async send(text, requestId, steer, target) {
+    async send(text, requestId, steer, target, images) {
+      if (images?.length) {
+        const problem = imagesProblem(instance.models, currentModel());
+        if (problem) throw new Error(problem);
+      }
       // Standalone keeps follow-up/steering; routed admission pins the target and explicitly rejects busy runs.
-      await instance.submit(text, requestId, target, steer);
+      await instance.submit(text, requestId, target, steer, images);
     },
     async abort() {
       // Pi's current run only: queued inputs are withdrawn; agents' background deliveries keep going.

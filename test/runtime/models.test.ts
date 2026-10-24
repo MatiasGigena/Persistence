@@ -12,7 +12,7 @@ import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { claudeCliProvider } from '../../src/providers/claude-cli.ts';
-import { modelChooser } from '../../src/runtime/models.ts';
+import { imagesProblem, modelChooser, userInput } from '../../src/runtime/models.ts';
 import type { ModelOption } from '../../src/runtime/models.ts';
 
 const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.ts', import.meta.url));
@@ -95,5 +95,24 @@ describe('model chooser', { timeout: 30_000 }, () => {
     models.setProvider({ ...faux.provider, auth: { apiKey: { name: 'Hangs', resolve: () => new Promise(() => {}) } } });
     const list = await modelChooser(models, { timeoutMs: 50 }).list({ provider: 'faux', modelId: 'slow' });
     assert.deepEqual(list, [{ provider: 'faux', id: 'slow', name: 'slow', available: false, note: 'credential check timed out' }]);
+  });
+});
+
+describe('images in a user message (ADR 0031)', () => {
+  test('userInput: text alone stays a string; with images, a text block (when any) and then the images', () => {
+    const image = { mimeType: 'image/png', data: 'iVBORw0KGgo=' };
+    assert.equal(userInput('hi'), 'hi');
+    assert.deepEqual(userInput('hi', [image]), [{ type: 'text', text: 'hi' }, { type: 'image', ...image }]);
+    assert.deepEqual(userInput('', [image]), [{ type: 'image', ...image }]);
+  });
+
+  test('imagesProblem: none for a model that takes images; a clear error for one that does not', () => {
+    const faux = fauxProvider({ models: [{ id: 'sees', input: ['text', 'image'] }, { id: 'blind', input: ['text'] }] });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const provider = faux.getModel().provider;
+    assert.equal(imagesProblem(models, { provider, modelId: 'sees' }), undefined);
+    assert.match(imagesProblem(models, { provider, modelId: 'blind' }) ?? '', /does not take images; nothing was sent/);
+    assert.match(imagesProblem(models, { provider, modelId: 'gone' }) ?? '', /does not take images/);
   });
 });
