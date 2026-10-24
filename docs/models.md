@@ -145,12 +145,12 @@ launch, inspection included, because persisted agents can name `claude-cli` mode
 CLI process:
 
 ```
-claude -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence
+claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --no-session-persistence
        --tools '' --strict-mcp-config [--mcp-config '{"mcpServers":{"pi":…}}'] --disable-slash-commands
        --setting-sources '' --settings '{"autoMemoryEnabled":false,"disableAllHooks":true}'
        --model haiku --max-turns 1 --system-prompt-file <dir>/system.md --thinking-display summarized
        [--effort high]
-       < prompt on stdin
+       < one stream-json user message on stdin (--input-format stream-json)
 ```
 
 - **Claude only proposes tool calls.** Built-in tools are off (`--tools ''`). Pi's current tools are listed by a stub
@@ -177,8 +177,10 @@ claude -p --output-format stream-json --verbose --include-partial-messages --no-
   <the latest user message, or "Continue from the last tool result.">
   ```
 
-  A lone user message, the usual first request of a run, is sent unchanged. Thinking is not replayed. Images become
-  `[image: <type>, not shown]`; the models declare text input only.
+  A lone user message, the usual first request of a run, is sent unchanged. Thinking is not replayed. This text goes
+  on stdin as one stream-json user message (`--input-format stream-json`, `renderInput`); the latest user message's
+  images go before it in the same message as base64 image blocks, so the models declare text and image input (ADR
+  0031). Images in earlier turns become `[image: <type>, not shown]` in the transcript.
 - **Effort.** pi-ai's reasoning level becomes `--effort`: minimal and low → `low`, then `medium`, `high`, `xhigh`,
   `max`. Thinking cannot be turned off; without a level the CLI uses its default.
 - **Thinking display.** Opus omits its thinking from the stream by default: the blocks arrive empty, so a long

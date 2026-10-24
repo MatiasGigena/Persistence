@@ -18,9 +18,13 @@ them. Images here are always screenshots or existing files: Persistence does not
   Each must be PNG, JPEG, GIF or WebP, its magic bytes must match its `mimeType`, and it may be at most
   `IMAGE_LIMITS.sendBytes` (900 KiB of base64), so four images fit in one 4 MiB frame. Anything else gets
   `bad_request`. The session adds them to the user message (`userInput`, `src/runtime/models.ts`).
-- **A model without images refuses.** When Pi's model does not list `image` as an input (claude-cli, for example),
+- **A model without images refuses.** When Pi's model does not list `image` as an input,
   `send` fails with a clear error and nothing is admitted. Without this check, pi-ai would quietly replace the images
   with a text note, and the model would answer about images it never saw.
+- **claude-cli takes images.** Its requests feed stdin with `--input-format stream-json`: one user message line
+  whose content is the latest user message's images, as Anthropic base64 image blocks, then the prompt text
+  (`renderInput`, `src/providers/claude-cli.ts`). Images in earlier turns stay `[image: <type>, not shown]` in the
+  folded transcript. Verified by hand on CLI 2.1.304: a solid green PNG sent this way was answered "green".
 - **The web composer** has an attach button (`<input type="file" accept="image/*" multiple>`, which opens the photo
   picker on a phone) and also accepts paste and drop. Each attached image shows as a thumbnail with a remove button.
   An image that is too large, has too many pixels or uses another type (HEIC) is drawn again on a canvas as JPEG,

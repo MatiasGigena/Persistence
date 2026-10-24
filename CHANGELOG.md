@@ -9,8 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Images in the chat (ADR 0031). In the web app, paste or drop a screenshot into the composer, or pick one with the
   new image button (the photo picker on a phone): it shows as a thumbnail with a remove button and goes to Pi's model
-  with the message. At most 4 per message; large ones are scaled down. A model that takes no images (claude-cli)
-  refuses the send with a clear error. A send that fails puts its images back into the composer beside any attached
+  with the message. At most 4 per message; large ones are scaled down. claude-cli models take them too: the
+  latest message's images go to the CLI over `--input-format stream-json`. A model that takes no images refuses the
+  send with a clear error. A send that fails puts its images back into the composer beside any attached
   since; any beyond 4 are named in a warning, never dropped silently. A switch to a model without images is refused
   while a queued message with images still waits for Pi. A picture under 320 px that needs converting (an oversized GIF) is
   converted to JPEG instead of refused. The protocol `send` op gains optional `images`; chat items gain `images`.
