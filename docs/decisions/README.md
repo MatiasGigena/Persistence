@@ -34,6 +34,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0028](0028-remote-machines-over-ssh.md) | One central chat, workstation tools over native SSH (extends 0018, 0025, 0027) |
 | [0029](0029-reviewer-autoreview-p2.md) | Reviewer always uses the installed autoreview skill through a dedicated P2 tool |
 | [0030](0030-pi-ssh-agent.md) | bash sees Pi's own SSH agent, never the user's (amends 0025) |
+| [0031](0031-chat-images.md) | Images in the chat: pasted screenshots in, existing image files out |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".

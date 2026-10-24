@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Images in the chat (ADR 0031). In the web app, paste or drop a screenshot into the composer, or pick one with the
+  new image button (the photo picker on a phone): it shows as a thumbnail with a remove button and goes to Pi's model
+  with the message. At most 4 per message; large ones are scaled down. A model that takes no images (claude-cli)
+  refuses the send with a clear error. The protocol `send` op gains optional `images`; chat items gain `images`.
+- `show_image(path)`, with the coding tools: Pi shows the user an existing PNG, JPEG, GIF or WebP file (a browser
+  screenshot, a picture on disk; at most 2.25 MiB) inline in the chat; tap to enlarge. It never creates images.
+  Screenshots other tools return now show inside their fold. The terminal shows an `[image]` marker.
+
 - `delete_agent(name)`, Pi only: removes an idle, non-standing agent and its sub agents from the registry, so they
   leave `list_agents`, the agents panel and every status. Refused for standing agents and while busy or with a message
   on its way (`stop_agent` first). Chats are kept in the database and stay readable with `zoom("Name")`; the name is

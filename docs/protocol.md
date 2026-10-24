@@ -172,14 +172,15 @@ stops them; the checks hold only together. The VPS is assumed to have one user.
 | `bye` | `code: number`, `reason: string` | The last message before the server ends the connection; see [Close codes](#close-codes). |
 
 `SessionStatus`, `AgentStatus`, `MemoryStats`, `ChatItem`, `ViewLine` and `ModelChoice` are the types of
-[src/ui/types.ts](../src/ui/types.ts). JSON drops `undefined`: a missing `status.memory` or `memory.lastError`
+[src/ui/types.ts](../src/ui/types.ts). `user` and `tool` items may carry `images: {mimeType, data}[]`; an image larger
+than `IMAGE_LIMITS.wireBytes` goes with empty `data`, and clients show a placeholder. JSON drops `undefined`: a missing `status.memory` or `memory.lastError`
 reads as `undefined`, and `memory` may also be `null`.
 
 ## Ops
 
 | Op | Params | Result | Peers | Errors besides `bad_request` |
 |---|---|---|---|---|
-| `send` | `text`, `requestId?`, `steer?`, `target?: MachineTarget` | `null` | both | `unavailable`, `failed` |
+| `send` | `text`, `requestId?`, `steer?`, `target?: MachineTarget`, `images?: {mimeType, data}[]` | `null` | both | `unavailable`, `failed` |
 | `machine.register` | `registration: {target: MachineTarget, enabled: boolean}` | `null` | socket | `forbidden`, `unavailable`, `failed` |
 | `machine.set` | `enabled: boolean`, `confirm?: 'enable-tools'` | `null` | socket | `forbidden`, `unavailable`, `failed` |
 | `machine.list` | — | `{machines: MachineRegistration[]}` | both | |
@@ -206,7 +207,10 @@ Times are milliseconds since the epoch. Every op answers `bad_request` to malfor
 server does not know it, and `unavailable` while the server shuts down. Each maps to one `UiSession` method:
 
 - **`send`** is `UiSession.send`: admitted durably, answered when admitted, not when Pi answers (the feed shows
-  that). Text that is empty after trimming is `bad_request`. With `requestId` (1 to 128 characters, unique per
+  that). Text that is empty after trimming is `bad_request`, unless `images` are sent. `images` (ADR 0031) are base64
+  PNG, JPEG, GIF or WebP, at most 4, each at most `IMAGE_LIMITS.sendBytes` (900 KiB of base64) with magic bytes
+  matching its `mimeType` (src/protocol/images.ts); anything else is `bad_request`. When Pi's model takes no images,
+  the send is `failed` and nothing is admitted. With `requestId` (1 to 128 characters, unique per
   message: e.g. `<client>-<random>-<counter>`), the server submits with pi-durable's request id, so a repeat is
   admitted once. A client resends a `send` whose `res` a dropped link lost only with its `requestId`. An idle Pi
   starts a run. Protocol 3's machine-routed admission rejects a busy-root user send (including `steer: true`)
