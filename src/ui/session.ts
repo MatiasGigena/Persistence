@@ -1,4 +1,5 @@
 // The host's state as the UI sees it (src/ui/types.ts): Pi's chat, status, memory view, and agents.
+import { InboxDoc } from '@earendil-works/pi-durable';
 import type { AgentEvent, AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { listAgents, stopAgents } from '../agents/index.ts';
@@ -65,6 +66,12 @@ export async function createUiSession(
    */
   const admitted = async (requestId: string | undefined): Promise<boolean> => requestId !== undefined
     && await harness.commit(tx => tx.submissionByRequest(root.id, requestId), context) !== undefined;
+  /** Whether Pi's inbox holds an unconsumed input with an image. */
+  const queuedImages = async (): Promise<boolean> => {
+    const inbox = await harness.snapshot(InboxDoc, root.id, context);
+    return (inbox?.items ?? []).some(item => item.mode !== 'write' && Array.isArray(item.content)
+      && item.content.some(part => part.type === 'image'));
+  };
   const currentModel = (): ModelRef => chosenModel ?? chat.state().agent.model ?? config.model;
   let current = compute();
   let shown = JSON.stringify(current);
@@ -167,6 +174,11 @@ export async function createUiSession(
       return serially(async () => {
         const model = { provider, modelId: id };
         await chooser.check(model);
+        // Unrouted input is acknowledged when queued; a switch to a model without images before Pi reads it would
+        // have its images downgraded to a text note, so refuse the switch until queued images are consumed.
+        if (imagesProblem(instance.models, model) && await queuedImages()) {
+          throw new Error(`A queued message has images ${provider}/${id} cannot take; switch after Pi reads it, or stop Pi first.`);
+        }
         await instance.setModel(model);
         chosenModel = model;
         refresh();

@@ -454,9 +454,9 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
   });
 
   /** Pi on faux/sees (takes images) beside faux/blind (text only). */
-  async function openSighted(t: TestContext) {
+  async function openSighted(t: TestContext, first?: FauxResponseStep) {
     const faux = fauxProvider({ models: [{ id: 'sees' }, { id: 'blind', input: ['text'] }] });
-    faux.setResponses(Array.from({ length: 10 }, () => fauxAssistantMessage('ok')));
+    faux.setResponses([...first ? [first] : [], ...Array.from({ length: 10 }, () => fauxAssistantMessage('ok'))]);
     const models = createModels();
     models.setProvider(faux.provider);
     const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-sighted-'));
@@ -491,6 +491,23 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     await assert.rejects(sent, /does not take images; nothing was sent/);
     await idle(session);
     assert.equal(users(session), 0);
+  });
+
+  test('a switch to a model without images is refused while a queued message with images waits', async (t) => {
+    let release = (): void => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { session, provider } = await openSighted(t, async () => { await gate; return fauxAssistantMessage('first'); });
+    await session.send('one');
+    await until(() => session.status().busy, 'busy');
+    await session.send('look', 'img-queued', false, undefined, [shot]);
+    await until(() => session.status().queued === 1, 'one queued');
+    await assert.rejects(session.setModel(provider, 'blind'), /queued message has images/);
+    assert.equal(session.status().model, `${provider}/sees`);
+    release();
+    await idle(session);
+    // Consumed: the switch goes through now.
+    await session.setModel(provider, 'blind');
+    assert.equal(session.status().model, `${provider}/blind`);
   });
 
   test('an inspection switches nothing and writes no settings', async (t) => {
