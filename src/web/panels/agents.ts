@@ -1,7 +1,7 @@
 // Agents: the live list from the status, and each agent's conversation as a read-only feed (`feed.open`).
 import { ChatView, el } from '../chat-view.ts';
 import { errorText } from '../format.ts';
-import { renderRows } from './sheet.ts';
+import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 
 export const NO_AGENTS = 'No agents yet. Ask Pi to spawn one.';
@@ -15,8 +15,16 @@ export function agentsView(ctx: PanelContext): View {
       const empty = el('p', 'sheet-note', NO_AGENTS);
       const note = el('p', 'sheet-note', 'Tap an agent to read its conversation.');
       body.append(note, list, empty);
+      // Rows known when the level opens ride in with it; rows that wait for the first status stagger in.
+      let entered = ctx.store.status !== undefined;
       const draw = (): void => {
-        const agents = ctx.store.status?.agents ?? [];
+        const status = ctx.store.status;
+        if (!status) {
+          note.hidden = empty.hidden = true;
+          skeletonRows(list, 3, { mark: true, detail: true });
+          return;
+        }
+        const agents = status.agents;
         empty.hidden = agents.length > 0;
         note.hidden = agents.length === 0;
         renderRows(list, agents.map(agent => ({
@@ -25,13 +33,14 @@ export function agentsView(ctx: PanelContext): View {
           detail: agent.role === 'main' ? `main agent of ${agent.parent}` : `sub agent of ${agent.parent}`,
           aside: agent.busy ? 'busy' : 'idle',
           mark: agent.busy ? 'busy' : 'idle',
-        })), name => ctx.sheet.push(agentChatView(ctx, name)));
+        })), name => ctx.sheet.push(agentChatView(ctx, name)), entered ? undefined : 'top');
+        if (!entered) { entered = true; fadeIn(note); fadeIn(empty); }
       };
       draw();
       // Redraw only when the agents changed, not on every status (busy, memory) update.
-      let shown = JSON.stringify(ctx.store.status?.agents ?? []);
+      let shown = JSON.stringify(ctx.store.status?.agents ?? null);
       unsubscribe = ctx.store.subscribe(() => {
-        const now = JSON.stringify(ctx.store.status?.agents ?? []);
+        const now = JSON.stringify(ctx.store.status?.agents ?? null);
         if (now !== shown) { shown = now; draw(); }
       });
     },
@@ -48,7 +57,7 @@ export function agentChatView(ctx: PanelContext, name: string): View {
     title: name,
     render(body) {
       const bar = el('div', 'sheet-actions');
-      const state = el('p', 'sheet-note', 'Opening…');
+      const state = el('p', 'sheet-note');
       const stop = el('button', 'btn btn-quiet', `Stop ${name}`);
       stop.type = 'button';
       stop.addEventListener('click', () => {
@@ -62,12 +71,23 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       const scroller = el('div', 'agent-chat');
       const list = el('ol', 'feed feed-agent');
       list.setAttribute('aria-label', `${name}'s conversation`);
-      scroller.append(list);
+      // Until the feed opens, lines shaped as a conversation hold its place; it fades in over them.
+      let opening = true;
+      const skeleton = skeletonLines(4);
+      skeleton.classList.add('feed-skeleton');
+      list.hidden = true;
+      scroller.append(skeleton, list);
       body.append(bar, scroller);
       view = new ChatView(list, scroller, { empty: 'Nothing here yet.' });
       const draw = (): void => {
         const found = ctx.store.agentByName(name);
         if (found) view?.set(found.agent.mirror.items);
+        // A conversation kept from before a reconnect shows at once.
+        if (list.hidden && !(opening && !found?.agent.mirror.items.length)) {
+          skeleton.remove();
+          list.hidden = false;
+          fadeIn(list);
+        }
         const agent = ctx.store.status?.agents.find(a => a.name === name);
         state.textContent = found?.agent.ended ?? (found && !found.feed ? 'Reconnecting…' : agent ? (agent.busy ? 'Working' : 'Idle') : '');
         stop.hidden = !agent || found?.agent.ended !== undefined;
@@ -76,9 +96,16 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       ctx.link.request('feed.open', { name }).then(
         ({ feed }) => {
           if (!open) { void ctx.link.request('feed.close', { feed }).catch(() => undefined); return; }
+          opening = false;
           ctx.store.openAgent(feed, name);
+          draw();
         },
-        (error: unknown) => { state.textContent = errorText(error); },
+        (error: unknown) => {
+          if (!open) return;
+          opening = false;
+          draw();
+          state.textContent = errorText(error);
+        },
       );
       draw();
     },

@@ -3,10 +3,8 @@
 import { el } from '../chat-view.ts';
 import { errorText, lineLabel, memoryHeader, parseMessage, parseZoom } from '../format.ts';
 import type { ViewLine } from '../../protocol/messages.ts';
-import { renderRows } from './sheet.ts';
+import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
-
-export const LOADING = 'Loading…';
 
 /** A filterable list of view lines; `load` gives them. */
 function linesView(ctx: PanelContext, title: string, load: () => Promise<readonly ViewLine[]>, top: boolean): View {
@@ -20,21 +18,29 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
       search.placeholder = 'Filter lines';
       search.setAttribute('aria-label', 'Filter lines');
       const list = el('ul', 'rows rows-dense');
-      const state = el('p', 'sheet-note', LOADING);
+      const state = el('p', 'sheet-note');
+      state.hidden = true;
+      // Until the first lines come: rows shaped as lines, and no filter yet.
+      search.hidden = true;
+      skeletonRows(list, 6);
       body.append(header, search, list, state);
       let lines: readonly ViewLine[] = [];
-      let loading = false, again = false, loaded = false;
+      let loading = false, again = false, loaded = false, entered = false;
       const draw = (): void => {
         const needle = search.value.trim().toLowerCase();
         const shown = needle ? lines.filter(l => `${lineLabel(l)} ${l.text}`.toLowerCase().includes(needle)) : lines;
+        // The first lines stagger in, from the end at the top level, which opens scrolled to its newest line.
+        const enter = entered ? undefined : top ? 'bottom' : 'top';
+        entered = true;
         renderRows(list, shown.map(line => ({
           key: lineLabel(line), label: line.text, aside: lineLabel(line), className: 'row-line',
         })), key => {
           const line = lines.find(l => lineLabel(l) === key);
           if (line) ctx.sheet.push(line.n > 1 ? zoomView(ctx, line) : messageView(ctx, line));
-        });
+        }, enter);
         if (loaded) state.textContent = shown.length ? '' : lines.length ? 'No line matches.' : !top ? 'Nothing under this line.'
           : ctx.store.status?.memory ? 'Memory is empty.' : 'Memory is off.';
+        if (state.hidden && state.textContent) fadeIn(state);
         state.hidden = !state.textContent;
         search.hidden = lines.length < 8;
       };
@@ -82,8 +88,10 @@ function messageView(ctx: PanelContext, line: ViewLine): View {
   return {
     title: lineLabel(line),
     render(body) {
-      const note = el('p', 'sheet-note', LOADING);
+      const note = el('p', 'sheet-note');
+      note.hidden = true;
       const text = el('div', 'message-text');
+      text.append(skeletonLines(5));
       body.append(note, text);
       ctx.link.request('memory.zoom', { id: line.id, n: line.n }).then(
         ({ text: out }) => {
@@ -91,8 +99,16 @@ function messageView(ctx: PanelContext, line: ViewLine): View {
           note.textContent = page ?? '';
           note.hidden = !page;
           text.textContent = message;
+          fadeIn(note);
+          fadeIn(text);
         },
-        (error: unknown) => { note.textContent = errorText(error); note.classList.add('is-error'); },
+        (error: unknown) => {
+          text.replaceChildren();
+          note.textContent = errorText(error);
+          note.classList.add('is-error');
+          note.hidden = false;
+          fadeIn(note);
+        },
       );
     },
   };

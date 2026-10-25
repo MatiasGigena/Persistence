@@ -580,15 +580,23 @@ button.status-part:active { opacity: 0.6; }
 dialog { color: var(--ink); }
 dialog::backdrop { background: var(--scrim); }
 
-/* The sheet: from the bottom on a phone, from the right on a wide screen. */
+/* Dialog motion (sheet.ts: showDialog, closeDialog). A dialog transitions in out of its `is-out` pose and goes back to
+   it before it closes; the exit is the quicker. Transitions rather than keyframes, so a dialog turned around half way
+   (closed while still arriving, opened again while leaving) goes back from where it is. The backdrop fades with it. */
+.sheet::backdrop, .confirm::backdrop { transition: opacity var(--t-base) var(--ease-out); }
+.sheet.is-out::backdrop, .confirm.is-out::backdrop { opacity: 0; }
+.confirm.is-out::backdrop { transition-duration: var(--t-fast); }
+
+/* The sheet: from the bottom on a phone, from the right on a wide screen, on the iOS drawer curve. Its hidden pose is
+   past the edge by the shadow's reach too, so no shadow lingers there. */
 .sheet {
   margin: auto 0 0; padding: 0; width: 100%; max-width: 100%; max-height: 88dvh; height: 88dvh;
   border: 0; border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--chrome-heavy);
   backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
   box-shadow: var(--shadow);
+  transition: transform var(--t-sheet) var(--ease-drawer);
 }
-.sheet[open] { animation: rise 0.22s ease-out; }
-@keyframes rise { from { transform: translateY(24px); opacity: 0; } }
+.sheet.is-out { transform: translateY(calc(100% + 48px)); transition-duration: var(--t-base); pointer-events: none; }
 .sheet-panel { display: flex; flex-direction: column; height: 100%; }
 .sheet-grip { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 8px auto 0; flex: none; }
 .sheet-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px var(--gutter); flex: none; }
@@ -598,26 +606,41 @@ dialog::backdrop { background: var(--scrim); }
 .crumb {
   border: 0; background: none; padding: 4px 0; color: var(--accent); font-weight: 500;
   text-decoration: underline; text-decoration-color: transparent;
+  transition: opacity var(--t-press) var(--ease-out);
 }
 .crumb::after { content: "/"; color: var(--faint); margin-left: 4px; text-decoration: none; display: inline-block; }
-.crumb:hover { text-decoration-color: currentColor; }
-.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--gutter) max(20px, env(safe-area-inset-bottom)); }
+.crumb:active { opacity: 0.6; transition-duration: 0s; }
+/* Clipped across: a level sliding in must not scroll the body sideways. */
+.sheet-body { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--gutter) max(20px, env(safe-area-inset-bottom)); }
 .sheet-level { display: flex; flex-direction: column; min-height: 100%; }
+/* A level pushed comes in from the right, one gone back to from the left: a short way, with a fade. */
+@keyframes level-push { from { opacity: 0; transform: translateX(calc(var(--rise) * 2)); } }
+@keyframes level-pop { from { opacity: 0; transform: translateX(calc(var(--rise) * -2)); } }
+.level-push { animation: level-push var(--t-base) var(--ease-out); }
+.level-pop { animation: level-pop var(--t-base) var(--ease-out); }
 .sheet-note { color: var(--muted); font-size: 0.9375rem; margin: 6px 0 12px; }
 .sheet-note.is-error { color: var(--danger); }
+.sheet-note.is-busy { display: flex; align-items: center; gap: 8px; }
 .sheet-actions { display: flex; align-items: center; gap: 12px; }
 .sheet-actions .sheet-note { flex: 1; margin: 0; }
 
 .search { width: 100%; min-height: 40px; padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
 
 .rows { list-style: none; margin: 0 calc(-1 * var(--gutter)); padding: 0; }
+/* A press shows at once and lets go with a short fade. */
 .row {
   width: 100%; display: flex; align-items: center; gap: 12px; text-align: left;
   min-height: 56px; padding: 8px var(--gutter); border: 0; border-top: 1px solid var(--line); background: transparent;
+  transition: background-color var(--t-press) var(--ease-out);
 }
 .rows li:first-child .row { border-top: 0; }
-.row:hover:not(:disabled) { background: var(--raised); }
+.row:active:not(:disabled) { background: var(--raised); transition-duration: 0s; }
 .row:disabled { color: var(--faint); }
+/* The first rows a level loads stagger in (sheet.ts renderRows sets each delay). */
+.row-enter { animation: enter var(--t-base) var(--ease-out) backwards; }
+.row-skeleton { pointer-events: none; }
+.row-skeleton .row-text .skeleton-line + .skeleton-line { height: 0.65em; }
+.row-skeleton .row-aside { width: 2.5em; }
 .row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-detail { font-size: 0.8125rem; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -633,6 +656,8 @@ dialog::backdrop { background: var(--scrim); }
 
 .agent-chat { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); border-top: 1px solid var(--line); }
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 1rem/1.6 var(--serif); }
+.skeleton-lines { padding: 2px 0; }
+.feed-skeleton { max-width: var(--column); margin: 0 auto; padding: 20px 0; }
 
 /* Chat settings, as Pi Cloud's sheet: labelled selects, then switch rows, then rows into Agents and Memory. */
 .controls { display: grid; gap: 14px; padding: 6px 0 4px; }
@@ -641,8 +666,11 @@ dialog::backdrop { background: var(--scrim); }
 .control-select {
   width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-sm);
   background: var(--glass); color: var(--ink); font-size: 16px;
+  transition: opacity var(--t-fast) var(--ease-out);
 }
 .control-select:disabled { opacity: 0.55; }
+/* A select's place while its list loads (chat-settings.ts): the select's own size and corners. */
+.control-skeleton { display: block; height: 46px; border-radius: var(--r-sm); }
 .switches { display: grid; gap: 14px; margin: 18px 0; padding-top: 16px; border-top: 1px solid var(--line); }
 .switch-row { display: flex; align-items: center; gap: 14px; }
 .switch-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
@@ -651,22 +679,41 @@ dialog::backdrop { background: var(--scrim); }
 .switch {
   position: relative; display: flex; align-items: center; flex: none; width: 44px; height: 28px; padding: 4px;
   border: 1px solid var(--edge); border-radius: 999px; background: var(--raised);
+  transition: background-color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out);
 }
 .switch::before { content: ""; position: absolute; inset: -8px 0; }
-.switch span { width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform 140ms ease-out; }
+.switch span {
+  width: 18px; height: 18px; border-radius: 50%; background: var(--muted);
+  transition: transform var(--t-fast) var(--ease-out), background-color var(--t-fast) var(--ease-out);
+}
 .switch[aria-checked="true"] { background: var(--ink); }
 .switch[aria-checked="true"] span { transform: translateX(16px); background: var(--bg); }
+/* Pressed, the thumb gives a little under the finger. */
+.switch:active:not(:disabled) span { transform: scale(0.86); }
+.switch[aria-checked="true"]:active:not(:disabled) span { transform: translateX(16px) scale(0.86); }
 .switch:disabled { opacity: 0.45; }
+/* Waiting on the server (the tools turning on or off): less dimmed than disabled, the thumb breathing. */
+.switch[aria-busy="true"]:disabled { opacity: 0.75; }
+.switch[aria-busy="true"] span { animation: switch-busy 0.8s ease-in-out infinite alternate; }
+@keyframes switch-busy { to { opacity: 0.45; } }
 .rows-settings { border-top: 1px solid var(--line); }
 .rows-settings .row-aside { font-size: 1.125rem; }
 
+/* The confirm is a modal, not anchored to its trigger: it pops from its centre. */
 .confirm {
   width: min(calc(100% - 32px), 26rem); padding: 22px; border: 0; border-radius: 18px;
   background: var(--chrome-heavy); box-shadow: var(--shadow);
+  transition: opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out);
 }
+.confirm.is-out { opacity: 0; transform: scale(var(--pop)); transition-duration: var(--t-fast); pointer-events: none; }
 .confirm-title { font: 600 1.25rem/1.3 var(--serif); margin: 0 0 10px; }
 .confirm-text { margin: 0 0 20px; color: var(--muted); }
 .confirm-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+
+@media (hover: hover) and (pointer: fine) {
+  .row:hover:not(:disabled) { background: var(--raised); }
+  .crumb:hover { text-decoration-color: currentColor; }
+}
 
 /* ------------------------------------------------------------------ wide screens */
 
@@ -674,21 +721,21 @@ dialog::backdrop { background: var(--scrim); }
   .sheet {
     margin: 0 0 0 auto; width: 28rem; height: 100dvh; max-height: 100dvh; border-radius: 20px 0 0 20px;
   }
-  .sheet[open] { animation-name: slide; }
-  @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
+  .sheet.is-out { transform: translateX(calc(100% + 48px)); }
   .sheet-grip { display: none; }
   .sheet-head { padding-top: 14px; }
   .feed { padding-top: 32px; gap: 22px; }
-}
-
-@media (hover: none) {
-  .icon-button:hover, .row:hover:not(:disabled) { background: transparent; }
 }
 
 /* Reduced motion means gentler, not none: entrances keep their fade but lose their travel and scale, and endless
    decorative loops stop. Spinners keep turning: they say work is happening. */
 @media (prefers-reduced-motion: reduce) {
   :root { --rise: 0px; --pop: 1; --shake: 0px; }
+  /* The sheet and the switch thumb fade or jump rather than travel; the sheet still leaves quicker than it came. */
+  .sheet { transition: opacity var(--t-base) var(--ease-out); }
+  .sheet.is-out { transform: none; opacity: 0; transition-duration: var(--t-fast); }
+  .sheet.is-out::backdrop { transition-duration: var(--t-fast); }
+  .switch span { transition-property: background-color; }
   .lamp::before, .skeleton::after { animation: none; }
   .pulse.is-busy { background: var(--lamp); }
   .pulse.is-busy::after { display: none; }
