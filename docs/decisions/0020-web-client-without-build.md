@@ -29,6 +29,7 @@ dependencies, and its protocol code (`src/protocol/`) is plain, erasable TypeScr
 ## Consequences
 
 - Editing a web file needs only a browser reload; stack traces show the source.
-- No tree shaking or minification: the app is a few hundred KiB, cached by the service worker.
+- No tree shaking or minification: the app is a few hundred KiB, cached by the service worker. Without a bundler,
+  imports are found one level at a time; `index.html` preloads every startup module instead ([0032](0032-web-shell-stale-while-revalidate.md)).
 - `stripTypeScriptTypes` is experimental in Node 22; the server pins its use to `mode: 'strip'` and the engines
   floor.

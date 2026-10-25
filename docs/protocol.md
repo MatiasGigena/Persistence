@@ -413,7 +413,8 @@ There is no session resumption: every connection starts from `hello` and gets th
   may start over on the new connection.
 - After `ready`, the client opens again the agent feeds it had open; their ids may differ.
 - `welcome.boot` different from the last one: the server restarted. `welcome.assets` different: the web app
-  reloads itself (after a service worker update).
+  reloads itself, after a service worker update and once the service worker has revalidated its files
+  ([ADR 0032](decisions/0032-web-shell-stale-while-revalidate.md)).
 
 ## Errors
 

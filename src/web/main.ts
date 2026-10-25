@@ -25,6 +25,8 @@ const RELOAD_KEY = 'pd.reloaded';
 const RECONNECT_BANNER_MS = 2_000;
 /** How long after a send the button cannot become stop, so a double tap does not abort what it just sent. */
 const SEND_HUSH_MS = 600;
+/** How long a reload for new files waits for the service worker to revalidate them; past it, a later notice reloads. */
+const SHELL_REFRESH_MS = 5_000;
 
 // ------------------------------------------------------------------------------------------------ storage
 
@@ -88,10 +90,24 @@ function gone(why: keyof typeof GONE): void {
 async function reloadOnce(value: string): Promise<boolean> {
   if (load(session, RELOAD_KEY) === value) return false;
   save(session, RELOAD_KEY, value);
-  // Let a changed service worker take over first, so the reload gets the new files.
+  // Let a changed service worker take over first, and have the shell revalidated (its files are served stale while
+  // they revalidate, ADR 0032), so the reload gets the new files.
   await navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => undefined);
+  await refreshShell();
   location.reload();
   return true;
+}
+
+/** Asks the service worker to fetch the app's files again (sw.ts, `refresh`); resolves when it has, or after a while. */
+function refreshShell(): Promise<void> {
+  const worker = navigator.serviceWorker?.controller;
+  if (!worker) return Promise.resolve();
+  return new Promise(resolve => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(resolve, SHELL_REFRESH_MS);
+    channel.port1.onmessage = () => { clearTimeout(timer); resolve(); };
+    worker.postMessage({ t: 'refresh' }, [channel.port2]);
+  });
 }
 
 // ------------------------------------------------------------------------------------------------ server checks
@@ -494,10 +510,7 @@ function start(): void {
         await link.request('feed.resync', { feed: effect.feed }).catch(() => undefined);
         return;
       case 'reload':
-        // Messages not yet admitted would be lost with the page: they go back into the draft.
-        // Their images cannot be kept: only the text survives a reload.
-        if (outbox.size) save(local, DRAFT_KEY, [...[...outbox.values()].map(sent => sent.text), input.value].filter(Boolean).join('\n\n'));
-        await reloadOnce(`assets:${store.welcome?.assets ?? ''}`);
+        await reloadForFiles(`assets:${store.welcome?.assets ?? ''}`);
         return;
       case 'reply': {
         // Announced as plain text: the rendered Markdown's words, not its markup.
@@ -534,6 +547,21 @@ function start(): void {
     if (visible) link.poke();
   });
   addEventListener('online', () => link.poke());
+
+  /** Reloads once for `value`, to run new app files. */
+  async function reloadForFiles(value: string): Promise<void> {
+    // Messages not yet admitted would be lost with the page: they go back into the draft.
+    // Their images cannot be kept: only the text survives a reload.
+    if (outbox.size) save(local, DRAFT_KEY, [...[...outbox.values()].map(sent => sent.text), input.value].filter(Boolean).join('\n\n'));
+    await reloadOnce(value);
+  }
+
+  // The service worker has a newer set of the app's files than this page runs on (sw.ts, `announce`).
+  navigator.serviceWorker?.addEventListener('message', event => {
+    const data: unknown = event.data;
+    if (typeof data !== 'object' || data === null || !('t' in data) || data.t !== 'shell') return;
+    if ('version' in data && typeof data.version === 'string') void reloadForFiles(`shell:${data.version}`);
+  });
 
   async function boot(): Promise<void> {
     const state = await me();

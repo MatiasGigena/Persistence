@@ -47,6 +47,23 @@ test('the service worker shell lists every app file and runtime import', async (
   assert.deepEqual(extra, [], 'the shell names only real files');
 });
 
+test('index.html preloads every module the app loads at startup, after the import map', async () => {
+  const sw = await readFile(join(WEB, 'sw.ts'), 'utf8');
+  const block = /const SHELL = \[([\s\S]*?)\];/.exec(sw)?.[1] ?? '';
+  const modules = [...block.matchAll(/'([^']+\.(?:ts|js))'/g)].map(([, path = '']) => path);
+  assert.ok(modules.includes('/main.ts'));
+  const html = await readFile(join(WEB, 'index.html'), 'utf8');
+  const head = html.slice(0, html.indexOf('</head>'));
+  const preloads = [...head.matchAll(/<link rel="modulepreload" href="([^"]+)">/g)].map(([, href = '']) => href);
+  // The shell test above holds SHELL to the real files and runtime imports; main.ts is the module script itself.
+  assert.ok(head.includes('<script type="module" src="/main.ts"></script>'));
+  assert.deepEqual([...preloads].sort(), modules.filter(path => path !== '/main.ts').sort());
+  assert.equal(new Set(preloads).size, preloads.length, 'no module is preloaded twice');
+  const firstPreload = head.indexOf('rel="modulepreload"');
+  assert.ok(head.indexOf('type="importmap"') < firstPreload, 'the import map comes before any module is fetched');
+  assert.ok(firstPreload < head.indexOf('type="module"'));
+});
+
 test('the installed app and offline page share the Pi Cloud dark theme', async () => {
   const css = await readFile(join(WEB, 'styles.css'), 'utf8');
   assert.match(css, /color-scheme: dark;/);

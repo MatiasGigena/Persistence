@@ -299,13 +299,13 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `contrib/systemd/` | `pi-durable.service` (`serve --cwd %h/projects`), `pi-durable-backup.service` and its daily `.timer` |
 | `src/server/auth.ts` | `Devices` (the `DeviceRegistry`: pairing codes, `pd_device` cookies by sha256 in `serve/devices.json`), `gate` and `authenticate` (login allow-list, Origin, device) |
 | `src/server/static.ts` | The web app's files: `src/web/` at `/`, `src/protocol/`, `marked`; type stripping, ETags, the CSP; `assetsHash` for `welcome.assets` |
-| `src/web/index.html`, `manifest.webmanifest`, `offline.html`, `styles.css`, icons | The installable app shell; the only inline script is the `marked` import map, allowed by its CSP hash |
 | `src/web/main.ts` | Boots the app: pairing screen, connection banner, header, composer (one send, steer and stop button), chat settings |
+| `src/web/index.html`, `manifest.webmanifest`, `offline.html`, `styles.css`, icons | The installable app shell; the only inline script is the `marked` import map, allowed by its CSP hash; `modulepreload` links fetch every startup module at once (ADR 0032) |
 | `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |
 | `src/web/store.ts` | Mirrors feeds with `applyOps`, status, notices, pending sends (resent with their requestId) |
 | `src/web/chat-view.ts`, `markdown.ts`, `format.ts`, `copy.ts` | Keyed DOM chat, sanitized Markdown, TUI-parity text helpers; copy buttons on turns and code blocks |
-| `src/web/push.ts`, `sw.ts` | Push subscribe on a tap; service worker: network-first shell, offline page, push and click handlers |
 | `src/web/panels/*` | Sheets: chat settings (model, effort, tools switch with its confirm dialog, notifications), agents, memory zoom; `cache.ts` keeps their lists across openings (chat settings' warmed once connected) |
+| `src/web/push.ts`, `sw.ts` | Push subscribe on a tap; service worker: the shell as whole versioned sets, served stale while revalidating, with an offline page (ADR 0032); push and click handlers |
 | `src/server/transport-ws.ts` | `startWebListener`: HTTP on 127.0.0.1, `/api/me`, `/api/pair`, the app, and `/ws` WebSockets handed to the hub as `PeerLink`s |
 | `src/server/push.ts` | `createPush`: Web Push on `node:crypto` (VAPID, aes128gcm), the key pair in `serve/vapid.json` and the subscriptions in `serve/push.json`; the `PushNotifier` the hub calls |
 | `tsconfig.json` | Strict TypeScript for `tsc` (no emit): erasable syntax only, `.ts` import specifiers |
