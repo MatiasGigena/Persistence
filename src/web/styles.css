@@ -67,9 +67,10 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
 
-body { overflow: hidden; overscroll-behavior: none; }
+body { overflow: hidden; }
 
 * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 
@@ -78,6 +79,12 @@ body { overflow: hidden; overscroll-behavior: none; }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button, a, summary { touch-action: manipulation; }
+/* A long press on a control must not select its label or open the link callout; content text stays selectable. */
+button, [role="button"], summary, .btn { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* iOS zooms into any field under 16px and never zooms back out: on touch, fields read at 16px at the least. */
+@media (pointer: coarse) {
+  input, textarea, select { font-size: max(16px, 1em); }
+}
 ::selection { background: #292929; }
 button:disabled { cursor: default; }
 
@@ -123,16 +130,25 @@ code, pre { font-family: var(--mono); }
 
 /* ------------------------------------------------------------------ the lamp */
 
+/* The halo breathes on a pseudo-element by transform and opacity, which the compositor runs without repainting;
+   animating box-shadow itself would repaint the glow every frame. At rest, scale(0.84) of the 22px ring is the old
+   14px one. An ambient loop wants a sine-like curve, so it keeps the plain `ease-in-out`, not the UI curves. */
 .lamp {
+  position: relative; flex: none;
   width: 56px; height: 56px; border-radius: 50%;
   background: var(--lamp);
-  box-shadow: 0 0 0 14px var(--lamp-soft), 0 0 60px 10px var(--lamp-soft);
+}
+.lamp::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 22px var(--lamp-soft), 0 0 80px 20px var(--lamp-soft);
+  transform: scale(0.84); opacity: 0.8;
   animation: breathe 2.8s ease-in-out infinite;
 }
-.lamp-small { width: 28px; height: 28px; box-shadow: 0 0 0 8px var(--lamp-soft); animation: none; margin-bottom: 20px; }
+.lamp-small { width: 28px; height: 28px; box-shadow: 0 0 0 8px var(--lamp-soft); margin-bottom: 20px; }
+.lamp-small::before { content: none; }
 .lamp-out { background: var(--faint); box-shadow: 0 0 0 8px var(--line); }
 
-@keyframes breathe { 50% { box-shadow: 0 0 0 22px var(--lamp-soft), 0 0 80px 20px var(--lamp-soft); } }
+@keyframes breathe { 50% { transform: scale(1); opacity: 1; } }
 
 /* ------------------------------------------------------------------ screens */
 
@@ -143,6 +159,26 @@ code, pre { font-family: var(--mono); }
   overflow-y: auto; height: 100%;
 }
 .card { width: min(100%, 26rem); }
+
+/* Screens arrive rather than swap. show() only flips `hidden`, and an element that starts rendering runs its
+   animations, so each entrance plays whenever its screen appears. Fills are `backwards` only, so nothing is held
+   once they end, and nothing waits on them: every control takes taps from the first frame. */
+
+/* The boot lamp fades in late, so a quick start shows nothing at all and then the chat, never a flash of lamp. */
+#screen-boot .lamp { animation: fade-in var(--t-sheet) var(--ease-out) 200ms backwards; }
+
+/* A card's lines rise in turn: the lamp, the title, the text, then the fields and the button. */
+.screen-center .card > * { animation: enter var(--t-base) var(--ease-out) var(--stagger, 0ms) backwards; }
+.screen-center .card > :nth-child(2) { --stagger: 40ms; }
+.screen-center .card > :nth-child(3) { --stagger: 80ms; }
+.screen-center .card > :nth-child(4) { --stagger: 120ms; }
+.screen-center .card > :nth-child(5) { --stagger: 160ms; }
+.screen-center .card > :nth-child(n + 6) { --stagger: 200ms; }
+
+/* The chat: the frame fades in and the conversation and composer rise a little into place. */
+#screen-chat { animation: fade-in var(--t-base) var(--ease-out) backwards; }
+#screen-chat > .scroller { animation: enter var(--t-base) var(--ease-out) backwards; }
+#screen-chat > .dock { animation: enter var(--t-base) var(--ease-out) 40ms backwards; }
 .screen-title { font: 600 1.6rem/1.2 var(--serif); margin: 0 0 10px; letter-spacing: -0.01em; }
 .screen-text { color: var(--muted); margin: 0 0 24px; }
 .screen-text code { font-size: 0.9em; background: var(--code); padding: 1px 5px; border-radius: 5px; color: var(--ink); }
@@ -156,6 +192,13 @@ code, pre { font-family: var(--mono); }
 .input:focus-visible { outline: none; border-color: var(--lamp); box-shadow: 0 0 0 3px var(--lamp-soft); }
 .input-code { font: 600 1.35rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
 .form-error { color: var(--danger); min-height: 1.45em; margin: 0 0 12px; font-size: 0.9375rem; }
+/* A new error fades in with one small shake (main.ts restarts it per error); reduced motion zeroes --shake. */
+.screen-center .form-error.is-new { animation: fade-in var(--t-fast) var(--ease-out), shake 180ms var(--ease-in-out); }
+@keyframes shake {
+  25% { transform: translateX(calc(var(--shake) * -1)); }
+  50% { transform: translateX(var(--shake)); }
+  75% { transform: translateX(calc(var(--shake) * -0.5)); }
+}
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -164,10 +207,26 @@ code, pre { font-family: var(--mono); }
   font-weight: 600; text-decoration: none;
 }
 .btn:disabled { opacity: 0.55; }
+/* An action in flight: the button keeps its label legible and carries a spinner in its own ink. */
+.btn[aria-busy="true"] { cursor: progress; }
+.btn[aria-busy="true"]:disabled { opacity: 0.8; }
+.btn .spinner { border-color: color-mix(in srgb, currentColor 25%, transparent); border-top-color: currentColor; }
 .btn-primary { background: var(--ink); border-color: var(--ink); color: var(--bg); }
 .btn-danger { background: var(--danger); border-color: var(--danger); color: var(--danger-ink); }
 .btn-quiet { min-height: 36px; padding: 0 12px; font-weight: 500; font-size: 0.9375rem; }
 .btn-wide { width: 100%; }
+
+/* Press feedback lands on touch-down, on every input; hover only where a precise pointer can really hover, so a
+   tap never leaves a stuck hover behind. Shared by the .btn and .icon-button controls. */
+.btn, .icon-button {
+  transition: transform var(--t-press) var(--ease-out), background-color var(--t-fast) ease,
+    border-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.btn:active:not(:disabled), .icon-button:active:not(:disabled) { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) {
+  .btn:not(.btn-primary, .btn-danger):hover:not(:disabled) { border-color: var(--edge); }
+  .icon-button:hover { background: var(--raised); color: var(--ink); }
+}
 
 /* ------------------------------------------------------------------ the app frame */
 
@@ -197,7 +256,6 @@ code, pre { font-family: var(--mono); }
   width: var(--tap); height: var(--tap); display: grid; place-items: center;
   border: 0; border-radius: 12px; background: transparent; color: var(--muted);
 }
-.icon-button:hover { background: var(--raised); color: var(--ink); }
 .icon-button svg { width: 18px; height: 18px; }
 
 .status { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; min-height: 22px; font-size: 0.8125rem; color: var(--faint); }
@@ -549,7 +607,7 @@ dialog::backdrop { background: var(--scrim); }
    decorative loops stop. Spinners keep turning: they say work is happening. */
 @media (prefers-reduced-motion: reduce) {
   :root { --rise: 0px; --pop: 1; --shake: 0px; }
-  .lamp, .skeleton::after { animation: none; }
+  .lamp::before, .skeleton::after { animation: none; }
   .pulse.is-busy { background: var(--lamp); }
   .pulse.is-busy::after { display: none; }
 }

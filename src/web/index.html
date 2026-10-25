@@ -77,11 +77,11 @@ SOFTWARE.
     <p class="screen-text">On the server, run <code>pi-durable serve pair</code> and enter the code it prints. A code works once, for 10 minutes.</p>
     <label class="field">
       <span class="field-label">Pairing code</span>
-      <input id="pair-code" class="input input-code" name="code" required inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="9" pattern="[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}">
+      <input id="pair-code" class="input input-code" name="code" required inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="XXXX-XXXX" maxlength="9" pattern="[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}">
     </label>
     <label class="field">
       <span class="field-label">Device name</span>
-      <input id="pair-name" class="input" name="name" required maxlength="40" spellcheck="false">
+      <input id="pair-name" class="input" name="name" required maxlength="40" autocorrect="off" spellcheck="false" enterkeyhint="go">
     </label>
     <p id="pair-error" class="form-error" role="alert"></p>
     <button id="pair-submit" class="btn btn-primary btn-wide" type="submit">Pair device</button>

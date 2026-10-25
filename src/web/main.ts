@@ -50,6 +50,7 @@ function buzz(): void {
 
 type Screen = 'boot' | 'pair' | 'gone' | 'chat';
 
+/** Shows one screen. Its entrance is CSS: a screen that starts rendering plays its animations (styles.css, screens). */
 function show(screen: Screen): void {
   for (const name of ['boot', 'pair', 'gone', 'chat'] as const) byId(`screen-${name}`, HTMLElement).hidden = name !== screen;
 }
@@ -125,7 +126,24 @@ function pairScreen(onPaired: () => void): void {
   const name = byId('pair-name', HTMLInputElement);
   const error = byId('pair-error', HTMLParagraphElement);
   const button = byId('pair-submit', HTMLButtonElement);
+  const label = button.textContent;
   if (!name.value) name.value = guessDeviceName(navigator.userAgent);
+  /** Shows an error, replaying its entrance each time (the same text twice included). */
+  const fail = (text: string): void => {
+    error.textContent = text;
+    error.classList.remove('is-new');
+    error.getBoundingClientRect(); // a style flush, so re-adding the class starts the animation again
+    error.classList.add('is-new');
+  };
+  /** The button while a pairing request is in flight: disabled, busy, with a spinner. */
+  const busy = (on: boolean): void => {
+    button.disabled = on;
+    button.setAttribute('aria-busy', String(on));
+    if (!on) { button.textContent = label; return; }
+    const spinner = el('span', 'spinner');
+    spinner.setAttribute('aria-hidden', 'true');
+    button.replaceChildren(spinner, 'Pairing…');
+  };
   code.addEventListener('input', () => {
     const next = normalizeCode(code.value);
     if (next !== code.value) code.value = next;
@@ -133,17 +151,18 @@ function pairScreen(onPaired: () => void): void {
   form.addEventListener('submit', event => {
     event.preventDefault();
     error.textContent = '';
-    button.disabled = true;
+    error.classList.remove('is-new');
+    busy(true);
     fetch('/api/pair', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: normalizeCode(code.value), name: name.value.trim() }),
     }).then(
       response => {
         if (response.ok) { code.value = ''; onPaired(); return; }
-        error.textContent = PAIR_ERRORS[response.status] ?? `The server answered ${response.status}. Try again.`;
+        fail(PAIR_ERRORS[response.status] ?? `The server answered ${response.status}. Try again.`);
       },
-      () => { error.textContent = 'Cannot reach the server. Check that Tailscale is connected.'; },
-    ).finally(() => { button.disabled = false; });
+      () => { fail('Cannot reach the server. Check that Tailscale is connected.'); },
+    ).finally(() => busy(false));
   });
 }
 
