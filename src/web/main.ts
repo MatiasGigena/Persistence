@@ -1,7 +1,7 @@
 // The web app: pairing, the chat, the header and composer, the sheets, and the link to the server. See
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { imageUrl, toChatImage } from './attach.ts';
-import { ChatView, el, initViewer } from './chat-view.ts';
+import { ChatView, el, initViewer, play } from './chat-view.ts';
 import { errorText, guessDeviceName, normalizeCode, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
@@ -39,6 +39,23 @@ function save(storage: () => Storage, key: string, value: string): void {
 }
 const local = (): Storage => localStorage;
 const session = (): Storage => sessionStorage;
+
+/**
+ * Makes `nodes` the children of `parent`, in order, moving only what is out of place: a node that stays is never
+ * taken out and put back, which would restart its animations (a spinner, an entrance).
+ */
+function place(parent: HTMLElement, nodes: readonly Node[]): void {
+  let at = parent.firstChild;
+  for (const node of nodes) {
+    if (node === at) at = at.nextSibling;
+    else parent.insertBefore(node, at);
+  }
+  while (at) {
+    const next = at.nextSibling;
+    at.remove();
+    at = next;
+  }
+}
 
 /** A short tap of haptic feedback, where the browser has it. */
 function buzz(): void {
@@ -186,9 +203,13 @@ function start(): void {
   const statusLine = byId('status', HTMLDivElement);
   const modelName = byId('model-name', HTMLSpanElement);
 
+  // The jump button and the banner stay in the page and come and go by class, as CSS transitions: a quick toggle
+  // (scrolling about the bottom, a reconnect that lands at once) turns around mid-way instead of restarting.
+  jump.hidden = false;
+  banner.hidden = false;
   const view = new ChatView(byId('feed', HTMLOListElement), byId('scroller', HTMLDivElement), {
     empty: 'This is your one conversation with Pi. It never resets, and Pi remembers it. Write something to begin.',
-    onStuck: stuck => { jump.hidden = stuck; },
+    onStuck: stuck => { jump.classList.toggle('is-shown', !stuck); },
   });
   jump.addEventListener('click', () => view.toBottom());
   initViewer();
@@ -283,26 +304,43 @@ function start(): void {
   let attached: ChatImage[] = [];
   /** Images being read or scaled: the send waits for them. */
   let reading = 0;
+  /** Each attached image's tile, kept while it stays attached: a redraw moves tiles, so only a new one pops in. */
+  const tiles = new Map<ChatImage, { readonly li: HTMLLIElement; readonly img: HTMLImageElement; readonly remove: HTMLButtonElement }>();
+  /** The tile shown while images are read: the shape of the one coming, with a spinner. */
+  const readingTile = el('li', 'attachment attachment-reading skeleton');
+  readingTile.append(el('span', 'spinner'), el('span', 'sr-only', 'Reading image…'));
+  /** `image`'s tile, labelled as the `k`th image. */
+  const tile = (image: ChatImage, k: number): HTMLLIElement => {
+    const known = tiles.get(image) ?? newTile(image);
+    known.img.alt = `Image ${k + 1}`;
+    known.remove.setAttribute('aria-label', `Remove image ${k + 1}`);
+    return known.li;
+  };
+  const newTile = (image: ChatImage): { li: HTMLLIElement; img: HTMLImageElement; remove: HTMLButtonElement } => {
+    const li = el('li', 'attachment');
+    const img = el('img', 'attachment-image');
+    img.src = imageUrl(image) ?? '';
+    const remove = el('button', 'attachment-remove');
+    remove.type = 'button';
+    remove.title = 'Remove';
+    remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+    remove.addEventListener('click', () => {
+      attached = attached.filter(each => each !== image);
+      drawAttachments();
+      input.focus();
+    });
+    li.append(img, remove);
+    play(li, 'enter-pop');
+    const made = { li, img, remove };
+    tiles.set(image, made);
+    return made;
+  };
   const drawAttachments = (): void => {
     attachments.hidden = !attached.length && !reading;
-    attachments.replaceChildren(...attached.map((image, k) => {
-      const li = el('li', 'attachment');
-      const img = el('img', 'attachment-image');
-      img.alt = `Image ${k + 1}`;
-      img.src = imageUrl(image) ?? '';
-      const remove = el('button', 'attachment-remove');
-      remove.type = 'button';
-      remove.setAttribute('aria-label', `Remove image ${k + 1}`);
-      remove.title = 'Remove';
-      remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
-      remove.addEventListener('click', () => {
-        attached = attached.filter(each => each !== image);
-        drawAttachments();
-        input.focus();
-      });
-      li.append(img, remove);
-      return li;
-    }), ...reading ? [el('li', 'attachment attachment-reading', 'Reading…')] : []);
+    for (const image of tiles.keys()) if (!attached.includes(image)) tiles.delete(image);
+    const nodes = attached.map(tile);
+    if (reading) nodes.push(readingTile);
+    place(attachments, nodes);
     drawSend();
   };
   const attach = (files: readonly File[]): void => {
@@ -405,7 +443,8 @@ function start(): void {
   };
   let lastStatus = '';
   store.subscribe(() => {
-    view.set(store.rootView());
+    // Until the link is ready, items come from a snapshot (a first load, a reconnect): history, drawn without entrances.
+    view.set(store.rootView(), linkReady);
     const status = JSON.stringify(store.status ?? null);
     if (status !== lastStatus) { lastStatus = status; drawStatus(); }
   });
@@ -414,9 +453,13 @@ function start(): void {
 
   // A phone that wakes up reconnects in about a second: the banner waits RECONNECT_BANNER_MS, so that is not shown.
   let bannerTimer: ReturnType<typeof setTimeout> | undefined;
+  let bannerShown = false;
   const setBanner = (text: string, canRetry: boolean): void => {
     clearTimeout(bannerTimer);
-    banner.hidden = !text;
+    bannerShown = Boolean(text);
+    banner.classList.toggle('is-shown', bannerShown);
+    // Hiding keeps the last text and button, so the banner does not empty out while it slides away.
+    if (!text) return;
     bannerText.textContent = text;
     retry.hidden = !canRetry;
   };
@@ -433,7 +476,7 @@ function start(): void {
     if (wasReady && state !== 'closed') reopen = [...new Set([...reopen, ...store.disconnect()])];
     wasReady = false;
     if (state === 'reconnecting') {
-      if (banner.hidden) bannerTimer = setTimeout(() => setBanner('Reconnecting…', true), RECONNECT_BANNER_MS);
+      if (!bannerShown) bannerTimer = setTimeout(() => setBanner('Reconnecting…', true), RECONNECT_BANNER_MS);
       else setBanner('Reconnecting…', true);
     }
     else if (state === 'offline') setBanner('Offline. Connect to Tailscale; retrying.', true);

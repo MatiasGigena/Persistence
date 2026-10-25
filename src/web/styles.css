@@ -230,17 +230,18 @@ code, pre { font-family: var(--mono); }
 
 /* ------------------------------------------------------------------ the app frame */
 
-/* The app fills the visual viewport (main.ts sets the variables), so the keyboard never covers the composer. */
+/* The app fills the visual viewport (main.ts sets the variables), so the keyboard never covers the composer. A grid,
+   so the reconnect banner lies over the top of the chat (row 2) instead of pushing it down as it comes and goes. */
 .app {
   position: fixed; left: 0; right: 0;
   top: var(--app-top, 0px);
   height: var(--app-height, 100dvh);
-  display: flex; flex-direction: column;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr);
   background: var(--bg);
 }
 
 .top {
-  position: relative;
+  grid-row: 1; position: relative; z-index: 2;
   padding: calc(4px + env(safe-area-inset-top)) var(--gutter) 6px;
   background: var(--chrome);
   backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
@@ -263,7 +264,10 @@ code, pre { font-family: var(--mono); }
 button.status-part {
   border: 0; background: none; padding: 4px 0; margin: -4px 0;
   text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px;
+  user-select: none; -webkit-user-select: none;
+  transition: opacity var(--t-press) var(--ease-out);
 }
+button.status-part:active { opacity: 0.6; }
 .tone-dim { color: var(--faint); }
 .tone-error { color: var(--danger); }
 .tone-busy { color: var(--accent); }
@@ -272,31 +276,50 @@ button.status-part {
   background: var(--lamp); vertical-align: 1px;
 }
 
-/* The pulse: a hairline under the header that carries a travelling glow while Pi or an agent works. */
+/* The pulse: a hairline under the header that carries a travelling glow while Pi or an agent works. The glow moves
+   by transform (40% wide: -100% to 250% of itself spans the line), so it stays off the layout. */
 .pulse { position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--line); overflow: hidden; }
 .pulse.is-busy::after {
-  content: ""; position: absolute; top: 0; bottom: 0; width: 40%;
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
   background: linear-gradient(90deg, transparent, var(--lamp), transparent);
+  transform: translateX(-100%);
   animation: travel 1.8s ease-in-out infinite;
 }
-@keyframes travel { from { left: -40%; } to { left: 100%; } }
+@keyframes travel { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 
+/* The reconnect banner lies over the top of the chat, under the header, and slides down from behind it; it leaves
+   quicker than it came. A transition, so a reconnect that lands mid-way turns it around (main.ts sets .is-shown). */
 .banner {
+  grid-row: 2; align-self: start; z-index: 1;
   display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
   padding: 6px var(--gutter); background: var(--raised); color: var(--muted);
   border-bottom: 1px solid var(--line); font-size: 0.875rem; text-align: center;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  transition: transform var(--t-base) var(--ease-out), opacity var(--t-base) var(--ease-out), visibility 0s;
 }
-.banner-button { border: 0; background: none; color: var(--accent); font-weight: 600; min-height: 32px; padding: 0 4px; }
+.banner:not(.is-shown) {
+  transform: translateY(-100%); opacity: 0; visibility: hidden; pointer-events: none;
+  transition: transform var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), visibility 0s var(--t-fast);
+}
+.banner-button {
+  border: 0; background: none; color: var(--accent); font-weight: 600; min-height: 32px; padding: 0 4px;
+  user-select: none; -webkit-user-select: none;
+  transition: opacity var(--t-press) var(--ease-out);
+}
+.banner-button:active { opacity: 0.6; }
 
 /* ------------------------------------------------------------------ the chat */
 
 .scroller {
-  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  grid-row: 2;
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding: 0 var(--gutter);
 }
 
+/* The bottom padding is deeper than --rise, so a new last item rising into place never changes the scroll height. */
 .feed {
+  --pending: 0.62;
   list-style: none; margin: 0 auto; padding: 20px 0 12px; max-width: var(--column);
   display: flex; flex-direction: column; gap: 18px;
 }
@@ -304,6 +327,7 @@ button.status-part {
 
 .empty { margin: 18vh auto 0; max-width: 22rem; text-align: center; color: var(--muted); font: italic 1.0625rem/1.55 var(--serif); }
 
+/* Items that arrive while the reader watches get .enter (chat-view.ts): never the history, a resync, or a redraw. */
 .item { min-width: 0; }
 
 .item-user, .item-pending { align-self: flex-end; max-width: min(85%, 36rem); display: flex; flex-direction: column; align-items: flex-end; }
@@ -311,24 +335,42 @@ button.status-part {
   padding: 12px 14px; border-radius: var(--r-lg); border: 1px solid var(--line);
   background: var(--user); white-space: pre-wrap; overflow-wrap: anywhere;
 }
-.item-pending .bubble { opacity: 0.62; }
+.item-pending .bubble, .item-pending .images { opacity: var(--pending); }
+/* A sent message reaching the feed takes its pending bubble's place, and brightens there instead of entering. */
+.item-user.is-settling { animation: settle var(--t-base) var(--ease-out) both; }
+@keyframes settle { from { opacity: var(--pending); } }
 
-/* Images in the chat (ADR 0031): thumbnails that open full size. */
+/* Images in the chat (ADR 0031): thumbnails that open full size. Each fades in, frame and all, once its picture has
+   loaded (chat-view.ts sets .is-loaded), so an empty box never shows first. */
 .images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .item-user .images, .item-pending .images { justify-content: flex-end; }
-.item-pending .images { opacity: 0.62; }
 .item-tool > .images { margin: 2px 0 0 calc(1em + 8px); }
 .fold-body .images { margin: 0 0 6px; }
-.image-open { padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); line-height: 0; }
+.image-open {
+  padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); line-height: 0;
+  opacity: 0;
+  transition: opacity var(--t-base) var(--ease-out), transform var(--t-press) var(--ease-out);
+}
+.image-open.is-loaded { opacity: 1; }
+.image-open:active { transform: scale(0.97); }
 .image-thumb { display: block; max-width: min(100%, 18rem); max-height: 14rem; width: auto; height: auto; object-fit: contain; }
 .item-tool > .images .image-thumb { max-width: min(100%, 28rem); max-height: 22rem; }
 .image-missing { font-size: 0.8125rem; color: var(--faint); font-style: italic; }
+/* The viewer is a modal, so it scales from the centre. It opens with a fade and a slight scale, and closes quicker:
+   chat-view.ts adds .is-closing and closes the dialog when the animation ends. */
 .viewer {
   margin: 0; padding: 0; width: 100vw; height: 100dvh; max-width: 100vw; max-height: 100dvh;
   border: 0; background: rgb(0 0 0 / 92%); display: none; place-items: center;
 }
-.viewer[open] { display: grid; }
+.viewer[open] { display: grid; animation: fade-in var(--t-base) var(--ease-out); }
+.viewer[open] .viewer-image { animation: enter-pop var(--t-base) var(--ease-out); }
 .viewer::backdrop { background: rgb(0 0 0 / 92%); }
+.viewer[open]::backdrop { animation: fade-in var(--t-base) var(--ease-out); }
+.viewer.is-closing { animation: fade-out var(--t-fast) var(--ease-out) forwards; }
+.viewer.is-closing .viewer-image { animation: exit-pop var(--t-fast) var(--ease-out) forwards; }
+.viewer.is-closing::backdrop { animation: fade-out var(--t-fast) var(--ease-out) forwards; }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes exit-pop { to { opacity: 0; transform: scale(var(--pop)); } }
 .viewer-image { max-width: 100vw; max-height: 100dvh; object-fit: contain; }
 .viewer-close { position: fixed; top: calc(8px + env(safe-area-inset-top)); right: 8px; margin: 0; color: var(--ink); background: rgb(0 0 0 / 45%); }
 .meta { font-size: 0.75rem; color: var(--faint); margin-top: 4px; }
@@ -355,18 +397,25 @@ button.status-part {
 .prose table { display: block; overflow-x: auto; border-collapse: collapse; font: 0.875rem/1.4 var(--sans); }
 .prose th, .prose td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
 .prose hr { border: 0; border-top: 1px solid var(--line); margin: 1.2em 0; }
-/* Not after a code block: its wrapper would put the dot on a line of its own. */
+/* Not after a code block: its wrapper would put the dot on a line of its own. Every delta redraws the text, and the
+   dot with it, so the breathing waits: solid while words flow, a slow pulse once they pause. */
 .item-assistant.is-streaming .prose > :last-child:not(.code-block)::after {
   content: ""; display: inline-block; width: 0.5em; height: 0.5em; margin-left: 4px; border-radius: 50%;
   background: var(--lamp); vertical-align: 0.05em;
+  animation: blink 1.4s ease-in-out 0.6s infinite;
 }
 
-/* Copy buttons, as Pi Cloud's: quiet icons, a check once copied. */
+/* Copy buttons, as Pi Cloud's: quiet icons, a check once copied. A changed icon pops in (copy.ts adds .icon-pop). */
 .copy {
   display: grid; place-items: center; flex: none; width: var(--tap); height: var(--tap);
   border: 0; border-radius: var(--r-xs); background: transparent; color: var(--faint);
+  user-select: none; -webkit-user-select: none;
+  transition: transform var(--t-press) var(--ease-out);
 }
+.copy:active { transform: scale(0.95); }
 .copy svg { width: 16px; height: 16px; }
+.copy .icon-pop { animation: icon-pop var(--t-fast) var(--ease-out) both; }
+@keyframes icon-pop { from { opacity: 0; transform: scale(0.6); filter: blur(2px); } }
 .copy[data-state="check"] { color: var(--lamp); }
 .copy[data-state="alert"] { color: var(--danger); }
 .turn-actions { display: flex; gap: 2px; margin: -6px 0 4px -12px; }
@@ -388,14 +437,19 @@ button.status-part {
   .copy-code:hover { background: var(--raised); }
 }
 
-/* Thinking and tool calls: one quiet line each, open for the detail. */
+/* Thinking and tool calls: one quiet line each, open for the detail. The body fades in as it opens; its height does
+   not animate. */
 .fold > summary {
   display: flex; align-items: baseline; gap: 8px; min-height: 32px; padding: 6px 0;
   list-style: none; cursor: pointer; color: var(--muted); font-size: 0.875rem;
+  user-select: none; -webkit-user-select: none;
+  transition: opacity var(--t-press) var(--ease-out);
 }
+.fold > summary:active { opacity: 0.7; }
 .fold > summary::-webkit-details-marker { display: none; }
-.fold > summary::after { content: "›"; color: var(--faint); margin-left: auto; padding-left: 8px; transition: transform 0.15s; }
+.fold > summary::after { content: "›"; color: var(--faint); margin-left: auto; padding-left: 8px; transition: transform var(--t-fast) var(--ease-out); }
 .fold[open] > summary::after { transform: rotate(90deg); }
+.fold[open] > .fold-body { animation: fade-in var(--t-fast) var(--ease-out); }
 .fold-label { flex: none; font-style: italic; }
 .fold-preview { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--faint); font-style: italic; }
 .fold-body { padding: 4px 0 6px; }
@@ -436,17 +490,29 @@ button.status-part {
 /* ------------------------------------------------------------------ composer */
 
 .dock {
-  position: relative;
+  grid-row: 3; position: relative;
   padding: 8px var(--gutter) max(10px, env(safe-area-inset-bottom));
   background: var(--bg);
 }
+/* "Latest" rises in when the reader leaves the bottom and drops away quicker when they return. It stays in the page
+   (main.ts sets .is-shown), so scrolling to and fro about the bottom turns it around mid-way. */
 .jump {
   position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 4px; min-height: 34px; padding: 0 14px 0 10px;
   border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted);
   font-size: 0.875rem; box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+  user-select: none; -webkit-user-select: none;
+  transition: transform var(--t-base) var(--ease-out), opacity var(--t-base) var(--ease-out), visibility 0s;
 }
+.jump:not(.is-shown) {
+  transform: translateX(-50%) translateY(var(--rise)) scale(var(--pop)); opacity: 0; visibility: hidden; pointer-events: none;
+  transition: transform var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out), visibility 0s var(--t-fast);
+}
+.jump.is-shown:active { transform: translateX(-50%) scale(0.97); transition-duration: var(--t-press); }
 .jump svg { width: 14px; height: 14px; }
+@media (hover: hover) and (pointer: fine) {
+  .jump:hover { color: var(--ink); border-color: var(--edge); }
+}
 
 .composer {
   max-width: var(--column); margin: 0 auto;
@@ -456,39 +522,55 @@ button.status-part {
   backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
 }
 .composer:focus-within { border-color: var(--edge); }
+/* Images to send: a new one pops in (main.ts plays .enter-pop), a removed one just goes. While one is read, a
+   skeleton tile with a spinner holds its place. */
 .attachments {
   list-style: none; max-width: var(--column); margin: 0 auto 8px; padding: 0;
   display: flex; flex-wrap: wrap; gap: 8px;
 }
 .attachment { position: relative; width: 64px; height: 64px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
 .attachment-image { width: 100%; height: 100%; object-fit: cover; display: block; }
-.attachment-reading { display: grid; place-items: center; font-size: 0.6875rem; color: var(--faint); }
+.attachment-reading { display: grid; place-items: center; background: var(--raised); }
 .attachment-remove {
   position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; display: grid; place-items: center;
   border: 0; border-radius: 50%; background: rgb(0 0 0 / 70%); color: #fff; padding: 0;
+  transition: transform var(--t-press) var(--ease-out);
 }
+.attachment-remove:active { transform: scale(0.95); }
 .attachment-remove svg { width: 14px; height: 14px; }
 .round-attach { background: transparent; color: var(--muted); }
-.round-attach:hover { color: var(--ink); background: var(--raised); }
 .round-attach svg { width: 18px; height: 18px; }
+@media (hover: hover) and (pointer: fine) {
+  .round-attach:hover { color: var(--ink); background: var(--raised); }
+}
 .composer-input {
   flex: 1; min-width: 0; min-height: 36px; max-height: min(180px, 25dvh); padding: 7px 0; margin: 0;
   border: 0; background: transparent; resize: none; outline: none;
   font-size: 16px; line-height: 1.55;
 }
 .composer-input::placeholder { color: var(--faint); }
+/* Typing never animates: the send button lights up on the first key at once. Only a press and a change of mode
+   (send, steer, stop) move. */
 .round-button {
   flex: none; width: 38px; height: 38px; display: grid; place-items: center;
   border: 0; border-radius: 50%;
+  user-select: none; -webkit-user-select: none;
+  transition: transform var(--t-press) var(--ease-out);
 }
-.round-button:active:not(:disabled) { transform: scale(0.88); }
-.round-send { background: var(--ink); color: var(--bg); transition: transform 130ms ease-out, background 130ms ease-out; }
+.round-button:active:not(:disabled) { transform: scale(0.95); }
+.round-send { background: var(--ink); color: var(--bg); }
 .round-send:disabled { background: var(--line); color: var(--faint); }
-.round-send svg { width: 16px; height: 16px; }
-/* The same button steers Pi while it works, and stops it while the box is empty: only the mode's icon shows. */
-.round-send svg:not(.icon-send), .round-send[data-mode="steer"] .icon-send, .round-send[data-mode="stop"] .icon-send { display: none; }
-.round-send[data-mode="steer"] .icon-steer { display: block; }
-.round-send[data-mode="stop"] .icon-stop { display: block; fill: currentColor; stroke: none; width: 14px; height: 14px; }
+/* The same button steers Pi while it works, and stops it while the box is empty. The three icons share one cell and
+   cross-fade, the old one blurring out as the new one scales in. */
+.round-send svg {
+  grid-area: 1 / 1; width: 16px; height: 16px;
+  opacity: 0; transform: scale(0.6); filter: blur(2px);
+  transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), filter var(--t-fast) var(--ease-out);
+}
+.round-send .icon-stop { fill: currentColor; stroke: none; width: 14px; height: 14px; }
+.round-send[data-mode="send"] .icon-send, .round-send[data-mode="steer"] .icon-steer, .round-send[data-mode="stop"] .icon-stop {
+  opacity: 1; transform: none; filter: none;
+}
 @media (any-pointer: coarse) {
   .round-button { width: var(--tap); height: var(--tap); }
 }
@@ -610,4 +692,7 @@ dialog::backdrop { background: var(--scrim); }
   .lamp::before, .skeleton::after { animation: none; }
   .pulse.is-busy { background: var(--lamp); }
   .pulse.is-busy::after { display: none; }
+  .banner:not(.is-shown) { transform: none; }
+  .round-send svg { transform: none; filter: none; }
+  .copy .icon-pop { animation-name: fade-in; }
 }

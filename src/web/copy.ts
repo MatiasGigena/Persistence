@@ -35,14 +35,17 @@ export function copyButton(className: string, label: string, text: () => string)
   button.className = `copy ${className}`;
   button.type = 'button';
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const show = (state: 'copy' | 'check' | 'alert'): void => {
+  const show = (state: 'copy' | 'check' | 'alert', swap = true): void => {
     const name = state === 'check' ? `${label} copied` : state === 'alert' ? 'Copy unavailable; select the text instead' : `Copy ${label.toLowerCase()}`;
     button.setAttribute('aria-label', name);
     button.title = name;
     button.dataset.state = state;
-    button.replaceChildren(icon(state));
+    const svg = icon(state);
+    // A changed icon pops in (styles.css .icon-pop), so the swap reads as the same button answering.
+    if (swap) svg.classList.add('icon-pop');
+    button.replaceChildren(svg);
   };
-  show('copy');
+  show('copy', false);
   button.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();

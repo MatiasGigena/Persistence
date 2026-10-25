@@ -12,6 +12,11 @@ type ToolItem = Extract<ViewItem, { kind: 'tool' }>;
 
 /** How close to the bottom (px) still counts as at the bottom. */
 const STICK = 48;
+/** More new items than this in one draw is a load (history, a resync), not something arriving: no entrances. */
+const BULK = 6;
+/** The delay between the entrances of items that arrive together, and the most steps it takes. */
+const STAGGER_MS = 40;
+const STAGGER_STEPS = 4;
 
 interface Entry {
   readonly element: HTMLLIElement;
@@ -26,6 +31,25 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ''
   return element;
 }
 
+/**
+ * Plays a one-shot animation class (styles.css: .enter, .enter-pop, .fade-in, ...) on `element`, after `delay` ms.
+ * The class comes off when the animation ends, so moving the element in the DOM later does not play it again.
+ */
+export function play(element: HTMLElement, className: string, delay = 0): void {
+  element.classList.add(className);
+  if (delay) element.style.animationDelay = `${delay}ms`;
+  const end = (event: Event): void => {
+    // Animations of children (a fold opening, a streaming dot) bubble up here too.
+    if (event.target !== element || (event instanceof AnimationEvent && event.pseudoElement)) return;
+    element.removeEventListener('animationend', end);
+    element.removeEventListener('animationcancel', end);
+    element.classList.remove(className);
+    element.style.removeProperty('animation-delay');
+  };
+  element.addEventListener('animationend', end);
+  element.addEventListener('animationcancel', end);
+}
+
 /** The tool whose images show in the chat, not folded away (ADR 0031). */
 const SHOW_IMAGE = 'show_image';
 
@@ -37,8 +61,26 @@ export function initViewer(): void {
   const dialog = document.getElementById('viewer'), image = document.getElementById('viewer-image');
   if (!(dialog instanceof HTMLDialogElement) || !(image instanceof HTMLImageElement)) return;
   viewer = { dialog, image };
-  dialog.addEventListener('click', () => dialog.close());
-  dialog.addEventListener('close', () => { image.removeAttribute('src'); });
+  dialog.addEventListener('click', () => closeViewer(dialog));
+  // Escape, or Android's back: the same quick fade out as a tap. Where the browser does not let the cancel be held
+  // (no recent user activation), the dialog just closes.
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeViewer(dialog); });
+  dialog.addEventListener('close', () => {
+    dialog.classList.remove('is-closing');
+    image.removeAttribute('src');
+  });
+}
+
+/** Closes the viewer after its exit animation (styles.css .viewer.is-closing), quicker than its entrance. */
+function closeViewer(dialog: HTMLDialogElement): void {
+  if (!dialog.open || dialog.classList.contains('is-closing')) return;
+  dialog.classList.add('is-closing');
+  // getAnimations flushes styles, so the exit is among them; a cancelled one settles too, and an endless one is not
+  // waited for. No animations (an old browser): it closes at once.
+  const exits = dialog.getAnimations({ subtree: true }).filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity);
+  void Promise.allSettled(exits.map(animation => animation.finished)).then(() => {
+    if (dialog.classList.contains('is-closing')) dialog.close();
+  });
 }
 
 /** Thumbnails of `images`, each a button that opens it full size; one without data is a placeholder. */
@@ -58,10 +100,18 @@ function imageStrip(images: readonly ChatImage[], label: string): HTMLElement {
     img.alt = name;
     img.loading = 'lazy';
     img.decoding = 'async';
+    // The thumbnail (frame and all) fades in once its picture is there, never as an empty box first; a broken
+    // one shows too, with its alt text.
+    const loaded = (): void => button.classList.add('is-loaded');
+    img.addEventListener('load', loaded, { once: true });
+    img.addEventListener('error', loaded, { once: true });
     img.src = url;
+    // A picture already decoded (the same image redrawn, as when a sent message reaches the feed) shows at once.
+    if (img.complete && img.naturalWidth) loaded();
     button.append(img);
     button.addEventListener('click', () => {
       if (!viewer) return;
+      viewer.dialog.classList.remove('is-closing');
       viewer.image.src = url;
       viewer.image.alt = name;
       viewer.dialog.showModal();
@@ -99,6 +149,10 @@ export class ChatView {
   private items: readonly ViewItem[] = [];
   private frame = 0;
   private stuck = true;
+  /** Set once the first draw is done: what that draw shows is the history, never animated in. */
+  private drawn = false;
+  /** Some `set` since the last draw was not live (a snapshot, a hidden page): the next draw animates nothing. */
+  private quiet = false;
   private readonly resize: ResizeObserver;
 
   constructor(list: HTMLElement, scroller: HTMLElement, options: ChatViewOptions) {
@@ -113,9 +167,14 @@ export class ChatView {
     this.resize.observe(list);
   }
 
-  /** The items to show; drawn on the next animation frame. */
-  set(items: readonly ViewItem[]): void {
+  /**
+   * The items to show; drawn on the next animation frame. `live`: these items arrive while the reader watches, so
+   * new ones may enter with an animation; false for a snapshot (a first load, a reconnect), whose items are history.
+   */
+  set(items: readonly ViewItem[], live = true): void {
     this.items = items;
+    // A hidden page draws nothing until it is shown again, and then what came meanwhile is history too.
+    if (!live || document.visibilityState !== 'visible') this.quiet = true;
     if (!this.frame) this.frame = requestAnimationFrame(() => { this.frame = 0; this.draw(); });
   }
 
@@ -142,17 +201,25 @@ export class ChatView {
   }
 
   private draw(): void {
-    const live = new Set<string>();
+    const live = new Set(this.items.map(item => item.id));
+    const before = this.entries.size;
+    // A sent message that reaches the feed replaces its pending bubble: it brightens in place rather than entering.
+    const settled = new Set<string>();
+    for (const [id, entry] of this.entries) if (entry.item.kind === 'pending' && !live.has(id)) settled.add(entry.item.text);
+    const fresh: HTMLLIElement[] = [];
     let at: ChildNode | null = this.list.firstChild;
     if (at === this.emptyNote) at = at.nextSibling;
     for (const item of this.items) {
-      live.add(item.id);
       let entry = this.entries.get(item.id);
       if (!entry || entry.item.kind !== item.kind) {
+        const replaced = entry !== undefined;
         entry?.element.remove();
         entry = { element: create(item), item };
         this.entries.set(item.id, entry);
         update(entry.element, item, undefined);
+        if (item.kind === 'user' && settled.delete(item.text)) {
+          if (this.drawn) play(entry.element, 'is-settling');
+        } else if (!replaced) fresh.push(entry.element);
       } else if (entry.item !== item) {
         update(entry.element, item, entry.item);
         entry.item = item;
@@ -166,13 +233,22 @@ export class ChatView {
       entry.element.remove();
       this.entries.delete(id);
     }
+    // Entrances only for items arriving while the reader watches: not the first draw, not a quiet one, not a load
+    // (many at once, or several into an empty list). Items that arrive together follow each other closely.
+    const animate = this.drawn && !this.quiet && fresh.length <= BULK && (before > 0 || fresh.length === 1);
+    if (animate) fresh.forEach((element, k) => play(element, 'enter', Math.min(k, STAGGER_STEPS) * STAGGER_MS));
     const ends = turnEnds(this.items);
     for (const [id, entry] of this.entries) {
       const actions = entry.item.kind === 'assistant' ? entry.element.querySelector<HTMLElement>('.turn-actions') : null;
-      if (actions) actions.hidden = !ends.has(id);
+      if (!actions) continue;
+      const end = ends.has(id);
+      if (end && actions.hidden && animate) play(actions, 'fade-in');
+      actions.hidden = !end;
     }
     if (this.items.length) this.emptyNote.remove();
     else this.list.prepend(this.emptyNote);
+    this.drawn = true;
+    this.quiet = false;
     if (this.stuck) this.toBottom();
   }
 }
