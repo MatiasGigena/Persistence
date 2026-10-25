@@ -38,6 +38,20 @@
   --column: 46rem;
   --gutter: max(16px, env(safe-area-inset-left), env(safe-area-inset-right));
   --tap: 44px;
+
+  /* Motion: strong ease-out for entering and exiting, ease-in-out for moving on screen, the iOS drawer curve for
+     sheets. UI stays under 300ms; exits are quicker than entrances. --rise and --pop are the distance and scale an
+     entrance starts from: reduced motion zeroes them, so the same keyframes become plain fades. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --t-press: 120ms;
+  --t-fast: 160ms;
+  --t-base: 220ms;
+  --t-sheet: 320ms;
+  --rise: 8px;
+  --pop: 0.96;
+  --shake: 3px;
   font-synthesis: none;
   font-variant-ligatures: none;
 }
@@ -77,6 +91,35 @@ button:disabled { cursor: default; }
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 code, pre { font-family: var(--mono); }
+
+/* ------------------------------------------------------------------ motion primitives */
+
+/* Entrances: `.enter` fades an element up from --rise; `.enter-pop` scales it from --pop. Both run once on insert. */
+@keyframes enter { from { opacity: 0; transform: translateY(var(--rise)); } }
+@keyframes enter-pop { from { opacity: 0; transform: scale(var(--pop)); } }
+@keyframes fade-in { from { opacity: 0; } }
+.enter { animation: enter var(--t-base) var(--ease-out) both; }
+.enter-pop { animation: enter-pop var(--t-fast) var(--ease-out) both; }
+.fade-in { animation: fade-in var(--t-base) var(--ease-out) both; }
+
+/* Loading placeholders: a skeleton keeps the shape of what is coming (a select, a row, a line) with a slow sheen,
+   so a panel never shows up empty. A spinner is for an action in flight; it spins fast, which reads as fast. */
+.skeleton {
+  position: relative; overflow: hidden; color: transparent !important; pointer-events: none; user-select: none;
+  background: var(--raised); border-color: transparent !important; border-radius: var(--r-xs);
+}
+.skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 6%), transparent);
+  transform: translateX(-100%); animation: sheen 1.3s linear infinite;
+}
+@keyframes sheen { to { transform: translateX(100%); } }
+.skeleton-line { display: block; height: 0.8em; margin: 0.35em 0; border-radius: 4px; }
+.spinner {
+  display: inline-block; flex: none; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--ink); animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ------------------------------------------------------------------ the lamp */
 
@@ -502,7 +545,11 @@ dialog::backdrop { background: var(--scrim); }
   .icon-button:hover, .row:hover:not(:disabled) { background: transparent; }
 }
 
+/* Reduced motion means gentler, not none: entrances keep their fade but lose their travel and scale, and endless
+   decorative loops stop. Spinners keep turning: they say work is happening. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition: none !important; }
+  :root { --rise: 0px; --pop: 1; --shake: 0px; }
+  .lamp, .skeleton::after { animation: none; }
   .pulse.is-busy { background: var(--lamp); }
+  .pulse.is-busy::after { display: none; }
 }
