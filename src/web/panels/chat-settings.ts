@@ -51,7 +51,7 @@ interface Field {
   fill(choices: readonly Choice[], value: string, text?: string): void;
   /** Swaps the skeleton for the select, fading it in. */
   reveal(): void;
-  /** Applies a list that waited, keeping the value chosen. */
+  /** Applies a list and value that waited (a pending change of the user's is redrawn from the status after). */
   resume(): void;
 }
 
@@ -64,7 +64,7 @@ function field(label: string, held: () => boolean): Field {
   wrap.setAttribute('aria-busy', 'true');
   wrap.append(el('span', 'control-label', label), skeleton, select);
   let listed: string | undefined;
-  let waiting: readonly Choice[] | undefined;
+  let waiting: { choices: readonly Choice[]; value: string; text?: string } | undefined;
   const list = (choices: readonly Choice[]): void => {
     const key = JSON.stringify(choices);
     if (key === listed) return;
@@ -76,7 +76,7 @@ function field(label: string, held: () => boolean): Field {
     select,
     get ready() { return !select.hidden; },
     fill(choices, value, text) {
-      if (self.ready && (held() || document.activeElement === select)) { waiting = choices; return; }
+      if (self.ready && (held() || document.activeElement === select)) { waiting = { choices, value, text }; return; }
       waiting = undefined;
       list(choices);
       choose(select, value, text);
@@ -91,10 +91,10 @@ function field(label: string, held: () => boolean): Field {
     },
     resume() {
       if (!waiting || held()) return;
-      const keep = select.value;
-      list(waiting);
+      const { choices, value, text } = waiting;
       waiting = undefined;
-      choose(select, keep);
+      list(choices);
+      choose(select, value, text);
     },
   };
   select.addEventListener('blur', () => self.resume());
