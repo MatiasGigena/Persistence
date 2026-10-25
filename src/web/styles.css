@@ -545,7 +545,11 @@ button.status-part:active { opacity: 0.6; }
   .round-attach:hover { color: var(--ink); background: var(--raised); }
 }
 .composer-input {
-  flex: 1; min-width: 0; min-height: 36px; max-height: min(180px, 25dvh); padding: 7px 0; margin: 0;
+  /* As tall as the round buttons beside it, its padding centring one line between them: the text and the placeholder
+     sit on the icons' centre line, and a longer message grows upward from it. */
+  --row: 38px;
+  flex: 1; min-width: 0; min-height: var(--row); max-height: min(180px, 25dvh);
+  padding: calc((var(--row) - 1.55em) / 2) 0; margin: 0;
   border: 0; background: transparent; resize: none; outline: none;
   font-size: 16px; line-height: 1.55;
 }
@@ -574,6 +578,7 @@ button.status-part:active { opacity: 0.6; }
 }
 @media (any-pointer: coarse) {
   .round-button { width: var(--tap); height: var(--tap); }
+  .composer-input { --row: var(--tap); }
 }
 
 /* ------------------------------------------------------------------ dialogs */
