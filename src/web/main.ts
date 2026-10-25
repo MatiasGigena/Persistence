@@ -2,7 +2,7 @@
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { imageUrl, toChatImage } from './attach.ts';
 import { ChatView, el, initViewer, play } from './chat-view.ts';
-import { errorText, guessDeviceName, normalizeCode, shortModel, statusParts } from './format.ts';
+import { errorText, guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
@@ -67,11 +67,77 @@ function buzz(): void {
 
 // ------------------------------------------------------------------------------------------------ screens
 
-type Screen = 'boot' | 'pair' | 'gone' | 'chat';
+const SCREENS = ['boot', 'pair', 'gone', 'chat'] as const;
+type Screen = typeof SCREENS[number];
 
-/** Shows one screen. Its entrance is CSS: a screen that starts rendering plays its animations (styles.css, screens). */
-function show(screen: Screen): void {
-  for (const name of ['boot', 'pair', 'gone', 'chat'] as const) byId(`screen-${name}`, HTMLElement).hidden = name !== screen;
+/** The screen shown, or on its way in. index.html starts on the boot screen. */
+let current: Screen = 'boot';
+/** Same-document view transitions, where the browser has them; detected once, never assumed. */
+const canTransition = typeof document.startViewTransition === 'function';
+/** The view transition running, if any. Its incoming picture is live, so a change made meanwhile shows in it. */
+let running: ViewTransition | undefined;
+/** Without view transitions: how long a screen going out stays over the one coming in (its exit, --t-fast, and a margin). */
+const LEAVE_MS = 200;
+
+/** Shows `current` and hides the others; a screen still fading out (no view transitions) hides itself once done. */
+function settle(): void {
+  for (const name of SCREENS) {
+    const screen = byId(`screen-${name}`, HTMLElement);
+    if (name === current) {
+      screen.classList.remove('screen-leaving');
+      screen.hidden = false;
+    } else if (!screen.classList.contains('screen-leaving')) screen.hidden = true;
+  }
+}
+
+/**
+ * Makes a change to the page (`update`) as one view transition of `kind` (styles.css, screens): `screen` for a change
+ * of screen, `swap` for a skeleton giving way to its content in place. `update` runs exactly once in every case: at
+ * once on a hidden page or while another transition runs (it lands in that one's live picture), and also when the
+ * browser skips the transition or `update` throws. Call only where `canTransition`.
+ */
+function transition(kind: 'screen' | 'swap', update: () => void): void {
+  let done = false;
+  const once = (): void => {
+    if (done) return;
+    done = true;
+    update();
+  };
+  if (running || document.visibilityState !== 'visible') { once(); return; }
+  let vt: ViewTransition;
+  try { vt = document.startViewTransition(once); } catch { once(); return; }
+  const root = document.documentElement;
+  running = vt;
+  root.dataset.vt = kind;
+  // Skipped (another started, the page hid) or failed: `ready` rejects, and the update still runs, if it has not yet.
+  void vt.ready.catch(() => undefined);
+  void vt.updateCallbackDone.catch(() => undefined);
+  void vt.finished.catch(() => undefined).then(() => {
+    if (running === vt) {
+      running = undefined;
+      delete root.dataset.vt;
+    }
+    once();
+    settle();
+  });
+}
+
+/**
+ * Shows one screen, with `update` (what the screen must hold when it is first seen) made in the same step. A change
+ * of screen is a page transition: the old screen sinks back a little and fades, quickly, while the new one rises in,
+ * already complete. Without view transitions the same two animations run on the screens themselves, the old one kept
+ * over the new until its exit ends. The same screen again just runs `update`.
+ */
+function show(screen: Screen, update: () => void = () => undefined): void {
+  if (screen === current) { update(); return; }
+  const from = byId(`screen-${current}`, HTMLElement);
+  current = screen;
+  const change = (): void => { settle(); update(); };
+  if (canTransition) { transition('screen', change); return; }
+  if (!from.hidden) from.classList.add('screen-leaving');
+  change();
+  play(byId(`screen-${screen}`, HTMLElement), 'screen-entering');
+  setTimeout(() => { from.classList.remove('screen-leaving'); settle(); }, LEAVE_MS);
 }
 
 const GONE = {
@@ -227,12 +293,17 @@ function start(): void {
     empty: 'This is your one conversation with Pi. It never resets, and Pi remembers it. Write something to begin.',
     onStuck: stuck => { jump.classList.toggle('is-shown', !stuck); },
   });
+  // The first load draws nothing until it is whole (reveal): no empty note before the snapshot says so, no history
+  // landing ahead of the status.
+  view.hold();
   jump.addEventListener('click', () => view.toBottom());
   initViewer();
 
   const notice = (text: string, level: NoticeLevel = 'info'): void => store.notice(text, level);
   let reopen: string[] = [];
   let wasReady = false;
+  /** The first `ready` has been shown. Until then the chat is its skeleton (.is-loading) or not shown at all. */
+  let loaded = false;
   /** The link is ready: only then is store.status.busy current. */
   let linkReady = false;
 
@@ -292,6 +363,8 @@ function start(): void {
       .finally(() => { stopping = false; drawSend(); });
   };
   const submit = (): void => {
+    // Before the first load there is nothing to send into: the draft waits in the box (and in storage).
+    if (!loaded) return;
     const text = input.value.trim();
     if (!text && !attached.length) {
       if (sendButton.dataset.mode === 'stop' && !sendButton.disabled) abort();
@@ -407,7 +480,7 @@ function start(): void {
     const held = outbox.size > 0 || hush !== undefined;
     const mode = typed ? (working ? 'steer' : 'send') : working && !held ? 'stop' : 'send';
     sendButton.dataset.mode = mode;
-    sendButton.disabled = mode === 'stop' ? stopping : !typed || reading > 0;
+    sendButton.disabled = mode === 'stop' ? stopping : !typed || reading > 0 || !loaded;
     const label = mode === 'stop' ? 'Stop Pi' : mode === 'steer' ? 'Steer Pi' : 'Send';
     sendButton.setAttribute('aria-label', label);
     sendButton.title = label;
@@ -481,6 +554,50 @@ function start(): void {
   };
   retry.addEventListener('click', () => link.poke());
 
+  // -------------------------------------------------------------- the first load
+
+  // One reveal: the boot screen stays until the first `ready` (status and history drawn, at the bottom), then gives
+  // way to the finished chat. A load that takes longer follows the loading rule (format.ts loadStep): past
+  // LOAD_QUIET_MS the chat's skeleton (ghost messages, the header's places held, a composer that takes a draft but
+  // does not send), past LOAD_SLOW_MS the banner's line too. The skeleton then crossfades into the content in place.
+  // Later reconnects keep the history on screen and never show the skeleton again.
+
+  const app = byId('screen-chat', HTMLElement);
+  const feed = byId('feed', HTMLOListElement);
+  /** When `/api/me` let the app in: the loading rule counts from here. */
+  let loadStart = 0;
+  const loadTimers: ReturnType<typeof setTimeout>[] = [];
+  /** The chat as its skeleton (index.html starts it .is-loading); the composer sized for a draft kept from before. */
+  const showSkeleton = (): void => show('chat', autosize);
+  /** Applies the loading rule as it stands now: called at its marks and on each change of the link's state. */
+  const loading = (): void => {
+    const state = link.state;
+    if (loaded || state === 'ready' || state === 'closed') return;
+    const step = loadStep(performance.now() - loadStart, state);
+    if (step.skeleton) showSkeleton();
+    // One line at a time: a newer state's text replaces the one shown, never joins it.
+    if (step.text && !(bannerShown && bannerText.textContent === step.text)) setBanner(step.text, step.retry);
+  };
+  /** The link is ready: the first time, the chat whole and at once; after that, as it was. */
+  const reveal = (): void => {
+    for (const timer of loadTimers.splice(0)) clearTimeout(timer);
+    if (loaded) { show('chat'); return; }
+    loaded = true;
+    const fill = (): void => {
+      // The chat in the page first (it may still be on its way in), so the history lands scrolled to the bottom.
+      settle();
+      app.classList.remove('is-loading');
+      view.flush();
+      autosize();
+    };
+    if (current !== 'chat') show('chat', fill);
+    else if (canTransition) transition('swap', fill);
+    else {
+      fill();
+      for (const node of [feed, modelName, statusLine]) play(node, 'fade-in');
+    }
+  };
+
   function onState(state: LinkState): void {
     linkReady = state === 'ready';
     drawSend();
@@ -491,11 +608,13 @@ function start(): void {
     }
     if (wasReady && state !== 'closed') reopen = [...new Set([...reopen, ...store.disconnect()])];
     wasReady = false;
-    if (state === 'reconnecting') {
-      if (!bannerShown) bannerTimer = setTimeout(() => setBanner('Reconnecting…', true), RECONNECT_BANNER_MS);
-      else setBanner('Reconnecting…', true);
+    if (state !== 'closed' && !loaded) loading();
+    else if (state === 'reconnecting') {
+      const { text, retry: canRetry } = LINK_TEXT.reconnecting;
+      if (!bannerShown) bannerTimer = setTimeout(() => setBanner(text, canRetry), RECONNECT_BANNER_MS);
+      else setBanner(text, canRetry);
     }
-    else if (state === 'offline') setBanner('Offline. Connect to Tailscale; retrying.', true);
+    else if (state === 'offline') setBanner(LINK_TEXT.offline.text, LINK_TEXT.offline.retry);
     else if (state === 'closed') {
       const by = link.closedBy;
       if (by === 'unauthorized' || by === 'unpaired') { sheet.close(); pairScreen(() => location.reload()); }
@@ -523,7 +642,7 @@ function start(): void {
         return;
       case 'ready': {
         save(session, RELOAD_KEY, '');
-        show('chat');
+        reveal();
         for (const [id, { text, steer, images }] of outbox) deliver(id, text, steer, images);
         // Warms Chat settings' lists once the page is idle, so the sheet opens filled.
         prefetchSettings(link, store);
@@ -567,8 +686,13 @@ function start(): void {
     const state = await me();
     if (state.state === 'unpaired') { pairScreen(() => void boot()); return; }
     if (state.state === 'forbidden') { gone('forbidden'); return; }
-    show('chat');
-    if (state.state === 'offline') setBanner('Offline. Connect to Tailscale; retrying.', true);
+    loadStart = performance.now();
+    loadTimers.push(setTimeout(loading, LOAD_QUIET_MS), setTimeout(loading, LOAD_SLOW_MS));
+    // No tailnet: nothing is coming soon, so the skeleton and the reason show at once.
+    if (state.state === 'offline') {
+      showSkeleton();
+      setBanner(LINK_TEXT.offline.text, LINK_TEXT.offline.retry);
+    }
     link.start();
   }
   void boot();

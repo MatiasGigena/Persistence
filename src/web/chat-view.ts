@@ -153,6 +153,8 @@ export class ChatView {
   private drawn = false;
   /** Some `set` since the last draw was not live (a snapshot, a hidden page): the next draw animates nothing. */
   private quiet = false;
+  /** Drawing waits for `flush` (a first load shows its whole state at once, never piece by piece). */
+  private held = false;
   private readonly resize: ResizeObserver;
 
   constructor(list: HTMLElement, scroller: HTMLElement, options: ChatViewOptions) {
@@ -175,7 +177,29 @@ export class ChatView {
     this.items = items;
     // A hidden page draws nothing until it is shown again, and then what came meanwhile is history too.
     if (!live || document.visibilityState !== 'visible') this.quiet = true;
-    if (!this.frame) this.frame = requestAnimationFrame(() => { this.frame = 0; this.draw(); });
+    if (!this.frame && !this.held) this.frame = requestAnimationFrame(() => { this.frame = 0; this.draw(); });
+  }
+
+  /**
+   * Holds drawing until `flush`. Items `set` meanwhile are kept, and nothing shows, the empty note included: a list
+   * not yet loaded is not known to be empty.
+   */
+  hold(): void {
+    this.held = true;
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
+  }
+
+  /**
+   * Draws the items now, as history (no entrances), and lifts a hold. Call it with the list in the page, so it lands
+   * scrolled to the bottom before it is first seen.
+   */
+  flush(): void {
+    this.held = false;
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
+    this.quiet = true;
+    this.draw();
   }
 
   /** Scrolls to the newest item and sticks there. */

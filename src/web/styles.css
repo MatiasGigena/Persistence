@@ -160,9 +160,23 @@ code, pre { font-family: var(--mono); }
 }
 .card { width: min(100%, 26rem); }
 
-/* Screens arrive rather than swap. show() only flips `hidden`, and an element that starts rendering runs its
-   animations, so each entrance plays whenever its screen appears. Fills are `backwards` only, so nothing is held
-   once they end, and nothing waits on them: every control takes taps from the first frame. */
+/* A change of screen is one page transition (main.ts show): the old screen sinks back a little and fades, quickly,
+   while the new one rises in, already complete; the exit is the quicker. It is a view transition of the whole page,
+   whose incoming picture is live, so whatever the new screen plays (a card's lines rising) plays inside it. main.ts
+   sets data-vt for the kind while one runs. Fills are `both` only on the pictures, which go when it ends. */
+@keyframes screen-out { to { opacity: 0; transform: scale(var(--pop)); } }
+@keyframes screen-in { from { opacity: 0; transform: translateY(var(--rise)); } }
+:root[data-vt="screen"]::view-transition-old(root) { animation: screen-out var(--t-fast) var(--ease-out) both; }
+:root[data-vt="screen"]::view-transition-new(root) { animation: screen-in var(--t-base) var(--ease-out) both; }
+/* The chat's skeleton giving way to its content, in place: the browser's crossfade, which keeps what is the same in
+   both (the header, the composer) perfectly still, on our curve. */
+:root[data-vt="swap"]::view-transition-old(root),
+:root[data-vt="swap"]::view-transition-new(root) { animation-duration: var(--t-base); animation-timing-function: var(--ease-out); }
+/* Without view transitions, the same pair on the screens themselves: the old one stays over the new, fixed in place
+   and deaf to taps, until its exit ends; the new one takes taps from its first frame. */
+.screen-leaving { z-index: 5; pointer-events: none; animation: screen-out var(--t-fast) var(--ease-out) both; }
+.screen-center.screen-leaving { position: fixed; inset: 0; }
+.screen-entering { animation: screen-in var(--t-base) var(--ease-out) backwards; }
 
 /* The boot lamp fades in late, so a quick start shows nothing at all and then the chat, never a flash of lamp. */
 #screen-boot .lamp { animation: fade-in var(--t-sheet) var(--ease-out) 200ms backwards; }
@@ -175,10 +189,6 @@ code, pre { font-family: var(--mono); }
 .screen-center .card > :nth-child(5) { --stagger: 160ms; }
 .screen-center .card > :nth-child(n + 6) { --stagger: 200ms; }
 
-/* The chat: the frame fades in and the conversation and composer rise a little into place. */
-#screen-chat { animation: fade-in var(--t-base) var(--ease-out) backwards; }
-#screen-chat > .scroller { animation: enter var(--t-base) var(--ease-out) backwards; }
-#screen-chat > .dock { animation: enter var(--t-base) var(--ease-out) 40ms backwards; }
 .screen-title { font: 600 1.6rem/1.2 var(--serif); margin: 0 0 10px; letter-spacing: -0.01em; }
 .screen-text { color: var(--muted); margin: 0 0 24px; }
 .screen-text code { font-size: 0.9em; background: var(--code); padding: 1px 5px; border-radius: 5px; color: var(--ink); }
@@ -251,6 +261,17 @@ code, pre { font-family: var(--mono); }
 .brand { font: 600 14px/1 var(--mono); margin: 0 4px 0 0; letter-spacing: -0.01em; }
 
 .top-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; color: var(--faint); }
+
+/* The first load (main.ts): until the first `ready` the chat is its skeleton, .is-loading. Ghosts hold the places of
+   the model name, the status line and the conversation at their sizes, and the real ones stay out until all of it is
+   there; then the one swaps for the other in a single crossfade, with nothing moving. */
+.app:not(.is-loading) .ghost { display: none; }
+.app.is-loading :is(#model-name, #status, #feed) { display: none; }
+.app.is-loading .pulse::after { display: none; }
+.ghost-model { flex: none; width: 10em; height: 0.75em; font-size: 0.75rem; border-radius: 4px; }
+.status.ghost .skeleton-line { width: 5em; height: 0.75em; margin: 0; }
+.status.ghost .skeleton-line:nth-child(2) { width: 7em; }
+.status.ghost .skeleton-line:nth-child(3) { width: 3.5em; }
 
 .icon-button {
   margin-left: auto; flex: none;
@@ -325,6 +346,18 @@ button.status-part:active { opacity: 0.6; }
   display: flex; flex-direction: column; gap: 18px;
 }
 .feed-agent { padding-top: 8px; }
+
+/* The conversation's skeleton: messages in outline, the user's and Pi's in turn, at the bottom where the newest
+   will land. Bubbles are a real one-line and two-line bubble's height; reply lines are a prose line's pitch. */
+.app.is-loading .scroller { overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+.feed-ghost { flex: none; width: 100%; }
+.ghost-user { align-self: flex-end; width: min(46%, 17rem); height: 48px; border-radius: var(--r-lg); }
+.ghost-short { width: min(30%, 10rem); }
+.ghost-tall { width: min(64%, 23rem); height: 70px; }
+.ghost-reply .skeleton-line { width: 94%; height: 0.75em; margin: 0.5em 0; }
+.ghost-reply .skeleton-line:nth-child(even) { width: 86%; }
+.ghost-reply .skeleton-line:last-child { width: 58%; }
+.ghost-brief .skeleton-line:last-child { width: 36%; }
 
 .empty { margin: 18vh auto 0; max-width: 22rem; text-align: center; color: var(--muted); font: italic 1.0625rem/1.55 var(--serif); }
 
@@ -758,4 +791,6 @@ dialog::backdrop { background: var(--scrim); }
   .banner:not(.is-shown) { transform: none; }
   .round-send svg { transform: none; filter: none; }
   .copy .icon-pop { animation-name: fade-in; }
+  /* A change of screen is a plain short crossfade (--rise and --pop are zero), the same length both ways. */
+  :root[data-vt="screen"]::view-transition-new(root), .screen-entering { animation-duration: var(--t-fast); }
 }

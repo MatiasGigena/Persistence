@@ -120,16 +120,18 @@ SOFTWARE.
   </div>
 </section>
 
-<main id="screen-chat" class="app" hidden>
+<main id="screen-chat" class="app is-loading" hidden>
   <header class="top">
     <div class="top-row">
       <h1 class="brand">Pi</h1>
       <span id="model-name" class="top-model"></span>
+      <span class="ghost ghost-model skeleton" aria-hidden="true"></span>
       <button id="settings-button" class="icon-button" type="button" aria-label="Chat settings" title="Chat settings" aria-haspopup="dialog" aria-controls="sheet">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg>
       </button>
     </div>
     <div id="status" class="status" aria-label="Status"></div>
+    <div class="ghost status" aria-hidden="true"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line"></span></div>
     <div id="pulse" class="pulse" aria-hidden="true"></div>
   </header>
   <div id="banner" class="banner" role="status" hidden>
@@ -138,6 +140,15 @@ SOFTWARE.
   </div>
   <div id="scroller" class="scroller">
     <ol id="feed" class="feed" aria-label="Conversation with Pi"></ol>
+    <div class="ghost feed feed-ghost" aria-hidden="true">
+      <div class="ghost-user skeleton"></div>
+      <div class="ghost-reply"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line"></span></div>
+      <div class="ghost-user ghost-short skeleton"></div>
+      <div class="ghost-reply ghost-brief"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line"></span></div>
+      <div class="ghost-user ghost-tall skeleton"></div>
+      <div class="ghost-reply"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line"></span></div>
+    </div>
+    <p class="sr-only ghost">Loading the conversation…</p>
   </div>
   <div class="dock">
     <button id="jump" class="jump" type="button" hidden>

@@ -179,3 +179,35 @@ export function guessDeviceName(userAgent: string): string {
 }
 
 export const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+// ------------------------------------------------------------------------------------------------ the first load
+
+/** The loading rule's marks: under QUIET nothing new shows; until SLOW a skeleton; past it, a skeleton and a line. */
+export const LOAD_QUIET_MS = 300;
+export const LOAD_SLOW_MS = 1_500;
+
+/** What the link is doing, as one line (the banner's); `retry` when "Retry now" can start an attempt at once. */
+export const LINK_TEXT = {
+  connecting: { text: 'Connecting…', retry: false },
+  reconnecting: { text: 'Reconnecting…', retry: true },
+  offline: { text: 'Offline. Connect to Tailscale; retrying.', retry: true },
+} as const;
+
+/** What the first load shows: the chat's skeleton or still the boot screen, and its line ('' for none). */
+export interface LoadStep {
+  readonly skeleton: boolean;
+  readonly text: string;
+  readonly retry: boolean;
+}
+
+/**
+ * The first load, `elapsed` ms after `/api/me` let the app in, before the first `ready`: the boot screen at first, so
+ * a quick load goes straight to the finished chat; then the chat's skeleton; then the skeleton and a short line, the
+ * link's own (connecting, or reconnecting after a failed attempt). Offline skips the wait: nothing is coming soon, so
+ * the skeleton and the reason show at once.
+ */
+export function loadStep(elapsed: number, state: keyof typeof LINK_TEXT): LoadStep {
+  const skeleton = state === 'offline' || elapsed >= LOAD_QUIET_MS;
+  const line = state === 'offline' || elapsed >= LOAD_SLOW_MS ? LINK_TEXT[state] : undefined;
+  return { skeleton, text: line?.text ?? '', retry: line?.retry ?? false };
+}
