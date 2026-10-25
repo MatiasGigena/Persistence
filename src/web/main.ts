@@ -7,7 +7,7 @@ import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
 import { agentsView } from './panels/agents.ts';
-import { chatSettingsView } from './panels/chat-settings.ts';
+import { chatSettingsView, prefetchSettings } from './panels/chat-settings.ts';
 import { memoryView } from './panels/memory.ts';
 import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
@@ -512,6 +512,8 @@ function start(): void {
         save(session, RELOAD_KEY, '');
         show('chat');
         for (const [id, { text, steer, images }] of outbox) deliver(id, text, steer, images);
+        // Warms Chat settings' lists once the page is idle, so the sheet opens filled.
+        prefetchSettings(link, store);
         const names = reopen;
         reopen = [];
         for (const name of names) {

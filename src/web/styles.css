@@ -664,6 +664,16 @@ dialog::backdrop { background: var(--scrim); }
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 1rem/1.6 var(--serif); }
 .skeleton-lines { padding: 2px 0; }
 .feed-skeleton { max-width: var(--column); margin: 0 auto; padding: 20px 0; }
+/* The loading rule (sheet.ts): a skeleton stays unseen for its first 200ms, keeping its room so nothing jumps, then
+   fades in; an answer that comes sooner replaces it before it ever shows. Past 1.5s a short line joins it. Both are
+   delays rather than timers, so they end with the skeleton they belong to. */
+.skeleton-wait { animation: fade-in var(--t-base) var(--ease-out) 200ms backwards; }
+.skeleton-slow {
+  color: var(--faint); font-size: 0.8125rem; margin: 10px 0 0;
+  animation: fade-in var(--t-base) var(--ease-out) 1500ms backwards;
+}
+.rows > .skeleton-slow { padding: 0 var(--gutter); }
+.controls > .skeleton-slow { margin: 0; }
 
 /* Chat settings, as Pi Cloud's sheet: labelled selects, then switch rows, then rows into Agents and Memory. */
 .controls { display: grid; gap: 14px; padding: 6px 0 4px; }

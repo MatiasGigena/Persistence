@@ -6,10 +6,13 @@ import { el } from '../chat-view.ts';
 import { errorText, memoryHeader, modelRef, sortModels } from '../format.ts';
 import { disablePush, enablePush, pushState } from '../push.ts';
 import type { PushState } from '../push.ts';
+import type { Link } from '../link.ts';
+import type { Store } from '../store.ts';
 import type { ModelChoice } from '../../protocol/messages.ts';
 import { agentsView } from './agents.ts';
+import { Shared } from './cache.ts';
 import { memoryView } from './memory.ts';
-import { fadeIn, renderRows } from './sheet.ts';
+import { fadeIn, renderRows, SKELETON_WAIT, slowNote } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 import { setTools } from './tools.ts';
 
@@ -32,11 +35,64 @@ const PUSH_TEXT: Readonly<Record<PushState, string>> = {
 interface Choice { readonly value: string; readonly text: string; readonly disabled?: boolean }
 
 /**
- * The lists last loaded, kept across openings of the sheet: a select shows them at once and the fresh list, asked
- * for in the background, replaces them only if it differs. Levels are per model.
+ * The lists last loaded, kept across openings of the sheet and warmed before the first (`prefetchSettings`): a select
+ * shows them at once and the fresh list, asked for in the background, replaces them only if it differs. Both are asked
+ * for by the model in use (its ref, '' before the first status): levels are the model's, and the model list carries
+ * the current model, so a switch asks again rather than joining a request from before it.
  */
-let modelsCache: readonly ModelChoice[] | undefined;
-const levelsCache = new Map<string, readonly string[]>();
+const modelsCache = new Shared<readonly ModelChoice[]>();
+const levelsCache = new Shared<readonly string[]>();
+
+/** The model list, asked for while `model` is in use; joins a request for it in flight. */
+function loadModelList(link: Link, model: string): Promise<readonly ModelChoice[]> {
+  return modelsCache.load(model, () => link.request('models', {}).then(r => r.models));
+}
+
+/**
+ * `model`'s effort levels (the server answers for the model in use), joining a request for them in flight. The answer
+ * is kept only if `model` is still the status's: one that comes across a switch made elsewhere may be either model's.
+ */
+function loadLevelList(link: Link, store: Store, model: string): Promise<readonly string[]> {
+  return levelsCache.load(model, () => link.request('thinking.levels', {}).then(r => r.levels), () => (store.status?.model ?? '') === model);
+}
+
+/** Runs `task` when the page is idle (after the first paint), or shortly where requestIdleCallback is missing (Safari). */
+function whenIdle(task: () => void): void {
+  if ('requestIdleCallback' in window) requestIdleCallback(task, { timeout: 2000 });
+  else setTimeout(task, 300);
+}
+
+/** The store `prefetchSettings` follows, so a reconnect does not subscribe it twice. */
+let warming: Store | undefined;
+
+/**
+ * Warms the Chat settings sheet's lists in the background, once the page is idle, so the sheet opens filled: the
+ * model list and the current model's effort levels, and again whenever the status's model changes (levels are per
+ * model). It asks only for what is not cached yet: the sheet refreshes its lists itself each time it opens, and a
+ * reconnect should not cost the server a listing (which may run the `claude` CLI). Requests are shared with the
+ * sheet's own (an open sheet joins them, and its errors show there); failures here are dropped. Call it each time the
+ * link is ready.
+ */
+export function prefetchSettings(link: Link, store: Store): void {
+  whenIdle(() => {
+    const warm = (): void => {
+      const model = store.status?.model ?? '';
+      if (!modelsCache.get(model)) void loadModelList(link, model).catch(() => undefined);
+      if (!levelsCache.get(model)) void loadLevelList(link, store, model).catch(() => undefined);
+    };
+    warm();
+    if (warming === store) return;
+    warming = store;
+    let seen = store.status?.model;
+    // Subscribed before any sheet opens, so on a switch this asks first and an open sheet's own reload joins it.
+    store.subscribe(() => {
+      const now = store.status?.model;
+      if (now === seen) return;
+      seen = now;
+      warm();
+    });
+  });
+}
 
 /** A labelled select, as Pi Cloud's controls; a skeleton holds its place until its list is known. */
 interface Field {
@@ -58,10 +114,11 @@ interface Field {
   resume(value?: string, text?: string): void;
 }
 
-function field(label: string, held: () => boolean): Field {
+/** `held` says whether a list must wait (a change pending); `onReveal` runs once the select shows. */
+function field(label: string, held: () => boolean, onReveal: () => void): Field {
   const wrap = el('label', 'control');
   const select = el('select', 'control-select');
-  const skeleton = el('span', 'control-skeleton skeleton');
+  const skeleton = el('span', `control-skeleton skeleton ${SKELETON_WAIT}`);
   skeleton.setAttribute('aria-hidden', 'true');
   select.hidden = true;
   wrap.setAttribute('aria-busy', 'true');
@@ -91,6 +148,7 @@ function field(label: string, held: () => boolean): Field {
       select.hidden = false;
       wrap.removeAttribute('aria-busy');
       fadeIn(select);
+      onReveal();
     },
     resume(current, currentText) {
       if (!waiting || held()) return;
@@ -153,13 +211,16 @@ export function chatSettingsView(ctx: PanelContext): View {
     render(body) {
       const controls = el('div', 'controls');
       let pending = false;
-      const model = field('Model', () => pending);
-      const effort = field('Thinking', () => pending);
+      // Lists not warmed yet: the loading rule's line under the selects, while either still waits.
+      const slow = slowNote();
+      const shown = (): void => { if (model.ready && effort.ready) slow.remove(); };
+      const model = field('Model', () => pending, shown);
+      const effort = field('Thinking', () => pending, shown);
       const busyNote = el('p', 'sheet-note', "Changes apply from Pi's next request.");
       busyNote.hidden = true;
       const state = el('p', 'sheet-note');
       state.hidden = true;
-      controls.append(model.wrap, effort.wrap);
+      controls.append(model.wrap, effort.wrap, slow);
 
       const switches = el('div', 'switches');
       const tools = switchRow('Coding tools');
@@ -187,12 +248,10 @@ export function chatSettingsView(ctx: PanelContext): View {
       const loadModels = (): void => {
         const current = ctx.store.status?.model ?? '';
         shownModel = current;
-        if (modelsCache) model.fill(modelChoices(modelsCache, current), current);
-        ctx.link.request('models', {}).then(
-          ({ models }) => {
-            modelsCache = models;
-            model.fill(modelChoices(models, current), ctx.store.status?.model ?? current);
-          },
+        const cached = modelsCache.latest;
+        if (cached) model.fill(modelChoices(cached, current), current);
+        loadModelList(ctx.link, current).then(
+          models => model.fill(modelChoices(models, current), ctx.store.status?.model ?? current),
           (error: unknown) => {
             if (!model.ready) { choose(model.select, current); model.reveal(); }
             say(`Could not list models: ${errorText(error)}`, true);
@@ -205,9 +264,8 @@ export function chatSettingsView(ctx: PanelContext): View {
         const forModel = shownModel;
         const cached = levelsCache.get(forModel);
         if (cached) effort.fill(levelChoices(cached), current, levelText(current));
-        ctx.link.request('thinking.levels', {}).then(
-          ({ levels }) => {
-            levelsCache.set(forModel, levels);
+        loadLevelList(ctx.link, ctx.store, forModel).then(
+          levels => {
             // A level the model does not list (set before a model switch) still shows, as the one in use.
             const now = ctx.store.status?.thinkingLevel ?? current;
             effort.fill(levelChoices(levels), now, levelText(now));

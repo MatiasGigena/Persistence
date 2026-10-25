@@ -6,6 +6,13 @@ import type { ViewLine } from '../../protocol/messages.ts';
 import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 
+/**
+ * The top level's lines last loaded, with the memory's counters (status.memory) as they were when asked for. The
+ * level opens on them at once while the counters still match, and reloads behind them. Not warmed before the first
+ * opening: the view runs to 128 KB, changes with every turn, and would cost a phone that much on each reconnect.
+ */
+let lastView: { readonly memory: string; readonly lines: readonly ViewLine[] } | undefined;
+
 /** A filterable list of view lines; `load` gives them. */
 function linesView(ctx: PanelContext, title: string, load: () => Promise<readonly ViewLine[]>, top: boolean): View {
   let unsubscribe = (): void => undefined;
@@ -26,6 +33,8 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
       body.append(header, search, list, state);
       let lines: readonly ViewLine[] = [];
       let loading = false, again = false, loaded = false, entered = false;
+      const memoryKey = (): string => JSON.stringify(ctx.store.status?.memory ?? null);
+      const toEnd = (): void => list.lastElementChild?.scrollIntoView({ block: 'end' });
       const draw = (): void => {
         const needle = search.value.trim().toLowerCase();
         const shown = needle ? lines.filter(l => `${lineLabel(l)} ${l.text}`.toLowerCase().includes(needle)) : lines;
@@ -47,27 +56,46 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
       const reload = (): void => {
         if (loading) { again = true; return; }
         loading = true;
+        const asked = memoryKey();
+        // Lines the same as those shown (a reload behind lines kept from before) leave the list and its scroll be.
+        let same = false;
         load().then(
-          next => { lines = next; loaded = true; },
-          (error: unknown) => { if (!loaded) state.textContent = errorText(error); },
+          next => {
+            same = loaded && JSON.stringify(next) === JSON.stringify(lines);
+            lines = next;
+            loaded = true;
+            if (top) lastView = { memory: asked, lines: next };
+          },
+          // A failed reload keeps the lines shown; with none yet, its error shows instead.
+          (error: unknown) => { if (loaded) same = true; else state.textContent = errorText(error); },
         ).finally(() => {
           loading = false;
-          draw();
-          if (top) list.lastElementChild?.scrollIntoView({ block: 'end' });
+          if (!same) {
+            draw();
+            if (top) toEnd();
+          }
           if (again) { again = false; reload(); }
         });
       };
       search.addEventListener('input', draw);
       if (top) {
-        let shownMemory = JSON.stringify(ctx.store.status?.memory ?? null);
+        let shownMemory = memoryKey();
         header.textContent = memoryHeader(ctx.store.status?.memory);
         unsubscribe = ctx.store.subscribe(() => {
-          const memory = JSON.stringify(ctx.store.status?.memory ?? null);
+          const memory = memoryKey();
           if (memory === shownMemory) return;
           shownMemory = memory;
           header.textContent = memoryHeader(ctx.store.status?.memory);
           reload();
         });
+        // Lines kept from the last opening, the memory unchanged since: shown at once, scrolled to the end once the
+        // level is in the sheet (the sheet scrolls a new level to its top first).
+        if (lastView?.memory === shownMemory) {
+          lines = lastView.lines;
+          loaded = entered = true;
+          draw();
+          requestAnimationFrame(toEnd);
+        }
       } else header.textContent = 'Each line opens into the two lines under it.';
       reload();
     },

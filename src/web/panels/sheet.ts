@@ -270,6 +270,26 @@ export function renderRows(list: HTMLElement, rows: readonly Row[], onPick: (key
   }));
 }
 
+// ------------------------------------------------------------------ loading
+
+// The loading rule, the same in every panel. A panel with something cached shows it at once and refreshes it in the
+// background. Otherwise it puts a skeleton in the place of what is coming, but the skeleton stays invisible (keeping
+// its room, so nothing jumps) for its first 200ms: an answer that comes by then replaces it unseen, and a quick load
+// never flashes one. Past 1.5s a short line says it is still loading. Content that replaces a skeleton fades in
+// (`fadeIn`, or `renderRows` with `enter`). The delays are CSS (styles.css, dialogs: `.skeleton-wait` and
+// `.skeleton-slow`), so they need no timers and end with the skeleton.
+
+/** The class that holds a skeleton invisible for the loading rule's first moments, then fades it in. */
+export const SKELETON_WAIT = 'skeleton-wait';
+
+/** The loading rule's line for a long wait, hidden until 1.5s in; it goes with the skeleton it is placed in. */
+export function slowNote(tag: 'p' | 'li' = 'p'): HTMLElement {
+  const note = el(tag, 'skeleton-slow', 'Still loading…');
+  // Screen readers already have the skeleton's own "Loading…".
+  note.setAttribute('aria-hidden', 'true');
+  return note;
+}
+
 /** Line widths for placeholders, varied so they read as text rather than as bars. */
 const WIDTHS = ['72%', '54%', '86%', '63%', '45%', '78%'];
 
@@ -279,11 +299,14 @@ function line(width: string): HTMLElement {
   return node;
 }
 
-/** Fills `list` with `count` placeholder rows shaped as the rows to come, until `renderRows` replaces them. */
+/**
+ * Fills `list` with `count` placeholder rows shaped as the rows to come, until `renderRows` replaces them. They follow
+ * the loading rule: unseen at first, then a skeleton, then a line saying it is still loading.
+ */
 export function skeletonRows(list: HTMLElement, count: number, shape: { readonly mark?: boolean; readonly detail?: boolean } = {}): void {
   list.setAttribute('aria-busy', 'true');
   list.replaceChildren(...Array.from({ length: count }, (_, index) => {
-    const li = el('li');
+    const li = el('li', SKELETON_WAIT);
     li.setAttribute('aria-hidden', 'true');
     const row = el('div', 'row row-skeleton');
     if (shape.mark) row.append(el('span', 'row-mark skeleton'));
@@ -293,15 +316,18 @@ export function skeletonRows(list: HTMLElement, count: number, shape: { readonly
     row.append(text, el('span', 'row-aside skeleton skeleton-line'));
     li.append(row);
     return li;
-  }), el('li', 'sr-only', 'Loading…'));
+  }), slowNote('li'), el('li', 'sr-only', 'Loading…'));
 }
 
-/** `count` placeholder lines of text, for a message or a conversation on its way. */
+/** `count` placeholder lines of text, for a message or a conversation on its way, under the loading rule. */
 export function skeletonLines(count: number): HTMLElement {
   const box = el('div', 'skeleton-lines');
   box.setAttribute('aria-busy', 'true');
   const lines = Array.from({ length: count }, (_, index) => line(index === count - 1 ? '38%' : WIDTHS[index % WIDTHS.length] ?? '60%'));
-  for (const node of lines) node.setAttribute('aria-hidden', 'true');
-  box.append(...lines, el('span', 'sr-only', 'Loading…'));
+  for (const node of lines) {
+    node.setAttribute('aria-hidden', 'true');
+    node.classList.add(SKELETON_WAIT);
+  }
+  box.append(...lines, slowNote(), el('span', 'sr-only', 'Loading…'));
   return box;
 }
