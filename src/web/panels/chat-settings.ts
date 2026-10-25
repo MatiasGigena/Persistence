@@ -51,8 +51,11 @@ interface Field {
   fill(choices: readonly Choice[], value: string, text?: string): void;
   /** Swaps the skeleton for the select, fading it in. */
   reveal(): void;
-  /** Applies a list and value that waited (a pending change of the user's is redrawn from the status after). */
-  resume(): void;
+  /**
+   * Applies a list and value that waited (a pending change of the user's is redrawn from the status after). `value`,
+   * when given, is the one now current and replaces the waiting value, which a change since may have made stale.
+   */
+  resume(value?: string, text?: string): void;
 }
 
 function field(label: string, held: () => boolean): Field {
@@ -89,12 +92,13 @@ function field(label: string, held: () => boolean): Field {
       wrap.removeAttribute('aria-busy');
       fadeIn(select);
     },
-    resume() {
+    resume(current, currentText) {
       if (!waiting || held()) return;
       const { choices, value, text } = waiting;
       waiting = undefined;
       list(choices);
-      choose(select, value, text);
+      if (current === undefined) choose(select, value, text);
+      else choose(select, current, currentText);
     },
   };
   select.addEventListener('blur', () => self.resume());
@@ -215,7 +219,9 @@ export function chatSettingsView(ctx: PanelContext): View {
         );
       };
       // A status that arrives while a change is pending is drawn once the change settles.
-      const settle = (): void => { lock(false); model.resume(); effort.resume(); last = ''; draw(); };
+      // The model resumes with the one now in use (the switch's, or the status's after a failure), never the value a
+      // list that waited carried from before the switch.
+      const settle = (): void => { lock(false); model.resume(shownModel); effort.resume(); last = ''; draw(); };
       model.select.addEventListener('change', () => {
         const key = model.select.value;
         const [provider = '', ...rest] = key.split('/');
@@ -229,7 +235,11 @@ export function chatSettingsView(ctx: PanelContext): View {
             ctx.notice(`Model: ${key} (from the next message; saved as default)`);
             loadLevels();
           },
-          (error: unknown) => { choose(model.select, ctx.store.status?.model ?? ''); say(`Model not changed: ${errorText(error)}`, true); },
+          (error: unknown) => {
+            shownModel = ctx.store.status?.model ?? '';
+            choose(model.select, shownModel);
+            say(`Model not changed: ${errorText(error)}`, true);
+          },
         ).finally(settle);
       });
       effort.select.addEventListener('change', () => {
