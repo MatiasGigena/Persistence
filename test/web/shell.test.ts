@@ -79,3 +79,15 @@ test('the installed app and offline page share the Pi Cloud dark theme', async (
   assert.match(manifest, /"theme_color": "#000000"/);
   assert.match(manifest, /"background_color": "#000000"/);
 });
+
+test('the service worker marks a set complete only after its files agree on one version', async () => {
+  const sw = await readFile(join(WEB, 'sw.ts'), 'utf8');
+  const stable = /async function fetchStable[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
+  // Every file is fetched a second time and compared; a mismatch retries, and a server that never settles throws.
+  assert.match(stable, /const check = await fetchShell\(\)/);
+  assert.match(stable, /await same\(response, again\)/);
+  assert.match(stable, /throw new Error/);
+  const build = /async function build[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
+  assert.match(build, /await fetchStable\(seed\)/);
+  assert.ok(build.indexOf('fetchStable') < build.indexOf('COMPLETE'), 'the version check runs before the set is marked complete');
+});

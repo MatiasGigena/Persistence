@@ -67,19 +67,46 @@ async function same(a: Response, b: Response): Promise<boolean> {
   return p !== undefined && q !== undefined && p.length === q.length && p.every((byte, at) => byte === q[at]);
 }
 
-/**
- * Fetches every shell file again (`no-cache`: the HTTP cache revalidates each by ETag) and returns the set they make:
- * the newest set when nothing changed, else a new one, written whole before it is marked complete. `seed` is a fresh
- * answer for `/` already in hand. Throws when any file cannot be fetched, so a set is never half new; a file the
- * server does not have (404) is left out, as it would be on the network. The fetches are low priority, so over
- * HTTP/1.1's few connections the page's own `/api/me` and socket go first.
- */
-async function build(seed?: Response): Promise<{ readonly shell: Shell; readonly changed: boolean }> {
-  const answers = await Promise.all(SHELL.map(async path => {
+/** The shell's files as the server has them now: a 404 is kept (and left out of a set), any other error throws. */
+async function fetchShell(seed?: Response): Promise<Array<readonly [string, Response]>> {
+  return Promise.all(SHELL.map(async path => {
     const response = path === '/' && seed ? seed : await fetch(new Request(path, { cache: 'no-cache', priority: 'low' }));
     if (!response.ok && response.status !== 404) throw new Error(`${path}: HTTP ${response.status}`);
     return [path, response] as const;
   }));
+}
+
+/** How many times a build fetches the shell before it gives up on a server that keeps changing under it. */
+const BUILD_TRIES = 3;
+
+/**
+ * The shell's files, all of one version. The files are fetched in parallel, so a deploy that lands mid-fetch could
+ * give some files of each version: every file is fetched once more (mostly 304s) and the two rounds must agree, else
+ * the whole fetch is tried again. Throws when the server never holds still, so a mixed set is never marked complete.
+ */
+async function fetchStable(seed?: Response): Promise<Array<readonly [string, Response]>> {
+  for (let tries = 0; tries < BUILD_TRIES; tries++) {
+    const answers = await fetchShell(tries === 0 ? seed : undefined);
+    const check = await fetchShell();
+    const agree = await Promise.all(answers.map(async ([, response], at) => {
+      const again = check[at]?.[1];
+      if (!again || again.status !== response.status) return false;
+      return !response.ok || await same(response, again);
+    }));
+    if (agree.every(Boolean)) return answers;
+  }
+  throw new Error('the shell changed while it was fetched');
+}
+
+/**
+ * Fetches every shell file again (`no-cache`: the HTTP cache revalidates each by ETag) and returns the set they make:
+ * the newest set when nothing changed, else a new one, written whole before it is marked complete. `seed` is a fresh
+ * answer for `/` already in hand. Throws when any file cannot be fetched, or the files do not settle on one version
+ * (`fetchStable`), so a set is never half new; a file the server does not have (404) is left out, as it would be on the
+ * network. The fetches are low priority, so over HTTP/1.1's few connections the page's own `/api/me` and socket go first.
+ */
+async function build(seed?: Response): Promise<{ readonly shell: Shell; readonly changed: boolean }> {
+  const answers = await fetchStable(seed);
   const found = answers.filter(([, response]) => response.ok);
   const old = await current(true);
   if (old && (await old.cache.keys()).length === found.length + 1) {
