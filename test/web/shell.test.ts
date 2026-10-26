@@ -91,3 +91,11 @@ test('the service worker marks a set complete only after its files agree on one 
   assert.match(build, /await fetchStable\(seed\)/);
   assert.ok(build.indexOf('fetchStable') < build.indexOf('COMPLETE'), 'the version check runs before the set is marked complete');
 });
+
+test('the service worker checks /index.html against the set like /', async () => {
+  const sw = await readFile(join(WEB, 'sw.ts'), 'utf8');
+  assert.match(sw, /const INDEX = new Set\(\['\/', '\/index\.html'\]\);/);
+  const page = /async function page[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
+  assert.match(page, /!INDEX\.has\(new URL\(request\.url\)\.pathname\)/);
+  assert.doesNotMatch(page, /pathname !== '\/'/);
+});

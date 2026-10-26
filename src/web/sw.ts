@@ -17,6 +17,8 @@ const CACHE = 'persistence-shell-4';
 const OFFLINE = '/offline.html';
 /** Written last into a set, so only a whole set is ever used. The server never serves a dot path. */
 const COMPLETE = '/.complete';
+/** The paths that load the app's index.html; a set keeps it under `/`. */
+const INDEX = new Set(['/', '/index.html']);
 /** Everything the app loads, cached so it can start at once. test/web checks the list stays complete. */
 const SHELL = [
   '/', '/styles.css', '/manifest.webmanifest', OFFLINE,
@@ -175,7 +177,8 @@ async function page(event: FetchEvent): Promise<Response> {
   const { request, resultingClientId: client } = event;
   let response: Response;
   try { response = await fetch(request); } catch { return offline(); }
-  if (!response.ok || new URL(request.url).pathname !== '/') return response;
+  // `/index.html` is the same page as `/`: both check against the set's index.html, kept under `/`.
+  if (!response.ok || !INDEX.has(new URL(request.url).pathname)) return response;
   const shell = await current(true);
   const cached = await shell?.cache.match('/');
   if (shell && cached && await same(cached, response)) {
