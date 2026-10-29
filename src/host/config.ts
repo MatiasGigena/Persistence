@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, realpath } from 'node:fs/promises';
+import { access, mkdir, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
@@ -63,8 +63,8 @@ CLI signed in with claude auth login); anthropic/claude-sonnet-5-5 and other
 anthropic/... models with an API key in ANTHROPIC_API_KEY (never a subscription
 login). See docs/models.md.
 
-Chat commands: /help, /model, /effort, /tools, /agents, /mem, /status, /exit (--plain:
-/help, /history, /agents, /status, /exit). Ctrl+D or /exit closes the host, and
+Chat commands: /help, /model, /effort, /tools, /agents, /mem, /status, /stop, /exit
+(--plain: /help, /history, /agents, /status, /exit). Ctrl+D or /exit closes the host, and
 so does Ctrl+C (twice in the terminal UI); unfinished work resumes next launch.
 Attached, they detach and the server keeps working.
 Remote machine tools are OFF unless --allow-tools is supplied for this client
@@ -298,18 +298,21 @@ export function parseArgs(args: readonly string[]): Options {
   const repeated: string[] = [];
   let thinking: string = options.thinkingLevel;
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i] ?? '';
+    // `--name=value` is `--name value`.
+    const raw = args[i] ?? '', equals = raw.startsWith('--') ? raw.indexOf('=') : -1;
+    const arg = equals > 2 ? raw.slice(0, equals) : raw, inline = equals > 2 ? raw.slice(equals + 1) : undefined;
     const flag = FLAGS.get(arg), key = VALUES.get(arg);
     if (arg === '--') { literal.push(...args.slice(i + 1)); break; }
+    if (flag && inline !== undefined) throw new Error(`${arg} takes no value`);
     if (flag) { options[flag] = true; given.set(flag, arg); }
     else if (key) {
-      const value = args[++i];
-      if (value === undefined || value.startsWith('--')) throw new Error(`${arg} requires a value`);
+      const value = inline ?? args[++i];
+      if (value === undefined || (inline === undefined && value.startsWith('--'))) throw new Error(`${arg} requires a value`);
       if (given.has(key)) repeated.push(arg);
       given.set(key, arg);
       if (key === 'thinkingLevel') { thinking = value; options.thinkingFlag = true; }
       else options[key] = value;
-    } else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
+    } else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg} (pi-durable --help lists them)`);
     else words.push(arg);
   }
   if (options.help || options.version) return options;
@@ -357,7 +360,7 @@ export function parseArgs(args: readonly string[]): Options {
   const modes = [options.resume, options.history, options.status, options.prompt !== undefined].filter(Boolean);
   if (modes.length > 1) throw new Error('Choose only one of --resume, --history, --status, or a prompt');
   if (options.attach && modes.length) throw new Error('--attach is for interactive chat only');
-  if (!isThinkingLevel(thinking)) throw new Error('Invalid --thinking level');
+  if (!isThinkingLevel(thinking)) throw new Error(`Invalid --thinking level "${thinking}": use one of ${THINKING.join(', ')}`);
   options.thinkingLevel = thinking;
   if (options.modelSpec !== undefined) options.model = parseModel(options.modelSpec, '--model');
   return options;
@@ -434,9 +437,11 @@ export function parseRoster(value: unknown, path: string): Roster {
 export async function readSettings(path: string): Promise<Settings> {
   const value = await readSettingsJson(path);
   if (!value) return {};
-  if ((value.model !== undefined && typeof value.model !== 'string')
-    || (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel))) {
+  if (value.model !== undefined && typeof value.model !== 'string') {
     throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
+  }
+  if (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel)) {
+    throw new Error(`"thinkingLevel" in ${path} must be one of ${THINKING.join(', ')}; fix or delete it`);
   }
   return { ...value.model === undefined ? {} : { model: parseModel(value.model, `"model" in ${path}`) },
     ...isThinkingLevel(value.thinkingLevel) ? { thinkingLevel: value.thinkingLevel } : {},
@@ -570,8 +575,19 @@ export async function resolveSocketPath(options: Pick<Options, 'database' | 'dat
   return socket;
 }
 
+/** `path` with its symlinks resolved; rejects, naming `what`, when it is missing or not a directory. */
+async function directory(path: string, what: string): Promise<string> {
+  let real: string;
+  try { real = await realpath(path); } catch (error) {
+    if (errorCode(error) === 'ENOENT') throw new Error(`${what} ${path} does not exist`);
+    throw error;
+  }
+  if (!(await stat(real)).isDirectory()) throw new Error(`${what} ${path} is not a directory`);
+  return real;
+}
+
 export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
-  const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
+  const cwd = await directory(resolve(options.cwd ?? process.cwd()), options.cwd === undefined ? 'The working directory' : '--cwd');
   const dataDir = resolve(options.dataDir ?? env.PI_DURABLE_DATA_DIR ?? join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'pi-durable'));
   let databasePath = resolve(options.database ?? join(dataDir, 'chat.sqlite'));
   let exists = false;
@@ -579,6 +595,7 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
   const inspectOnly = Boolean(options.status || options.history);
   // Only work launches and serve create the chat; inspection and the admin commands never do.
   const creates = !inspectOnly && (options.command === 'chat' || options.command === 'serve');
+  if (exists && (await stat(databasePath)).isDirectory()) throw new Error(`${databasePath} is a directory, not the chat's SQLite file`);
   if (exists) databasePath = await realpath(databasePath);
   else if (creates) {
     await mkdir(dirname(databasePath), { recursive: true, mode: 0o700 });
