@@ -238,6 +238,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       ...status,
       ...attached ? { reconnecting: attached.state() === 'reconnecting' } : {},
       ...step ? { step } : {},
+      ...scroll.isFollowingEnd ? {} : { scrolled: true },
       ...ctrlCHint ? { hint: attached ? 'ctrl+c again to detach' : 'ctrl+c again to quit' } : {},
     };
   }, theme);
@@ -271,8 +272,9 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   const document = new Container();
   document.addChild(header);
   document.addChild(chat);
+  const scroll = new ScrollView(document, { follow: 'end', primary: true, overscroll: 'chain' });
   const layout = new VStack([
-    { component: new ScrollView(document, { follow: 'end', primary: true, overscroll: 'chain' }), basis: 0, grow: 1, shrink: 1, minSize: 1 },
+    { component: scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
     { component: footer, basis: 'auto', shrink: 0 },
     { component: editor, basis: 'auto', shrink: 1, minSize: 3 },
   ]);

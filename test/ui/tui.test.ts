@@ -456,6 +456,23 @@ test('the footer fills by priority and never drops the tools state', () => {
   for (let width = 26; width <= 40; width++) assert.match(at(reconnecting, width), /reconnecting… · .*tools off/, `${width}`);
 });
 
+test('the footer marks a chat scrolled up from its end, until it is back at the end', async () => {
+  const items: ChatItem[] = Array.from({ length: 30 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `m${i}` }));
+  for (const [columns, mark] of [[80, '↓ more below (pgdn)'], [40, '↓ pgdn']] as const) {
+    const { terminal, done } = await startTui(new FakeSession(items), undefined, new FakeTerminal(columns, 12), { backlog: 30 });
+    const footer = (): string => terminal.screen().find(row => row.includes('tools off')) ?? assert.fail(terminal.screen().join('\n'));
+    assert.ok(!footer().includes(mark), footer());
+    terminal.type('\x1b[5~');
+    await delay(30);
+    assert.ok(footer().includes(mark), footer());
+    terminal.type('\x1b[6~', '\x1b[6~', '\x1b[6~');
+    await delay(30);
+    assert.ok(!footer().includes(mark), footer());
+    terminal.type('\x04');
+    await done;
+  }
+});
+
 test('the spinner slows down over SSH and on a narrow screen', () => {
   assert.equal(spinnerInterval({}, 120), SPIN_FAST);
   assert.equal(spinnerInterval({ SSH_CONNECTION: '10.0.0.2 5555 10.0.0.1 22' }, 120), SPIN_SLOW);

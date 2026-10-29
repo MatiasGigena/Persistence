@@ -31,6 +31,8 @@ export type FooterStatus = Omit<SessionStatus, 'agents'> & {
   readonly step?: string;
   /** A short-lived key hint, e.g. after the first Ctrl+C; shown first, at every width. */
   readonly hint?: string;
+  /** The chat is scrolled up from its end, so new lines arrive out of sight; shown at every width. */
+  readonly scrolled?: boolean;
 };
 
 /** Longest step shown, in columns: wide and compact. */
@@ -40,7 +42,7 @@ export const STEP_COMPACT = 24;
 /** One footer segment: `rank` orders what is kept when the line is too narrow (0 first). */
 interface Segment { readonly text: string; readonly rank: number }
 
-/** Tools state and a lost link: shown at every width. */
+/** Tools state, a lost link, and a chat scrolled up: shown at every width. */
 const TOOLS = -1;
 
 /** The segments in display order; `compact` asks for the short forms used below NARROW columns. */
@@ -51,6 +53,7 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
   const list: Segment[] = [
     ...status.hint ? [{ text: theme.warning(status.hint), rank: TOOLS }] : [],
     ...status.reconnecting ? [{ text: theme.warning('reconnecting…'), rank: TOOLS }] : [],
+    ...status.scrolled ? [{ text: theme.accent(compact ? '↓ pgdn' : '↓ more below (pgdn)'), rank: TOOLS }] : [],
     { text: model, rank: 4 },
     { text: dim(compact ? `think ${status.thinkingLevel}` : `thinking ${status.thinkingLevel}`), rank: 7 },
     { text: status.toolsEnabled ? theme.warning(`tools on${status.machine ? ` @ ${status.machine.label}` : ''}`)
@@ -79,7 +82,7 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
  * The footer's text within `width` columns (default: unlimited); `frame` picks the busy spinner's glyph.
  * Below NARROW columns it uses short forms. Segments are kept in priority order (working, tools, current step,
  * queued, agents, model, memory failures, memory size, thinking, summaries) until one does not fit, and shown in their
- * usual order; a key hint, the tools state and "reconnecting…" are never dropped.
+ * usual order; a key hint, the tools state, "reconnecting…" and the scrolled-up mark are never dropped.
  */
 export function footerText(status: FooterStatus, theme: Theme, frame = 0, width = Number.POSITIVE_INFINITY): string {
   const separator = theme.dim(' · ');
