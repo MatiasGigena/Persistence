@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { SessionStatus } from '../../src/protocol/messages.ts';
 import {
-  base64UrlBytes, guessDeviceName, normalizeCode, parseMessage, parseZoom, sortModels, statusParts, statusText, toolCommand, toolSummary,
+  base64UrlBytes, guessDeviceName, normalizeCode, pairErrorText, parseMessage, parseZoom, sortModels, statusParts, statusText, toolCommand, toolSummary,
 } from '../../src/web/format.ts';
 import { parseMessage as tuiParseMessage, parseZoom as tuiParseZoom } from '../../src/ui/tui/panels/memory.ts';
 import { toolSummary as tuiToolSummary } from '../../src/ui/tui/chat.ts';
@@ -60,6 +60,13 @@ test('pairing codes normalize to Crockford XXXX-XXXX', () => {
   assert.equal(normalizeCode('o1il-0000-extra'), '0111-0000');
   assert.equal(normalizeCode('ab'), 'AB');
   assert.equal(normalizeCode('uuuu'), '', 'U is not Crockford');
+});
+
+test('a refused pairing says which check refused it, rather than to try again', () => {
+  assert.match(pairErrorText(403, 'origin'), /PI_DURABLE_ORIGIN/);
+  assert.match(pairErrorText(403, 'login'), /PI_DURABLE_ALLOW_LOGIN/);
+  assert.match(pairErrorText(401, 'wrong'), /wrong or has expired/);
+  assert.equal(pairErrorText(500, undefined), 'The server answered 500. Try again.');
 });
 
 test('base64url VAPID keys decode to bytes', () => {

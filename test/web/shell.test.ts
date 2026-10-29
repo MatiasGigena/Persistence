@@ -4,6 +4,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { PAIR_CODE_MS } from '../../src/server/auth.ts';
 
 const WEB = fileURLToPath(new URL('../../src/web/', import.meta.url));
 
@@ -98,4 +99,10 @@ test('the service worker checks /index.html against the set like /', async () =>
   const page = /async function page[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
   assert.match(page, /!INDEX\.has\(new URL\(request\.url\)\.pathname\)/);
   assert.doesNotMatch(page, /pathname !== '\/'/);
+});
+
+test('the pairing screen states how long a code lasts as the server does', async () => {
+  const html = await readFile(join(WEB, 'index.html'), 'utf8');
+  const minutes = /A code works once, for (\d+) minutes\./.exec(html)?.[1];
+  assert.equal(Number(minutes), PAIR_CODE_MS / 60_000);
 });

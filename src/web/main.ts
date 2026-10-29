@@ -2,7 +2,7 @@
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { imageUrl, toChatImage } from './attach.ts';
 import { ChatView, el, initViewer, play } from './chat-view.ts';
-import { errorText, guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, shortModel, statusParts } from './format.ts';
+import { errorText, guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
@@ -15,9 +15,11 @@ import { syncPush } from './push.ts';
 import { Store } from './store.ts';
 import type { Effect } from './store.ts';
 import { IMAGE_LIMITS, restoreImages } from '../protocol/images.ts';
+import { CloseCode } from '../protocol/messages.ts';
 import type { ChatImage, NoticeLevel } from '../protocol/messages.ts';
 
 const CLIENT = 'web';
+const RESTARTING = 'The server is restarting; reconnecting…';
 const DRAFT_KEY = 'pd.draft';
 /** sessionStorage: the value a reload was last made for, so a reload happens once per new value. */
 const RELOAD_KEY = 'pd.reloaded';
@@ -206,24 +208,24 @@ function socket(events: SocketEvents): SocketHandle {
 
 // ------------------------------------------------------------------------------------------------ pairing
 
-const PAIR_ERRORS: Readonly<Record<number, string>> = {
-  400: 'That code is not in the right shape: 8 characters, like 7KQ4-M2XD.',
-  401: 'That code is wrong or has expired. Run pi-durable serve pair for a new one.',
-  409: 'A device with that name is already paired. Pick another name.',
-  429: 'Too many tries. Run pi-durable serve pair for a new code.',
-};
-
 let pairing = false;
+/** What the latest `pairScreen` asked for after pairing: the form's listener is added once, so it reads this. */
+let afterPairing = (): void => undefined;
 
-/** Shows the pairing screen; `onPaired` runs once this browser holds a device cookie. */
-function pairScreen(onPaired: () => void): void {
+/**
+ * Shows the pairing screen, saying `why` this device must pair (again) when that is known; `onPaired` runs once this
+ * browser holds a device cookie.
+ */
+function pairScreen(onPaired: () => void, why = ''): void {
   show('pair');
+  const error = byId('pair-error', HTMLParagraphElement);
+  error.textContent = why;
+  afterPairing = onPaired;
   if (pairing) return;
   pairing = true;
   const form = byId('pair-form', HTMLFormElement);
   const code = byId('pair-code', HTMLInputElement);
   const name = byId('pair-name', HTMLInputElement);
-  const error = byId('pair-error', HTMLParagraphElement);
   const button = byId('pair-submit', HTMLButtonElement);
   const label = button.textContent;
   if (!name.value) name.value = guessDeviceName(navigator.userAgent);
@@ -256,9 +258,10 @@ function pairScreen(onPaired: () => void): void {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: normalizeCode(code.value), name: name.value.trim() }),
     }).then(
-      response => {
-        if (response.ok) { code.value = ''; onPaired(); return; }
-        fail(PAIR_ERRORS[response.status] ?? `The server answered ${response.status}. Try again.`);
+      async response => {
+        if (response.ok) { code.value = ''; afterPairing(); return; }
+        const body: unknown = await response.json().catch(() => undefined);
+        fail(pairErrorText(response.status, typeof body === 'object' && body !== null && 'error' in body ? body.error : undefined));
       },
       () => { fail('Cannot reach the server. Check that Tailscale is connected.'); },
     ).finally(() => busy(false));
@@ -304,6 +307,8 @@ function start(): void {
   let wasReady = false;
   /** The first `ready` has been shown. Until then the chat is its skeleton (.is-loading) or not shown at all. */
   let loaded = false;
+  /** The reason of the server's `bye` since the last `ready`, shown if it ends the link for good. */
+  let byeReason = '';
   /** The link is ready: only then is store.status.busy current. */
   let linkReady = false;
 
@@ -609,6 +614,8 @@ function start(): void {
     if (wasReady && state !== 'closed') reopen = [...new Set([...reopen, ...store.disconnect()])];
     wasReady = false;
     if (state !== 'closed' && !loaded) loading();
+    // A restart takes longer than a phone waking up: say so at once, so a dead-looking chat is explained.
+    else if (state === 'reconnecting' && link.droppedWith === CloseCode.restart) setBanner(RESTARTING, true);
     else if (state === 'reconnecting') {
       const { text, retry: canRetry } = LINK_TEXT.reconnecting;
       if (!bannerShown) bannerTimer = setTimeout(() => setBanner(text, canRetry), RECONNECT_BANNER_MS);
@@ -617,7 +624,11 @@ function start(): void {
     else if (state === 'offline') setBanner(LINK_TEXT.offline.text, LINK_TEXT.offline.retry);
     else if (state === 'closed') {
       const by = link.closedBy;
-      if (by === 'unauthorized' || by === 'unpaired') { sheet.close(); pairScreen(() => location.reload()); }
+      if (by === 'unauthorized' || by === 'unpaired') {
+        sheet.close();
+        // A revoked device is told so, rather than finding the pairing screen with no reason.
+        pairScreen(() => location.reload(), by === 'unauthorized' ? `${byeReason || 'This device is no longer paired.'} Pair it again with a new code.` : '');
+      }
       else if (by === 'forbidden') gone('forbidden');
       else if (by === 'version') void reloadOnce('version').then(done => { if (!done) gone('version'); });
     }
@@ -639,8 +650,10 @@ function start(): void {
         return;
       }
       case 'bye':
+        byeReason = effect.reason;
         return;
       case 'ready': {
+        byeReason = '';
         save(session, RELOAD_KEY, '');
         reveal();
         for (const [id, { text, steer, images }] of outbox) deliver(id, text, steer, images);

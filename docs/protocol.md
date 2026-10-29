@@ -408,9 +408,10 @@ There is no session resumption: every connection starts from `hello` and gets th
   after `LIMITS.connectMs` (10 s). When the app comes back to the front or the browser comes online, the web app
   pings at once and drops the link if nothing answers within `LIMITS.wakeMs` (5 s); if it was already
   reconnecting, it starts a fresh attempt at once, with the backoff reset, abandoning one that hangs. Its banner
-  says "Reconnecting…" only after 2 s, so the usual reconnect on waking is not shown. The first load has no state to
-  show yet: the web app keeps its boot screen until the first `ready`, shows the chat's skeleton from 300 ms after
-  `/api/me` let it in (at once when offline), and the banner's line ("Connecting…", "Reconnecting…") from 1.5 s.
+  says "Reconnecting…" only after 2 s, so the usual reconnect on waking is not shown; after a `bye` 1012 it says at
+  once that the server is restarting. The first load has no state to show yet: the web app keeps its boot screen until
+  the first `ready`, shows the chat's skeleton from 300 ms after `/api/me` let it in (at once when offline), and the
+  banner's line ("Connecting…", "Reconnecting…") from 1.5 s.
 - The server's work never depends on a client: Pi and agents keep running while every client is away (a turn
   started from a phone that then sleeps finishes, and its answer is there on the next connection).
 - Requests pending when the link dropped reject on the client with "connection lost", except a `send` with a
