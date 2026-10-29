@@ -611,7 +611,8 @@ the port, put another proxy in front of it, or use `tailscale funnel` for it.
 
 ### Pairing a phone
 
-1. On the VPS: `pi-durable serve pair`. It prints a one-time code, `XXXX-XXXX`, valid for 5 minutes.
+1. On the VPS: `pi-durable serve pair`. It prints a one-time code, `XXXX-XXXX`, valid for 5 minutes, and the web app's
+   address. While the web app is off it refuses and says why.
 2. On the phone, open `https://<vps>.<tailnet>.ts.net`. On an iPhone, first add it to the home screen (Share,
    Add to Home Screen) and pair from there: the home-screen app keeps its own cookies, apart from Safari's.
 3. Enter the code and a name for the device (1 to 40 characters, unique). Five wrong tries spend the code;
@@ -627,7 +628,8 @@ pi-durable serve devices                  # names, when paired, when last seen (
 pi-durable serve devices --revoke phone   # forget it and disconnect it now
 ```
 
-A revoked device sees the pairing screen and needs a new code. For a lost phone, also remove it from the tailnet
+A wrong name lists the paired ones (names match exactly, case included). A revoked device sees the pairing screen,
+saying it was revoked, and needs a new code. For a lost phone, also remove it from the tailnet
 in the admin console.
 
 ### Certificate names are public

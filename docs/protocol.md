@@ -199,7 +199,7 @@ reads as `undefined`, and `memory` may also be `null`.
 | `push.subscribe` | `subscription: {endpoint, expirationTime?, keys: {p256dh, auth}}` | `null` | web | `forbidden`, `unavailable` |
 | `push.unsubscribe` | `endpoint` | `null` | web | `forbidden`, `unavailable` |
 | `admin.backup` | `out?` | `{path, bytes}` | socket | `forbidden`, `failed` |
-| `admin.pair` | — | `{code, expiresAt}` | socket | `forbidden`, `unavailable` |
+| `admin.pair` | — | `{code, expiresAt, origin?}` | socket | `forbidden`, `unavailable` |
 | `admin.devices` | — | `{devices: {name, pairedAt, lastSeen?}[]}` | socket | `forbidden`, `unavailable` |
 | `admin.revoke` | `name` | `null` | socket | `forbidden`, `not_found`, `unavailable` |
 
@@ -268,7 +268,10 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   time, `2026-10-19T03-00-00Z` (with `-2`, `-3`, … for another in the same second); afterwards such directories
   in `out` older than 14 days are deleted, and nothing else there.
 - **`admin.pair`**, **`admin.devices`**, **`admin.revoke`**: see [Web peers](#web-peers). They answer
-  `unavailable` when `serve/devices.json` could not be read at the server's start.
+  `unavailable` when `serve/devices.json` could not be read at the server's start. `admin.pair` also answers
+  `unavailable`, saying why, while the web listener is off (not configured, not yet up, or failed to start), since a
+  code could not be entered anywhere. Its `origin` is the web app's (`PI_DURABLE_ORIGIN`), which `serve pair` prints
+  as the place to enter the code.
 
 ## Machine routing and execution
 

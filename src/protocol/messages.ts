@@ -146,8 +146,8 @@ export interface Ops {
   readonly 'push.unsubscribe': { readonly params: { readonly endpoint: string }; readonly result: null };
   /** Socket only: an online backup into `out` (default: the configured backup directory). */
   readonly 'admin.backup': { readonly params: { readonly out?: string }; readonly result: { readonly path: string; readonly bytes: number } };
-  /** Socket only: a one-time pairing code for a new web device. */
-  readonly 'admin.pair': { readonly params: NoParams; readonly result: { readonly code: string; readonly expiresAt: number } };
+  /** Socket only: a one-time pairing code for a new web device, and the web app's origin to enter it at. */
+  readonly 'admin.pair': { readonly params: NoParams; readonly result: { readonly code: string; readonly expiresAt: number; readonly origin?: string } };
   /** Socket only: the paired web devices. */
   readonly 'admin.devices': { readonly params: NoParams; readonly result: { readonly devices: readonly Device[] } };
   /** Socket only: forgets a device and closes its connections with CloseCode.unauthorized. */
