@@ -22,9 +22,17 @@ interface ViewState {
 }
 
 // Plain text from models and tools must not move the cursor: keep newlines, expand tabs, drop escape
-// sequences (CSI first, so their parameters go too) and other control characters.
-const CONTROL = /\u001b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f]/g;
-const clean = (text: string): string => text.replace(/\t/g, '  ').replace(CONTROL, '');
+// sequences whole (CSI; OSC, DCS and the like up to BEL or ST, e.g. ls's hyperlinks; two-byte ones such as
+// tput's `ESC ( B`), then other control characters.
+const ESCAPE = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b[\]P^_X][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[ -/]*[0-~]/g;
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
+
+/** A line with carriage returns as a terminal leaves it: each part overwrites the start of the one before (progress bars). */
+const overwrite = (line: string): string => line.split('\r').reduce((shown, part) => part + shown.slice(part.length));
+
+/** Host, model or tool text made safe to draw: tabs become spaces, `\r` overwrites, escape sequences and control characters go. */
+export const clean = (text: string): string => text.replace(ESCAPE, '').replace(/\r+\n/g, '\n')
+  .split('\n').map(overwrite).join('\n').replace(/\t/g, '  ').replace(CONTROL, '');
 const oneLine = (text: string): string => clean(text).replace(/\s+/g, ' ').trim();
 
 const PROMPT_START = '\x1b]133;A\x07';

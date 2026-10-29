@@ -1,11 +1,15 @@
 // The overlay panels' shared parts: a bordered, near-full-screen frame holding a stack of views
 // (a breadcrumb title, an optional header, the top view, a one-line key hint), a selectable list,
 // a scrollable text view, and a one-key confirmation box. Only pi-tui; colors come from the shell
-// through PanelTheme, and NARROW from the theme. Below NARROW columns (a phone) the frame fills the
-// screen, hints are short, and lists show compact rows with the selection's detail above the hint.
+// through PanelTheme, NARROW from the theme, and `clean` from the chat. Below NARROW columns (a phone)
+// the frame fills the screen, hints are short, and lists show compact rows with the selection's detail
+// above the hint.
 import { decodeKittyPrintable, getKeybindings, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, Keybinding, TUI } from '@earendil-works/pi-tui';
+import { clean } from '../chat.ts';
 import { NARROW } from '../theme.ts';
+
+export { clean };
 
 /** The colors a panel uses; the shell passes its palette in. Each takes plain text and returns it styled. */
 export interface PanelTheme {
@@ -37,11 +41,6 @@ const ELLIPSIS = '…';
 const DETAIL_LINES = 3;
 /** Whether `data` is `binding`, as the user configured it (Pi's selectors use the same bindings). */
 const is = (data: string, binding: Keybinding): boolean => getKeybindings().matches(data, binding);
-
-/** Text from the host made safe to draw: tabs become spaces, other control characters (and so ANSI) go. */
-export function clean(text: string): string {
-  return text.replace(/\t/g, '  ').replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '');
-}
 
 /** `line` cut or padded to exactly `width` columns. */
 function fit(line: string, width: number): string {
@@ -331,7 +330,7 @@ export class TextView implements PanelView {
 
 /** Plain text wrapped to `width`, paragraph by paragraph. */
 export function wrap(text: string, width: number): string[] {
-  return wrapTextWithAnsi(clean(text.replace(/\r\n?/g, '\n')), width);
+  return wrapTextWithAnsi(clean(text), width);
 }
 
 /** A question in a small box. Only `y` says yes; any other key, Esc and Enter included, says no. */

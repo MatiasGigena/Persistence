@@ -6,7 +6,7 @@ import type { Terminal } from '@earendil-works/pi-tui';
 import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
 import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui, statusText } from '../../src/ui/tui/app.ts';
 import type { AttachedLink, LinkState, TuiInfo } from '../../src/ui/tui/app.ts';
-import { ChatView, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
+import { ChatView, clean, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
 import { Footer, footerText, SPIN_FAST, SPIN_SLOW, STEP_WIDTH, spinnerInterval } from '../../src/ui/tui/footer.ts';
 import type { FooterStatus } from '../../src/ui/tui/footer.ts';
 import { theme } from '../../src/ui/tui/theme.ts';
@@ -151,6 +151,20 @@ test('tool output collapses to a preview and expands', () => {
   const expanded = plain(view.render(60));
   assert.equal(expanded.length, 11);
   assert.equal(expanded.at(-1), '  line 10');
+});
+
+test('tool output loses hyperlinks and other escapes whole, and carriage returns overwrite as in a terminal', () => {
+  const output = [
+    'see \x1b]8;;file:///tmp/a.txt\x07a.txt\x1b]8;;\x1b\\ here',
+    '\x1b[1mbold\x1b(B\x1b[m plain\x1b7\x1b8',
+    'fetching 10%\rfetching 100%\r',
+    'abcdef\rXY',
+    'crlf\r\nnext',
+  ].join('\n');
+  const view = new ChatView(new FakeFeed([{ kind: 'tool', id: 't1', name: 'bash', args: '{"command":"ls"}', output, status: 'done' }]), theme);
+  view.toolsExpanded = true;
+  assert.deepEqual(plain(view.render(60)), ['✓ bash ls', '  see a.txt here', '  bold plain', '  fetching 100%', '  XYcdef', '  crlf', '  next']);
+  assert.equal(clean('\x1b[31mred\x1b[0m ok'), 'red ok', 'the panels share the same cleaning');
 });
 
 test('reports, notices and collapsed thinking', () => {
