@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `--plain` no longer drops lines typed ahead or pasted after the first.
+- The terminal footer no longer overflows a narrow screen while "reconnecting…" shows.
+- Web app: re-pairing after a revoke works without a reload; sheets opened while disconnected load once the link is
+  back; opening the app during a server restart starts it from the cache instead of a 502 page; the pairing screen
+  says codes last 5 minutes, as they do.
+
 ### Added
 
 - Images in the chat (ADR 0031). In the web app, paste or drop a screenshot into the composer, or pick one with the
@@ -25,6 +33,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   free again. The registry gains an optional `deleted` map; older registries read unchanged.
 
 ### Changed
+
+- Clearer messages and hints throughout. In the terminal: unknown agents, models, options and `--thinking` levels
+  are listed or named; `--cwd`/`--database` mistakes are explained; `/stop` says when Pi is idle; a failed send says ↑
+  brings it back; `/status` names the machine where tools run; the launcher names the Node it needs. For tools, SSH
+  and credentials: `web_fetch`, the browser, bubblewrap, `PI_DURABLE_SSH_KEYS`, the SSH connector, the bridge, an
+  outdated Claude Code and the `anthropic` login each say how to fix the problem. On the web: a refused pairing, a
+  revoked device, a restarting server and a disabled push each say why; `serve pair` prints the web app's address and
+  refuses while the web app is off; `serve devices --revoke` lists the paired names on a miss.
+- Terminal: `--name=value` options, `/model WORD` opens the picker filtered, `/tools ON` and `/effort HIGH` work in
+  any case, the first Ctrl+C says a second one quits, and a line starting with a path is sent to Pi.
 
 - Web app: no "TOOLS ON" bar over the header. The tools are on by default and held to protected folders
   (ADR 0025); their state and switch are in the menu, under Coding tools.
