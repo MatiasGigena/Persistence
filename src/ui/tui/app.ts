@@ -229,7 +229,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   if (info.signal?.aborted) return;
   const terminal = info.terminal ?? new ProcessTerminal();
   const tui = new TuiAltScreen(terminal);
-  const chat = new ChatView(session.chat, theme, info.backlog === undefined ? {} : { backlog: info.backlog });
+  const chat = new ChatView(session.chat, theme, { history: '/mem', ...info.backlog === undefined ? {} : { backlog: info.backlog } });
   const { attached } = info;
   const footer = new Footer(() => {
     const status = session.status();

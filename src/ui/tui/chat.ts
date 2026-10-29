@@ -212,18 +212,22 @@ class ItemBlock implements Component {
 export interface ChatViewOptions {
   /** Items of the feed's history to show when the view opens (default BACKLOG); later items always show. */
   readonly backlog?: number;
+  /** The command that browses what the view leaves out (Pi's chat: /mem); named after the count of those items. */
+  readonly history?: string;
 }
 
 /**
  * A ChatFeed as a component. `sync()` reads the feed: new ids get a block, changed items update theirs,
  * and unchanged blocks keep their cached lines. Local notices (`notice()`) sit after the item that was last
- * when they were added. A dim first line counts the history items it leaves out, so the top of the view does not
- * look like the start of the chat. Reusable for any feed, Pi's or an agent's.
+ * when they were added. A dim first line counts the history items it leaves out, and names the `history` command
+ * when given, so the top of the view does not look like the start of the chat. Reusable for any feed, Pi's or an
+ * agent's.
  */
 export class ChatView implements Component {
   private readonly feed: ChatFeed;
   private readonly state: ViewState;
   private readonly backlog: number;
+  private readonly history: string | undefined;
   private readonly blocks = new Map<string, ItemBlock>();
   /** Local notices by the id of the item they follow; undefined: before every item. */
   private readonly notices = new Map<string | undefined, ItemBlock[]>();
@@ -237,6 +241,7 @@ export class ChatView implements Component {
     this.feed = feed;
     this.state = { theme, toolsExpanded: false, thinkingExpanded: false };
     this.backlog = Math.max(0, options.backlog ?? BACKLOG);
+    this.history = options.history;
     this.sync();
   }
 
@@ -286,7 +291,9 @@ export class ChatView implements Component {
     let previous: ChatItem['kind'] | undefined;
     if (this.earlier) {
       const count = `${this.earlier} earlier ${this.earlier === 1 ? 'item' : 'items'}`;
-      const text = width < NARROW ? `· ${count} · /mem` : `· ${count} not shown; /mem browses the whole chat`;
+      const { history } = this;
+      const text = width < NARROW ? `· ${count}${history ? ` · ${history}` : ''}`
+        : `· ${count} not shown${history ? `; ${history} browses the whole chat` : ''}`;
       lines.push(truncateToWidth(this.state.theme.dim(text), width));
       previous = 'notice';
     }

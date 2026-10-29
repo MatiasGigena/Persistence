@@ -183,7 +183,7 @@ test('reports, notices and collapsed thinking', () => {
 test('the view opens on the last items of the history, then shows every new one', () => {
   const items: ChatItem[] = Array.from({ length: 10 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `m${i}` }));
   const feed = new FakeFeed(items);
-  const view = new ChatView(feed, theme, { backlog: 2 });
+  const view = new ChatView(feed, theme, { backlog: 2, history: '/mem' });
   assert.deepEqual(plain(view.render(80)).filter(Boolean), ['· 8 earlier items not shown; /mem browses the whole chat', '❯ m8', '❯ m9']);
   view.notice('local');
   feed.set([...items.slice(3), { kind: 'user', id: 'u10', text: 'm10' }]);
@@ -192,6 +192,17 @@ test('the view opens on the last items of the history, then shows every new one'
     'the count follows the feed, and is short on a phone');
   assert.deepEqual(plain(new ChatView(new FakeFeed(items.slice(0, 2)), theme, { backlog: 2 }).render(80)), ['❯ m0', '', '❯ m1'],
     'no count when the whole history shows');
+  const other = new ChatView(new FakeFeed(items), theme, { backlog: 2 });
+  assert.deepEqual(plain(other.render(80)).filter(Boolean)[0], '· 8 earlier items not shown', 'no command unless one is given');
+  assert.deepEqual(plain(other.render(30)).filter(Boolean)[0], '· 8 earlier items');
+});
+
+test("the TUI's chat points at /mem for the history it leaves out", async () => {
+  const items: ChatItem[] = Array.from({ length: 10 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `m${i}` }));
+  const { terminal, done } = await startTui(new FakeSession(items));
+  assert.ok(terminal.screen().includes('· 4 earlier items not shown; /mem browses the whole chat'), terminal.screen().join('\n'));
+  terminal.type('\x04');
+  await done;
 });
 
 test('the footer shows the status on one line, truncated to the width', () => {
