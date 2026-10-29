@@ -2,6 +2,7 @@
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { imageUrl, toChatImage } from './attach.ts';
 import { ChatView, el, initViewer, play } from './chat-view.ts';
+import { announce } from './copy.ts';
 import { errorText, guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
@@ -12,7 +13,7 @@ import { memoryView } from './panels/memory.ts';
 import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
 import { syncPush } from './push.ts';
-import { Store } from './store.ts';
+import { freshAlerts, Store } from './store.ts';
 import type { Effect } from './store.ts';
 import { IMAGE_LIMITS, restoreImages } from '../protocol/images.ts';
 import { CloseCode } from '../protocol/messages.ts';
@@ -536,9 +537,15 @@ function start(): void {
     }));
   };
   let lastStatus = '';
+  /** Notices already read out, or history from the first load. */
+  const alerted = new Set<string>();
   store.subscribe(() => {
+    const items = store.rootView();
     // Until the link is ready, items come from a snapshot (a first load, a reconnect): history, drawn without entrances.
-    view.set(store.rootView(), linkReady);
+    view.set(items, linkReady);
+    // A failed send or a server warning only shows in the feed: read it out too. The first load's are history.
+    const alerts = freshAlerts(items, alerted);
+    if (loaded && alerts.length) announce(alerts.join(' '));
     const status = JSON.stringify(store.status ?? null);
     if (status !== lastStatus) { lastStatus = status; drawStatus(); }
   });
