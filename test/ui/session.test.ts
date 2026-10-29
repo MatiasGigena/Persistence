@@ -451,6 +451,7 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     const { instance, session, efforts, cwd, databasePath, settingsPath } = await openRoutes(t);
     const bob = await spawnBob(instance, session);
     assert.deepEqual(await session.thinkingLevels(), ['off'], 'faux/one does not reason');
+    await assert.rejects(session.setThinkingLevel('high'), { message: 'faux/one has no reasoning effort to set; not high.' });
     await session.setModel('faux', 'two');
     assert.deepEqual(await session.thinkingLevels(), ['off', 'minimal', 'low', 'medium', 'high']);
     await session.setThinkingLevel('low');
