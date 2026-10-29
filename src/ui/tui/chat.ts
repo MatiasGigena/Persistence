@@ -129,7 +129,7 @@ class ItemBlock implements Component {
     const { toolsExpanded, thinkingExpanded } = this.state;
     const key = `${String(toolsExpanded)}${String(thinkingExpanded)}`;
     if (this.cache?.width === width && this.cache.key === key) return this.cache.lines;
-    const lines = this.build(width).map(line => truncateToWidth(line, width));
+    const lines = this.build(width).map(line => truncateToWidth(line, width, '…'));
     // OSC 133 prompt zones, as Pi marks them: ctrl+up and ctrl+down jump between your messages.
     if (this.item.kind === 'user' && lines.length) {
       lines[0] = `${PROMPT_START}${lines[0] ?? ''}`;
@@ -183,7 +183,7 @@ class ItemBlock implements Component {
     if (thinkingExpanded) return gutter(style('∴'), wrap(style(lines.join('\n')), width - 2));
     const hidden = lines.length - 1;
     const more = hidden > 0 ? theme.dim(width < NARROW ? ` +${hidden} ^t` : ` (+${hidden} lines, ctrl+t)`) : '';
-    return [`${style('∴')} ${truncateToWidth(style(first), Math.max(1, width - 2 - visibleWidth(more)))}${more}`];
+    return [`${style('∴')} ${truncateToWidth(style(first), Math.max(1, width - 2 - visibleWidth(more)), '…')}${more}`];
   }
 
   private tool(item: Extract<ChatItem, { kind: 'tool' }>, width: number): string[] {
@@ -202,7 +202,7 @@ class ItemBlock implements Component {
     const inner = Math.max(1, width - indent.length);
     if (toolsExpanded) return [header, ...lines.flatMap(line => wrap(style(line), inner)).map(line => `${indent}${line}`)];
     const shown = lines.slice(0, narrow ? TOOL_PREVIEW_NARROW : TOOL_PREVIEW)
-      .map(line => `${indent}${truncateToWidth(style(line), inner)}`);
+      .map(line => `${indent}${truncateToWidth(style(line), inner, '…')}`);
     const hidden = lines.length - shown.length;
     const more = narrow ? `+${hidden} lines ^o` : `… ${hidden} more lines, ctrl+o to expand`;
     return [header, ...shown, ...hidden > 0 ? [`${indent}${theme.dim(more)}`] : []];
@@ -294,7 +294,7 @@ export class ChatView implements Component {
       const { history } = this;
       const text = width < NARROW ? `· ${count}${history ? ` · ${history}` : ''}`
         : `· ${count} not shown${history ? `; ${history} browses the whole chat` : ''}`;
-      lines.push(truncateToWidth(this.state.theme.dim(text), width));
+      lines.push(truncateToWidth(this.state.theme.dim(text), width, '…'));
       previous = 'notice';
     }
     for (const block of this.order) {

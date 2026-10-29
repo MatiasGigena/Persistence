@@ -436,6 +436,12 @@ test('on a phone the chat is compact, and no line is wider than the screen', () 
     assert.ok(lines.includes(narrow ? '∴ first thought +1 ^t' : '∴ first thought (+1 lines, ctrl+t)'));
     assert.equal(lines.find(line => line.includes('Heading'))?.startsWith(narrow ? 'Heading' : '  Heading'), true, 'Markdown padding');
   }
+  const long = new ChatView(new FakeFeed([
+    { kind: 'thinking', id: 'th', text: `${'a long thought '.repeat(8)}\nmore`, streaming: false },
+    { kind: 'tool', id: 't', name: 'bash', args: '{"command":"ls"}', output: 'with words '.repeat(8), status: 'done' },
+  ]), theme).render(40).map(line => stripTerminalSequences(line));
+  assert.deepEqual(long.filter(line => line.includes('…') || line.includes('...')).map(line => line.endsWith('… +1 ^t') || line.endsWith('…')),
+    [true, true], `cut lines end in one ellipsis character, as the footer's and the panels' do:\n${long.join('\n')}`);
 });
 
 const BUSY: FooterStatus = {

@@ -154,7 +154,7 @@ class Line implements Component {
   private readonly minWidth: number;
   constructor(text: () => string, minWidth = 0) { this.text = text; this.minWidth = minWidth; }
   invalidate(): void {}
-  render(width: number): string[] { return width < this.minWidth ? [] : [truncateToWidth(this.text(), width)]; }
+  render(width: number): string[] { return width < this.minWidth ? [] : [truncateToWidth(this.text(), width, '…')]; }
 }
 
 /** Text lines the editor shows at most on a terminal `rows` high: about 30% of it, borders included. */
