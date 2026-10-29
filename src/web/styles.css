@@ -422,6 +422,9 @@ button.status-part:active { opacity: 0.6; }
 .prose h3, .prose h4 { font-size: 1rem; }
 .prose ul, .prose ol { padding-left: 1.4em; }
 .prose li + li { margin-top: 0.25em; }
+/* A task item's checkbox takes the bullet's place (markdown.ts marks the item). */
+.prose li.task { list-style: none; }
+.prose li.task > input:first-child, .prose li.task > p:first-child > input:first-child { margin: 0 0 0 -1.4em; vertical-align: -0.1em; }
 .prose a { color: var(--accent); text-underline-offset: 2px; }
 .prose blockquote { border-left: 3px solid var(--line); padding-left: 12px; color: var(--muted); }
 .prose code { font-size: 0.86em; background: var(--code); padding: 1px 5px; border-radius: 5px; }

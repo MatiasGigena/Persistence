@@ -47,3 +47,12 @@ test('ordinary Markdown renders', () => {
   for (const tag of ['<h1>', '<strong>', '<em>', '<del>', '<ul>', '<table>']) assert.ok(html.includes(tag), `${tag} in ${html}`);
   assert.ok(!html.includes('style='), html);
 });
+
+test('task list items are marked, so they show their checkbox without a bullet too', () => {
+  const tight = renderMarkdown('- [x] done\n- [ ] open\n- plain');
+  assert.match(tight, /<li class="task"><input checked="" disabled="" type="checkbox"> done<\/li>/);
+  assert.match(tight, /<li class="task"><input disabled="" type="checkbox"> open<\/li>/);
+  assert.match(tight, /<li>plain<\/li>/);
+  const loose = renderMarkdown('- [x] one\n\n- [ ] two');
+  assert.match(loose, /<li class="task"><p><input checked="" disabled="" type="checkbox"> one<\/p>/);
+});

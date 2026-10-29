@@ -28,6 +28,10 @@ const marked = new Marked({
       const safe = safeHref(href);
       return safe ? anchor(safe, title, inner) : inner;
     },
+    // A task item says so, for styles.css to show its checkbox in place of the bullet.
+    listitem(item: Tokens.ListItem): string {
+      return `<li${item.task ? ' class="task"' : ''}>${this.parser.parse(item.tokens)}</li>\n`;
+    },
     image({ href, title, text }: Tokens.Image): string {
       const label = escapeHtml(text || href);
       const safe = safeHref(href);
