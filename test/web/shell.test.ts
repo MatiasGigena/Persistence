@@ -91,6 +91,14 @@ test('bold and italic still show where the monospace font has only a regular fac
   }
 });
 
+test('code and output never show ligatures, under any font shorthand', async () => {
+  // `font: …` resets font-variant-ligatures, so a value inherited from the root was lost on body, .prose and the tool
+  // blocks, and `-rw-r--r--` read as `-rw-r—r—` in a font with ligatures (JetBrains Mono, Fira Code).
+  const css = await readFile(join(WEB, 'styles.css'), 'utf8');
+  assert.ok(/\bfont:\s/.test(css), 'the sheet uses the shorthand');
+  assert.match(css, /^\*, \*::before, \*::after \{[^}]*font-variant-ligatures: none !important;/m);
+});
+
 test('the service worker marks a set complete only after its files agree on one version', async () => {
   const sw = await readFile(join(WEB, 'sw.ts'), 'utf8');
   const stable = /async function fetchStable[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';

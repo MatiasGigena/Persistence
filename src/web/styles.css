@@ -55,10 +55,11 @@
   /* Bold and italic may be synthesized: many monospace fonts (Android's among them) have one face, and without it
      **bold**, *em* and headings would read as plain text. */
   font-synthesis: weight style;
-  font-variant-ligatures: none;
 }
 
-*, *::before, *::after { box-sizing: border-box; }
+/* No ligatures: in this terminal face `--`, `->` and `!=` must read as typed, in code and in tool output alike. Every
+   `font` shorthand (body, .prose, the tool lines) resets an inherited value, so it is held on each element. */
+*, *::before, *::after { box-sizing: border-box; font-variant-ligatures: none !important; }
 
 html, body {
   margin: 0;
