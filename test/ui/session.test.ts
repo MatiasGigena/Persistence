@@ -167,6 +167,16 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     assert.deepEqual([notice.text, notice.level], ['Not answered: the model is not available; pick another model.', 'warn']);
   });
 
+  test('a run that faults says so once, without the task kind or the SDK\'s reason code', async (t) => {
+    // A non-finite number is not strict JSON: the run's task faults.
+    const { session } = await open(t, [fauxAssistantMessage([fauxToolCall('date', { x: Number.NaN })])]);
+    await session.send('what day is it?');
+    await until(() => !session.status().busy && find(session.chat, 'notice'), 'the notice', session.chat);
+    await idle(session);
+    const notices = session.chat.items().flatMap(item => item.kind === 'notice' ? [[item.text, item.level]] : []);
+    assert.deepEqual(notices, [['The reply failed: Value contains a non-finite number and is not strict JSON', 'error']]);
+  });
+
   test('an agents.report input is a report item from its agent', async (t) => {
     const { instance, session } = await open(t, [fauxAssistantMessage('thanks, Bob')]);
     await instance.root.submit({ type: 'input', content: '[Bob] built it',
