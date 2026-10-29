@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
-import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, runTui } from '../../src/ui/tui/app.ts';
+import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui, statusText } from '../../src/ui/tui/app.ts';
 import type { AttachedLink, LinkState, TuiInfo } from '../../src/ui/tui/app.ts';
 import { ChatView, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
 import { Footer, footerText, SPIN_FAST, SPIN_SLOW, STEP_WIDTH, spinnerInterval } from '../../src/ui/tui/footer.ts';
@@ -259,6 +259,58 @@ test('slash commands dispatch, and Ctrl+C twice exits', async () => {
   assert.equal(terminal.stopped, true);
 });
 
+test('/status says where the tools run when a client routes them to a machine', () => {
+  assert.doesNotMatch(statusText(STATUS), /tools run on/);
+  const lines = statusText({ ...STATUS, machine: { machineId: 'm1', label: 'laptop', cwd: '/home/u/src' } }).split('\n');
+  assert.deepEqual(lines.slice(0, 2), ['model faux/model-1 · thinking high · tools off', 'tools run on laptop in /home/u/src']);
+});
+
+test('a line that starts with a path is sent to Pi, not taken as a command', async () => {
+  assert.equal(isCommand('/status'), true);
+  assert.equal(isCommand('/model claude-cli/opus'), true);
+  assert.equal(isCommand('/'), true);
+  assert.equal(isCommand('/etc/hosts is empty, why?'), false);
+  assert.equal(isCommand('/tmp/x.log'), false);
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/etc/hosts is empty, why?', '\r');
+  await delay(30);
+  assert.deepEqual(session.sent, ['/etc/hosts is empty, why?']);
+  assert.doesNotMatch(terminal.text(), /Unknown command/);
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('a message that was not sent says so, and ↑ brings it back to the editor', async () => {
+  const session = new FakeSession();
+  session.send = () => Promise.reject(new Error('the link is down'));
+  const { terminal, done } = await startTui(session);
+  terminal.type('my long message', '\r');
+  await delay(30);
+  assert.match(terminal.text(), /Not sent: the link is down \(↑ brings the message back\)/);
+  terminal.type('\x1b[A', '\r');
+  await delay(30);
+  assert.equal((terminal.text().match(/Not sent: the link is down/g) ?? []).length, 2, '↑ then Enter resends it');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('the first Ctrl+C says in the footer that a second one quits, until the second would no longer count', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session, undefined, new FakeTerminal(40, 15));
+  const footer = (): string => terminal.screen().find(row => row.includes('tools off')) ?? '';
+  assert.doesNotMatch(footer(), /ctrl\+c again/);
+  terminal.type('draft', '\x03');
+  await delay(30);
+  assert.match(footer(), /ctrl\+c again to quit/, 'kept on a phone-width footer');
+  await delay(1100);
+  assert.doesNotMatch(footer(), /ctrl\+c again/);
+  assert.equal(terminal.stopped, false);
+  terminal.type('\x03', '\x03');
+  await done;
+  assert.ok(footerText({ ...STATUS, hint: 'ctrl+c again to detach' }, theme, 0, 20).includes('ctrl+c again to detach'));
+});
+
 test('/effort NAME sets the effort; /effort alone opens the picker, and Enter takes the highlighted level', async () => {
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
@@ -266,9 +318,9 @@ test('/effort NAME sets the effort; /effort alone opens the picker, and Enter ta
   const until = async (check: () => boolean, what: string) => {
     for (const end = Date.now() + 5_000; !check(); await delay(20)) if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
   };
-  terminal.type('/effort low', '\r');
+  terminal.type('/effort LOW', '\r');
   await until(() => /Effort: low \(from the next request; saved as default\)/.test(terminal.text()), 'the notice');
-  assert.equal(session.status().thinkingLevel, 'low');
+  assert.equal(session.status().thinkingLevel, 'low', 'any case');
   terminal.type('/effort', '\r');
   await until(() => /✓ low/.test(terminal.text()) && /balanced/.test(terminal.text()), 'the picker');
   terminal.type('\x1b[B', '\r'); // down to medium, then Enter
@@ -382,6 +434,9 @@ test('the footer fills by priority and never drops the tools state', () => {
     + ' · mem 142 msgs · 37 KB view · 3 summarizing · 1 failed · 2/3 agents busy');
   assert.equal(at(BUSY, 12), 'tools off');
   assert.equal(at({ ...BUSY, toolsEnabled: true }, 5), 'tool…', 'cut, never dropped');
+  // Two segments that are never dropped: the separator between them counts, so a third does not push tools off.
+  const reconnecting = { ...STATUS, reconnecting: true };
+  for (let width = 26; width <= 40; width++) assert.match(at(reconnecting, width), /reconnecting… · .*tools off/, `${width}`);
 });
 
 test('the spinner slows down over SSH and on a narrow screen', () => {
@@ -436,6 +491,18 @@ test('/stop interrupts Pi, as Esc does', async () => {
   await delay(10);
   assert.equal(session.aborts, 1);
   assert.deepEqual(session.sent, [], '/stop is not sent to Pi');
+  assert.match(terminal.text(), /Nothing to stop: Pi is idle\./);
+  session.update({ agents: [{ name: 'Scout', role: 'main', parent: 'Pi', busy: true }] });
+  terminal.type('/stop', '\r');
+  await delay(10);
+  assert.match(terminal.text(), /Pi is idle; 1 agent is working: \/stop all stops them\./);
+  session.update({ busy: true });
+  const mark = terminal.output.length;
+  terminal.type('/stop', '\r');
+  terminal.type('\x1b');
+  await delay(80);
+  assert.equal(session.aborts, 4);
+  assert.doesNotMatch(stripTerminalSequences(terminal.output.slice(mark)), /Pi is idle|Nothing to stop/, 'silent while Pi works');
   terminal.type('/exit', '\r');
   await done;
 });
@@ -455,6 +522,11 @@ test('/stop all stops Pi and every agent; /stop Name stops one agent', async () 
   assert.match(terminal.text(), /Stopped Ada\./);
   assert.match(terminal.text(), /Stopped Bob\./);
   assert.match(terminal.text(), /No agent named ghost\./);
+  assert.doesNotMatch(terminal.text(), /Agents:/, 'no list when there are no agents');
+  session.update({ agents: [{ name: 'Ada', role: 'main', parent: 'Pi', busy: false }, { name: 'Bob', role: 'sub', parent: 'Ada', busy: true }] });
+  terminal.type('/stop ghost', '\r');
+  await delay(10);
+  assert.match(terminal.text(), /No agent named ghost\. Agents: Ada, Bob\./);
   assert.deepEqual(session.sent, []);
   terminal.type('/exit', '\r');
   await done;

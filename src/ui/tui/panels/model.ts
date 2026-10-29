@@ -10,14 +10,14 @@ import type { PanelTheme, Row } from './frame.ts';
 export const modelRef = (model: { readonly provider: string; readonly id: string }): string => `${model.provider}/${model.id}`;
 
 /**
- * Opens the picker over the chat. Resolves, once it has closed and the editor has focus again, with the available
- * model chosen with Enter, or undefined after Esc. Switching to it is the caller's job.
+ * Opens the picker over the chat, filtered by `filter` as if typed. Resolves, once it has closed and the editor has
+ * focus again, with the available model chosen with Enter, or undefined after Esc. Switching to it is the caller's job.
  */
-export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelTheme): Promise<ModelChoice | undefined> {
+export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelTheme, filter = ''): Promise<ModelChoice | undefined> {
   let models: readonly ModelChoice[] | undefined, failure: string | undefined, hint: string | undefined;
   let picked: ModelChoice | undefined;
   const list = new ListView({
-    title: 'Model', theme, root: true, typeToFilter: true, verb: 'select',
+    title: 'Model', theme, root: true, typeToFilter: true, filter, verb: 'select',
     rows: () => (models ? modelRows(models, session.status().model, theme) : []),
     detail: row => {
       const model = models?.find(m => modelRef(m) === row.key);
