@@ -37,6 +37,10 @@ export interface HubOptions {
   readonly machines?: MachineBroker;
   /** After `admin.revoke` forgot a device: drop what else it left (its push subscriptions). */
   readonly revoked?: (name: string) => Promise<unknown>;
+  /** The web app's origin (PI_DURABLE_ORIGIN), which `admin.pair` names as the place to enter the code. */
+  readonly origin?: string;
+  /** Why the web app is off, while it is: `admin.pair` then refuses, as a code would have nowhere to be entered. */
+  readonly webOff?: () => string | undefined;
   /** `admin.backup`: an online backup into `out` (absolute), or the default directory. */
   readonly backup?: (out: string | undefined) => Promise<{ readonly path: string; readonly bytes: number }>;
   /** One line for the server's log (the systemd journal). */
@@ -421,7 +425,11 @@ export class Hub implements PeerHub {
         try { return await this.options.backup(out); } catch (error) { throw failed(error); }
       },
       'admin.pair': async () => {
-        try { return await registry().pair(); } catch (error) { throw failed(error); }
+        const off = this.options.webOff?.();
+        if (off !== undefined) throw new OpError(ErrorCode.unavailable, `The web app is off: ${off}. Pair once it is on.`);
+        let code: { readonly code: string; readonly expiresAt: number };
+        try { code = await registry().pair(); } catch (error) { throw failed(error); }
+        return this.options.origin === undefined ? code : { ...code, origin: this.options.origin };
       },
       'admin.devices': async () => {
         let devices: readonly Device[];
@@ -431,7 +439,11 @@ export class Hub implements PeerHub {
       'admin.revoke': async ({ name }) => {
         let found: boolean;
         try { found = await registry().revoke(name); } catch (error) { throw failed(error); }
-        if (!found) throw new OpError(ErrorCode.notFound, `No device named ${name}.`);
+        if (!found) {
+          // Names are exact (case too): list them, so a near miss shows the name to type.
+          const names = (await registry().list().catch(() => [])).map(device => device.name);
+          throw new OpError(ErrorCode.notFound, `No device named ${name}. ${names.length ? `Paired: ${names.join(', ')}.` : 'No device is paired.'}`);
+        }
         this.closeDevice(name, CloseCode.unauthorized, 'This device was revoked.');
         this.options.log(`device "${name}" revoked`);
         try { await this.options.revoked?.(name); } catch (error) {

@@ -268,7 +268,7 @@ export async function rosterWarnings(roster: Roster, {
     for (const [model, who] of [[agent.model, name], ...agent.subModel ? [[agent.subModel, `${name}'s subs`] as const] : []] as const) {
       const unknown = catalogProblem(models, model);
       if (unknown) {
-        warnings.push(`${listed([who])}: ${unknown}. Set another model for ${name} in settings.json's "agents" (docs/operations.md).`);
+        warnings.push(`${listed([who])}: ${unknown.replace(/\.$/, '')}. Set another model for ${name} in settings.json's "agents" (docs/operations.md).`);
         continue;
       }
       const entry = byProvider.get(model.provider) ?? { model, names: [] };

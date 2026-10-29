@@ -19,7 +19,7 @@ import { backupOffline } from '../server/backup.ts';
 import { formatBytes } from '../server/admin.ts';
 import { serve } from '../server/serve.ts';
 import { createUiSession } from '../ui/session.ts';
-import { runTui } from '../ui/tui/app.ts';
+import { isCommand, runTui } from '../ui/tui/app.ts';
 import { errorMessage, isRecord, parseConfig } from './config.ts';
 import type { ModelSource } from './config.ts';
 
@@ -134,6 +134,17 @@ async function chatTui(): Promise<void> {
   }
 }
 
+/** The terminal UI's commands that line-by-line chat lacks, with what to do instead. */
+const TUI_ONLY: Readonly<Record<string, string>> = { model: 'relaunch with --model PROVIDER/ID',
+  effort: 'relaunch with --thinking LEVEL', thinking: 'relaunch with --thinking LEVEL', tools: 'relaunch with or without --no-tools',
+  mem: 'run --status for the memory counters', stop: 'Ctrl+C closes the host; unfinished work resumes next launch' };
+
+/** What line-by-line chat answers to a slash command it does not run. */
+function unknownCommand(line: string): string {
+  const word = line.split(/\s/, 1)[0] ?? line, instead = TUI_ONLY[word.slice(1)];
+  return instead ? `${word} is in the terminal UI only; here, ${instead}.` : `Unknown command ${word}. Use /help.`;
+}
+
 const SOURCE: Readonly<Record<ModelSource, string>> = { flag: '--model', env: 'PI_DURABLE_MODEL',
   settings: 'saved by /model', default: 'default' };
 
@@ -203,7 +214,9 @@ async function main(): Promise<void> {
   console.log(`Tools: ${config.allowTools ? 'ENABLED — your user permissions, minus the protected folders (chat state, credentials hidden; system read-only)' : 'OFF (--no-tools was given; relaunch without it to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
   await printHistory(6);
   watcher = await watchReplies();
-  reader = createInterface({ input: process.stdin, output: process.stdout });
+  reader = createInterface({ input: process.stdin, output: process.stdout, prompt: 'you> ' });
+  // The iterator buffers lines typed or pasted while a command or a send runs; question() would drop them.
+  const lines = reader[Symbol.asyncIterator]();
   reader.on('SIGINT', () => stop('SIGINT'));
   reader.once('close', () => {
     if (!stopping) {
@@ -213,17 +226,18 @@ async function main(): Promise<void> {
     }
   });
   while (!stopping) {
-    let line: string;
-    // The reader's close listener sets `stopping`, so a question rejected by close ends the loop.
-    try { line = (await reader.question('you> ', { signal: shutdown.signal })).trim(); }
-    catch (error) { if (stopping) break; throw error; }
+    reader.prompt();
+    // Closing the reader (Ctrl+D, a signal, shutdown) ends the iterator.
+    const next = await lines.next();
+    if (next.done || stopping) break;
+    const line = next.value.trim();
     if (!line) continue;
     if (line === '/exit' || line === '/quit') break;
     if (line === '/help') console.log('/history — saved messages\n/agents — spawned agents and whether they are busy\n/status — storage, memory and pending work\n/exit — close without discarding unfinished work\nAgents work in the background; their reports and Pi\'s replies print as they arrive.\nHere, tools and the model change only by relaunching (--no-tools, --model); the terminal UI has /tools and /model.');
     else if (line === '/history') await printHistory();
     else if (line === '/agents') await printAgents();
     else if (line === '/status') await printStatus();
-    else if (line.startsWith('/')) console.error('Unknown command. Use /help.');
+    else if (isCommand(line)) console.error(unknownCommand(line));
     else {
       try { await send(line, undefined, { print: false }); }
       catch (error) { if (!stopping) console.error(`pi-durable: ${errorMessage(error)}`); }

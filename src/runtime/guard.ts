@@ -113,6 +113,15 @@ async function sandboxArgs(bin: string, { hidden, readOnly, sshAgent }: Protecti
   return [...args, '--'];
 }
 
+/**
+ * The likely cause when bubblewrap is refused a user namespace ("setting up uid map: Permission denied", "Operation not
+ * permitted"), unless its own text already names the sysctl: the user, not Pi, can allow them.
+ */
+const namespaceHint = (stderr: string): string => /uid map|namespace|not permitted|Permission denied/i.test(stderr) && !/sysctl/.test(stderr)
+  ? '. Unprivileged user namespaces are likely off (on Ubuntu 24.04, AppArmor\'s kernel.apparmor_restrict_unprivileged_userns); '
+    + 'allow them for bwrap: see Troubleshooting in docs/operations.md.'
+  : '';
+
 /** Why bubblewrap cannot run here, or undefined when it can; asked once per argv prefix. */
 const probes = new Map<string, Promise<string | undefined>>();
 function probe(args: readonly string[]): Promise<string | undefined> {
@@ -125,7 +134,7 @@ function probe(args: readonly string[]): Promise<string | undefined> {
       const missing = 'code' in error && error.code === 'ENOENT';
       done(missing ? `${bin} is not installed. Install bubblewrap (sudo apt install bubblewrap, or without root its .deb's`
         + ' usr/bin/bwrap into ~/.local/bin) and restart Pi Durable.'
-        : `bubblewrap cannot run here: ${stderr.trim().split('\n').at(-1) ?? error.message}`);
+        : `bubblewrap cannot run here: ${stderr.trim().split('\n').at(-1) ?? error.message}${namespaceHint(stderr)}`);
     }));
     probes.set(key, found);
   }

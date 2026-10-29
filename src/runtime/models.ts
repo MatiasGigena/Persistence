@@ -71,9 +71,14 @@ export function accessProblem({ provider, modelId }: ModelRef, access: Access, a
   switch (access.reason) {
     case 'none': return provider === CLAUDE_CLI
       ? 'No Claude Code login for claude-cli. Install Claude Code, run claude, then /login (or run claude auth login). PI_DURABLE_CLAUDE_BIN selects another claude binary.'
-      : `No credentials for ${provider}. Run pi (or npm exec -- pi from the installation directory), then /login. API-key providers also accept their usual environment variable.${authFile ? ` Auth file: ${authFile}` : ''}`;
+      // Pi's /login for anthropic offers the Claude Pro/Max login, which the host refuses (the 'subscription' case).
+      : provider === 'anthropic'
+        ? 'No credentials for anthropic. Set ANTHROPIC_API_KEY to an Anthropic Console API key (sk-ant-api…), or use claude-cli/opus (or sonnet, haiku, fable) with your Claude plan through the claude CLI. A Claude Pro/Max login is refused for anthropic. See docs/models.md.'
+        : `No credentials for ${provider}. Run pi (or npm exec -- pi from the installation directory), then /login. API-key providers also accept their usual environment variable.${authFile ? ` Auth file: ${authFile}` : ''}`;
     case 'subscription': return `Refusing anthropic/${modelId}: its credential is a Claude subscription (${access.detail}), which Anthropic allows only in its own apps such as Claude Code. Use claude-cli/opus (or sonnet, haiku, fable), which runs the official claude CLI with your login, or an Anthropic Console API key in ANTHROPIC_API_KEY (remove a stored anthropic login first). See docs/models.md.`;
-    case 'timeout': return `Checking the credentials for ${provider} timed out.`;
+    case 'timeout': return provider === CLAUDE_CLI
+      ? 'Checking the credentials for claude-cli timed out: claude auth status did not answer. Run it yourself to see why.'
+      : `Checking the credentials for ${provider} timed out.`;
     case 'error': return `Checking the credentials for ${provider} failed: ${access.detail}`;
   }
 }

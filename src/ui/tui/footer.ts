@@ -29,6 +29,8 @@ export type FooterStatus = Omit<SessionStatus, 'agents'> & {
   readonly reconnecting?: boolean;
   /** The tool call running now, as "name summary" on one line; shown next to the spinner while busy. */
   readonly step?: string;
+  /** A short-lived key hint, e.g. after the first Ctrl+C; shown first, at every width. */
+  readonly hint?: string;
 };
 
 /** Longest step shown, in columns: wide and compact. */
@@ -47,6 +49,7 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
   const slash = status.model.indexOf('/');
   const model = compact && slash > 0 ? status.model.slice(slash + 1) : status.model;
   const list: Segment[] = [
+    ...status.hint ? [{ text: theme.warning(status.hint), rank: TOOLS }] : [],
     ...status.reconnecting ? [{ text: theme.warning('reconnecting…'), rank: TOOLS }] : [],
     { text: model, rank: 4 },
     { text: dim(compact ? `think ${status.thinkingLevel}` : `thinking ${status.thinkingLevel}`), rank: 7 },
@@ -76,13 +79,13 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
  * The footer's text within `width` columns (default: unlimited); `frame` picks the busy spinner's glyph.
  * Below NARROW columns it uses short forms. Segments are kept in priority order (working, tools, current step,
  * queued, agents, model, memory failures, memory size, thinking, summaries) until one does not fit, and shown in their
- * usual order; the tools state and "reconnecting…" are never dropped.
+ * usual order; a key hint, the tools state and "reconnecting…" are never dropped.
  */
 export function footerText(status: FooterStatus, theme: Theme, frame = 0, width = Number.POSITIVE_INFINITY): string {
   const separator = theme.dim(' · ');
   const all = segments(status, theme, frame, width < NARROW);
   const kept = new Set<Segment>(all.filter(s => s.rank === TOOLS));
-  let used = [...kept].reduce((sum, s) => sum + visibleWidth(s.text), 0);
+  let used = [...kept].reduce((sum, s) => sum + visibleWidth(s.text), 0) + Math.max(0, kept.size - 1) * visibleWidth(separator);
   for (const segment of [...all].sort((a, b) => a.rank - b.rank)) {
     if (kept.has(segment)) continue;
     const extra = visibleWidth(segment.text) + visibleWidth(separator);

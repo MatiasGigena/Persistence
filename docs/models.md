@@ -255,6 +255,7 @@ host's environment makes the CLI bill that key instead of your plan.
 | `Claude usage limit reached … resets …` | The plan's limit is used up. Wait for the reset; the turn is not retried. |
 | `claude-cli: … not signed in or its login expired (401)` | Sign in again with `claude auth login`. |
 | Requests bill your API account | `ANTHROPIC_API_KEY` is set in the host's environment. Unset it to use the plan. |
+| `No credentials for anthropic. Set ANTHROPIC_API_KEY …` | Export a Console API key (`sk-ant-api…`), or use `--model claude-cli/…`. Pi's `/login` for anthropic is the Pro/Max login, which is refused. |
 | `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key. A stored Pi `anthropic` login wins over the variable: remove it with Pi's `/logout`. |
 | A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run (signed out, for example). Pass `--model`, sign in again, or delete the file. |
 | `…/settings.json is not valid JSON` or `must be an object like {"model":…}` | Fix the file or delete it; `--model` still works meanwhile. |

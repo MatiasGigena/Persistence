@@ -2,6 +2,7 @@
 // whole; breadcrumbs lead back up. The top level reloads when the memory's counters change while it is open.
 import { el } from '../chat-view.ts';
 import { errorText, lineLabel, memoryHeader, parseMessage, parseZoom } from '../format.ts';
+import { RequestError } from '../link.ts';
 import type { ViewLine } from '../../protocol/messages.ts';
 import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
@@ -32,7 +33,8 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
       skeletonRows(list, 6);
       body.append(header, search, list, state);
       let lines: readonly ViewLine[] = [];
-      let loading = false, again = false, loaded = false, entered = false;
+      /** `retry`: the load failed as the link was down; it runs again once the link is back. */
+      let loading = false, again = false, loaded = false, entered = false, retry = false;
       const memoryKey = (): string => JSON.stringify(ctx.store.status?.memory ?? null);
       const toEnd = (): void => list.lastElementChild?.scrollIntoView({ block: 'end' });
       const draw = (): void => {
@@ -67,7 +69,10 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
             if (top) lastView = { memory: asked, lines: next };
           },
           // A failed reload keeps the lines shown; with none yet, its error shows instead.
-          (error: unknown) => { if (loaded) same = true; else state.textContent = errorText(error); },
+          (error: unknown) => {
+            if (error instanceof RequestError && error.code === 'lost') retry = true;
+            if (loaded) same = true; else state.textContent = errorText(error);
+          },
         ).finally(() => {
           loading = false;
           if (!same) {
@@ -78,25 +83,25 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
         });
       };
       search.addEventListener('input', draw);
-      if (top) {
-        let shownMemory = memoryKey();
+      let shownMemory = memoryKey();
+      header.textContent = top ? memoryHeader(ctx.store.status?.memory) : 'Each line opens into the two lines under it.';
+      unsubscribe = ctx.store.subscribe(() => {
+        if (retry && ctx.link.state === 'ready') { retry = false; reload(); return; }
+        if (!top) return;
+        const memory = memoryKey();
+        if (memory === shownMemory) return;
+        shownMemory = memory;
         header.textContent = memoryHeader(ctx.store.status?.memory);
-        unsubscribe = ctx.store.subscribe(() => {
-          const memory = memoryKey();
-          if (memory === shownMemory) return;
-          shownMemory = memory;
-          header.textContent = memoryHeader(ctx.store.status?.memory);
-          reload();
-        });
-        // Lines kept from the last opening, the memory unchanged since: shown at once, scrolled to the end once the
-        // level is in the sheet (the sheet scrolls a new level to its top first).
-        if (lastView?.memory === shownMemory) {
-          lines = lastView.lines;
-          loaded = entered = true;
-          draw();
-          requestAnimationFrame(toEnd);
-        }
-      } else header.textContent = 'Each line opens into the two lines under it.';
+        reload();
+      });
+      // Lines kept from the last opening, the memory unchanged since: shown at once, scrolled to the end once the
+      // level is in the sheet (the sheet scrolls a new level to its top first).
+      if (top && lastView?.memory === shownMemory) {
+        lines = lastView.lines;
+        loaded = entered = true;
+        draw();
+        requestAnimationFrame(toEnd);
+      }
       reload();
     },
     dispose() { unsubscribe(); },
@@ -113,6 +118,7 @@ function zoomView(ctx: PanelContext, line: ViewLine): View {
 
 /** One message, whole. */
 function messageView(ctx: PanelContext, line: ViewLine): View {
+  let unsubscribe = (): void => undefined;
   return {
     title: lineLabel(line),
     render(body) {
@@ -121,23 +127,32 @@ function messageView(ctx: PanelContext, line: ViewLine): View {
       const text = el('div', 'message-text');
       text.append(skeletonLines(5));
       body.append(note, text);
-      ctx.link.request('memory.zoom', { id: line.id, n: line.n }).then(
-        ({ text: out }) => {
-          const { note: page, body: message } = parseMessage(out);
-          note.textContent = page ?? '';
-          note.hidden = !page;
-          text.textContent = message;
-          fadeIn(note);
-          fadeIn(text);
-        },
-        (error: unknown) => {
-          text.replaceChildren();
-          note.textContent = errorText(error);
-          note.classList.add('is-error');
-          note.hidden = false;
-          fadeIn(note);
-        },
-      );
+      /** Set when the load failed as the link was down; it runs again once the link is back. */
+      let retry = false;
+      const load = (): void => {
+        ctx.link.request('memory.zoom', { id: line.id, n: line.n }).then(
+          ({ text: out }) => {
+            const { note: page, body: message } = parseMessage(out);
+            note.textContent = page ?? '';
+            note.hidden = !page;
+            note.classList.remove('is-error');
+            text.textContent = message;
+            fadeIn(note);
+            fadeIn(text);
+          },
+          (error: unknown) => {
+            retry = error instanceof RequestError && error.code === 'lost';
+            text.replaceChildren();
+            note.textContent = errorText(error);
+            note.classList.add('is-error');
+            note.hidden = false;
+            fadeIn(note);
+          },
+        );
+      };
+      unsubscribe = ctx.store.subscribe(() => { if (retry && ctx.link.state === 'ready') { retry = false; load(); } });
+      load();
     },
+    dispose() { unsubscribe(); },
   };
 }

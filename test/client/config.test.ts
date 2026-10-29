@@ -66,11 +66,15 @@ test('configuration is atomic/private and stores no launch tools permission', as
 
 test('malformed, unknown, or unsafe saved settings reject; --local explicitly bypasses them', async t => {
   const { env } = await fixture(t);
-  for (const value of ['{', '[]', '{}', JSON.stringify({ machineId: 'not-an-id' }), JSON.stringify({ machineId: id, allowTools: true }),
-    JSON.stringify({ machineId: id, ssh: { host: '-oProxyCommand=bad' } }), JSON.stringify({ machineId: id, ssh: { host: 'central', command: 4 } }),
-    JSON.stringify({ machineId: id, ssh: { host: 'central', password: 'not-allowed' } })]) {
+  // Each refusal says what is wrong, so a hand edit can be fixed without guessing.
+  for (const [value, why] of [['{', 'it is not valid JSON'], ['[]', 'it must be an object like {"machineId":…,"ssh":{"host":…}}'],
+    ['{}', 'machineId must be a UUID'], [JSON.stringify({ machineId: 'not-an-id' }), 'machineId must be a UUID'],
+    [JSON.stringify({ machineId: id, allowTools: true }), 'unknown key allowTools'],
+    [JSON.stringify({ machineId: id, ssh: { host: '-oProxyCommand=bad' } }), 'Invalid SSH host: use [user@]host (configure ports in ~/.ssh/config)'],
+    [JSON.stringify({ machineId: id, ssh: { host: 'central', command: 4 } }), 'ssh.command must be a string'],
+    [JSON.stringify({ machineId: id, ssh: { host: 'central', password: 'not-allowed' } }), 'unknown key ssh.password (ports, users and keys go in ~/.ssh/config)']] as const) {
     await writeFile(clientConfigPath(env), value);
-    await assert.rejects(readClientConfig(env), /Invalid remote client configuration/);
+    await assert.rejects(readClientConfig(env), { message: `Invalid remote client configuration at ${clientConfigPath(env)}: ${why}; fix it or use --local` });
     assert.equal(await remoteTarget(parseArgs(['--local']), env), undefined);
   }
 });
@@ -133,7 +137,7 @@ test('bridge resolves only the socket and ignores broken client/model settings w
   await writeFile(clientConfigPath(env), 'not json');
   const socket = await resolveSocketPath({}, env);
   assert.equal(socket, join(folder, 'local-state', 'chat.sqlite.sock'));
-  await assert.rejects(exec(launcher, ['bridge'], { env: { ...env, PI_DURABLE_MODEL: 'invalid' } }), { stderr: /pi-durable bridge:.*ENOENT/ });
+  await assert.rejects(exec(launcher, ['bridge'], { env: { ...env, PI_DURABLE_MODEL: 'invalid' } }), { stderr: /pi-durable bridge: no pi-durable server is running here: .*chat\.sqlite\.sock does not exist/ });
   const { stdout } = await exec(launcher, ['--local', '--status'], { env: { ...env, PI_DURABLE_MODEL: 'provider/model' } });
   assert.match(stdout, /No saved session yet/);
   await assert.rejects(stat(join(folder, 'local-state')), { code: 'ENOENT' });

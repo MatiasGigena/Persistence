@@ -78,6 +78,7 @@ export class Link {
   private socket: SocketHandle | undefined;
   private current: LinkState = 'connecting';
   private why: ClosedBy | undefined;
+  private endedWith: number | undefined;
   private attempt = 0;
   private nextId = 0;
   private pingN = 0;
@@ -95,6 +96,8 @@ export class Link {
 
   get state(): LinkState { return this.current; }
   get closedBy(): ClosedBy | undefined { return this.why; }
+  /** The server's `bye` code, else the close code (0: it went silent), that ended the last connection. */
+  get droppedWith(): number | undefined { return this.endedWith; }
 
   /** Starts connecting. */
   start(): void {
@@ -226,7 +229,7 @@ export class Link {
   private dropped(closeCode: number): void {
     this.generation++;
     this.teardown();
-    const code = this.bye ?? closeCode;
+    const code = this.endedWith = this.bye ?? closeCode;
     if (code === CloseCode.version) { this.finish('version'); return; }
     if (code === CloseCode.unauthorized) { this.finish('unauthorized'); return; }
     this.schedule('reconnecting');

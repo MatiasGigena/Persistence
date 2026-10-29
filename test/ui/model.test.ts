@@ -286,10 +286,26 @@ describe('/model and /tools in the chat', () => {
     assert.match(terminal.text(), /Model not changed: No credentials for cloud\./);
     assert.ok(terminal.output.includes(appTheme.error('Model not changed: No credentials for cloud.')), 'the notice is red');
 
+    terminal.type('/exit', KEY.enter);
+    await done;
+  });
+
+  test('/model WORD opens the picker filtered by it, and Enter takes the match', async () => {
+    const session = new FakeSession();
+    const { terminal, done } = await startTui(session);
+    terminal.type('/model Faux B', KEY.enter);
+    await delay(30);
+    assert.match(terminal.text(), /filter Faux B▏/);
+    assert.doesNotMatch(terminal.text(), /Usage: \/model/);
+    terminal.type(KEY.enter);
+    await delay(30);
+    assert.deepEqual(session.modelCalls, ['faux/b']);
     terminal.type('/model nope', KEY.enter);
     await delay(30);
-    assert.match(terminal.text(), /Usage: \/model provider\/id/);
-    assert.equal(session.modelCalls.length, 2);
+    assert.match(terminal.text(), /No matches\./);
+    terminal.type(KEY.esc);
+    await delay(80);
+    assert.deepEqual(session.modelCalls, ['faux/b']);
     terminal.type('/exit', KEY.enter);
     await done;
   });
@@ -322,7 +338,7 @@ describe('/model and /tools in the chat', () => {
     assert.ok(terminal.output.includes(appTheme.warning('tools on')), 'the footer warns');
 
     const mark = terminal.output.length;
-    terminal.type('/tools off', KEY.enter);
+    terminal.type('/tools Off', KEY.enter);
     await delay(30);
     assert.deepEqual(session.toolCalls, [true, false]);
     assert.match(since(terminal, mark), /Coding tools off/);

@@ -87,6 +87,24 @@ describe('model chooser', { timeout: 30_000 }, () => {
     await assert.rejects(chooser.check({ provider: 'nobody', modelId: 'x' }), /Unknown model nobody\/x in pinned Pi 1\.3\.0 catalog/);
     await assert.rejects(chooser.check({ provider: 'claude-cli', modelId: 'haiku' }), /No Claude Code login for claude-cli/);
     await assert.rejects(chooser.check({ provider: 'openai-codex', modelId: 'gpt-6.1-sol' }), /No credentials for openai-codex\..*Auth file: \/x\/auth\.json/);
+    // Pi's /login for anthropic is the Claude Pro/Max login the host refuses: point at an API key or claude-cli instead.
+    await assert.rejects(chooser.check({ provider: 'anthropic', modelId: 'claude-sonnet-5-5' }), (error: Error) => {
+      assert.match(error.message, /^No credentials for anthropic\. Set ANTHROPIC_API_KEY to an Anthropic Console API key/);
+      assert.match(error.message, /claude-cli\/opus/);
+      assert.doesNotMatch(error.message, /then \/login/);
+      return true;
+    });
+  });
+
+  test('a claude-cli check that hangs names the command that hung', async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'pi-durable-models-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const bin = join(dir, 'claude');
+    await writeFile(bin, '#!/bin/sh\nexec sleep 5\n', { mode: 0o755 });
+    const models = createModels();
+    models.setProvider(claudeCliProvider({ env: process.env, bin }));
+    await assert.rejects(modelChooser(models).check({ provider: 'claude-cli', modelId: 'opus' }, { timeoutMs: 100 }), { message:
+      'Checking the credentials for claude-cli timed out: claude auth status did not answer. Run it yourself to see why.' });
   });
 
   test('a credential check that hangs is unavailable after the timeout', async () => {

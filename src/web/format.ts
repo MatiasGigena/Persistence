@@ -167,6 +167,23 @@ export function normalizeCode(input: string): string {
   return chars.length > 4 ? `${chars.slice(0, 4)}-${chars.slice(4)}` : chars;
 }
 
+const PAIR_ERRORS: Readonly<Record<number, string>> = {
+  400: 'That code is not in the right shape: 8 characters, like 7KQ4-M2XD.',
+  401: 'That code is wrong or has expired. Run pi-durable serve pair for a new one.',
+  409: 'A device with that name is already paired. Pick another name.',
+  429: 'Too many tries. Run pi-durable serve pair for a new code.',
+};
+
+/**
+ * What the pairing screen says when `/api/pair` answers `status`, with the body's `error` (a 403 says which check
+ * refused: retrying cannot help with either).
+ */
+export function pairErrorText(status: number, reason: unknown): string {
+  if (status === 403 && reason === 'origin') return 'This address is not the server\'s PI_DURABLE_ORIGIN. Open the app at that address to pair.';
+  if (status === 403 && reason === 'login') return 'This Tailscale login is not allowed: the server lets in only PI_DURABLE_ALLOW_LOGIN.';
+  return PAIR_ERRORS[status] ?? `The server answered ${status}. Try again.`;
+}
+
 /** A default device name from the user agent, e.g. "iPhone" or "Android phone". */
 export function guessDeviceName(userAgent: string): string {
   if (/iPhone/.test(userAgent)) return 'iPhone';

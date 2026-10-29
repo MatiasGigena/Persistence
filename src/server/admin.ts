@@ -92,9 +92,10 @@ const when = (ms: number): string => new Date(ms).toISOString().replace(/\.\d{3}
 export async function pairCommand(config: Pick<Config, 'socketPath'>): Promise<void> {
   const response = await adminRequest(socketOf(config), { t: 'req', id: 1, op: 'admin.pair', params: {} }).catch(serverNeeded);
   if (response.op !== 'admin.pair') throw new Error('The server answered another request.');
-  const { code, expiresAt } = response.result;
+  const { code, expiresAt, origin } = response.result;
   const minutes = Math.max(1, Math.round((expiresAt - Date.now()) / 60_000));
-  console.log(`Pairing code: ${code}\nEnter it in the web app with a name for the device. Valid for ${minutes} minutes, once.`);
+  const where = origin === undefined ? 'in the web app' : `in the web app at ${origin}`;
+  console.log(`Pairing code: ${code}\nEnter it ${where} with a name for the device. Valid for ${minutes} minutes, once.`);
 }
 
 /** `pi-durable serve devices [--revoke NAME]`: lists the paired devices, or revokes one. */

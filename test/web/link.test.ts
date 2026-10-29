@@ -157,6 +157,7 @@ test('bye 4000 and 4001 close for good; other codes reconnect', async t => {
   socket().serve({ t: 'bye', code: CloseCode.tooSlow, reason: 'slow' });
   socket().events.close(CloseCode.tooSlow);
   assert.equal(link.state, 'reconnecting');
+  assert.equal(link.droppedWith, CloseCode.tooSlow);
   link.stop();
   assert.equal(link.state, 'closed');
   assert.equal(link.closedBy, 'stopped');
@@ -263,5 +264,26 @@ test('poke while ready checks the link: a dead socket is dropped within wakeMs, 
   t.mock.timers.tick(LIMITS.wakeMs);
   assert.equal(link.state, 'reconnecting', 'no answer: dead');
   assert.equal(sockets[0]?.closed, CloseCode.normal);
+  link.stop();
+});
+
+test('droppedWith says why the last connection ended: a restart\'s bye, or the bare close code', async t => {
+  const { link, socket } = harness(t);
+  assert.equal(link.droppedWith, undefined);
+  link.start();
+  await flush();
+  socket().events.open();
+  socket().handshake();
+  // The bye's code wins over the close frame's (a proxy may report 1006).
+  socket().serve({ t: 'bye', code: CloseCode.restart, reason: 'The server is stopping.' });
+  socket().events.close(1006);
+  assert.equal(link.state, 'reconnecting');
+  assert.equal(link.droppedWith, CloseCode.restart);
+  t.mock.timers.tick(1_000);
+  await flush();
+  socket().events.open();
+  socket().handshake();
+  socket().events.close(1006);
+  assert.equal(link.droppedWith, 1006);
   link.stop();
 });

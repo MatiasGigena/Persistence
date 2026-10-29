@@ -159,6 +159,8 @@ export interface ListOptions {
   readonly verb?: string;
   /** Typing filters at once, as in Pi's selectors: `/` is a plain character, and Esc closes even while filtering. */
   readonly typeToFilter?: boolean;
+  /** The filter the list opens with (with `typeToFilter`). */
+  readonly filter?: string;
   /** Whether this is the panel's first level, for the hint. */
   readonly root?: boolean;
   /** What a narrow screen shows of the selected row besides its compact form. */
@@ -182,6 +184,7 @@ export class ListView implements PanelView {
     this.options = options;
     this.title = options.title;
     this.atEnd = options.followEnd ?? false;
+    this.filter = options.filter ?? '';
   }
 
   hint(narrow: boolean): string {

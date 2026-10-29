@@ -1,6 +1,7 @@
 // Agents: the live list from the status, and each agent's conversation as a read-only feed (`feed.open`).
 import { ChatView, el } from '../chat-view.ts';
 import { errorText } from '../format.ts';
+import { RequestError } from '../link.ts';
 import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 
@@ -79,7 +80,27 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       scroller.append(skeleton, list);
       body.append(bar, scroller);
       view = new ChatView(list, scroller, { empty: 'Nothing here yet.' });
+      /** Set when feed.open failed as the link was down; it is asked again once the link is back. */
+      let retry = false;
+      const follow = (): void => {
+        ctx.link.request('feed.open', { name }).then(
+          ({ feed }) => {
+            if (!open) { void ctx.link.request('feed.close', { feed }).catch(() => undefined); return; }
+            opening = false;
+            ctx.store.openAgent(feed, name);
+            draw();
+          },
+          (error: unknown) => {
+            if (!open) return;
+            opening = false;
+            draw();
+            state.textContent = errorText(error);
+            retry = error instanceof RequestError && error.code === 'lost';
+          },
+        );
+      };
       const draw = (): void => {
+        if (retry && ctx.link.state === 'ready') { retry = false; follow(); }
         const found = ctx.store.agentByName(name);
         if (found) view?.set(found.agent.mirror.items);
         // A conversation kept from before a reconnect shows at once.
@@ -93,20 +114,7 @@ export function agentChatView(ctx: PanelContext, name: string): View {
         stop.hidden = !agent || found?.agent.ended !== undefined;
       };
       unsubscribe = ctx.store.subscribe(draw);
-      ctx.link.request('feed.open', { name }).then(
-        ({ feed }) => {
-          if (!open) { void ctx.link.request('feed.close', { feed }).catch(() => undefined); return; }
-          opening = false;
-          ctx.store.openAgent(feed, name);
-          draw();
-        },
-        (error: unknown) => {
-          if (!open) return;
-          opening = false;
-          draw();
-          state.textContent = errorText(error);
-        },
-      );
+      follow();
       draw();
     },
     dispose() {

@@ -199,7 +199,7 @@ reads as `undefined`, and `memory` may also be `null`.
 | `push.subscribe` | `subscription: {endpoint, expirationTime?, keys: {p256dh, auth}}` | `null` | web | `forbidden`, `unavailable` |
 | `push.unsubscribe` | `endpoint` | `null` | web | `forbidden`, `unavailable` |
 | `admin.backup` | `out?` | `{path, bytes}` | socket | `forbidden`, `failed` |
-| `admin.pair` | — | `{code, expiresAt}` | socket | `forbidden`, `unavailable` |
+| `admin.pair` | — | `{code, expiresAt, origin?}` | socket | `forbidden`, `unavailable` |
 | `admin.devices` | — | `{devices: {name, pairedAt, lastSeen?}[]}` | socket | `forbidden`, `unavailable` |
 | `admin.revoke` | `name` | `null` | socket | `forbidden`, `not_found`, `unavailable` |
 
@@ -268,7 +268,10 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   time, `2026-10-19T03-00-00Z` (with `-2`, `-3`, … for another in the same second); afterwards such directories
   in `out` older than 14 days are deleted, and nothing else there.
 - **`admin.pair`**, **`admin.devices`**, **`admin.revoke`**: see [Web peers](#web-peers). They answer
-  `unavailable` when `serve/devices.json` could not be read at the server's start.
+  `unavailable` when `serve/devices.json` could not be read at the server's start. `admin.pair` also answers
+  `unavailable`, saying why, while the web listener is off (not configured, not yet up, or failed to start), since a
+  code could not be entered anywhere. Its `origin` is the web app's (`PI_DURABLE_ORIGIN`), which `serve pair` prints
+  as the place to enter the code.
 
 ## Machine routing and execution
 
@@ -405,9 +408,10 @@ There is no session resumption: every connection starts from `hello` and gets th
   after `LIMITS.connectMs` (10 s). When the app comes back to the front or the browser comes online, the web app
   pings at once and drops the link if nothing answers within `LIMITS.wakeMs` (5 s); if it was already
   reconnecting, it starts a fresh attempt at once, with the backoff reset, abandoning one that hangs. Its banner
-  says "Reconnecting…" only after 2 s, so the usual reconnect on waking is not shown. The first load has no state to
-  show yet: the web app keeps its boot screen until the first `ready`, shows the chat's skeleton from 300 ms after
-  `/api/me` let it in (at once when offline), and the banner's line ("Connecting…", "Reconnecting…") from 1.5 s.
+  says "Reconnecting…" only after 2 s, so the usual reconnect on waking is not shown; after a `bye` 1012 it says at
+  once that the server is restarting. The first load has no state to show yet: the web app keeps its boot screen until
+  the first `ready`, shows the chat's skeleton from 300 ms after `/api/me` let it in (at once when offline), and the
+  banner's line ("Connecting…", "Reconnecting…") from 1.5 s.
 - The server's work never depends on a client: Pi and agents keep running while every client is away (a turn
   started from a phone that then sleeps finishes, and its answer is there on the next connection).
 - Requests pending when the link dropped reject on the client with "connection lost", except a `send` with a

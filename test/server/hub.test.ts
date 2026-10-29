@@ -197,10 +197,26 @@ test('socket-only and web-only ops are forbidden to the other peer', async t => 
   const backup = await request(socket, 'admin.backup');
   assert.equal(backup?.t === 'res' && !backup.ok && backup.error.code, 'unavailable', 'no backup function given');
   const nobody = await request(socket, 'admin.revoke', { name: 'tablet' });
-  assert.equal(nobody?.t === 'res' && !nobody.ok && nobody.error.code, 'not_found');
+  assert.deepEqual(nobody?.t === 'res' && !nobody.ok && nobody.error, { code: 'not_found', message: 'No device named tablet. Paired: phone.' });
   assert.deepEqual(await request(socket, 'admin.revoke', { name: 'phone' }), { t: 'res', id: 12, op: 'admin.revoke', ok: true, result: null });
   assert.equal(web.closedWith?.code, CloseCode.unauthorized, 'the revoked device is disconnected');
   assert.equal(socket.closedWith, undefined);
+});
+
+test('admin.pair refuses while the web app is off, saying why, and once it is on pairs, naming the origin', async t => {
+  let off: string | undefined = 'set PI_DURABLE_ORIGIN and PI_DURABLE_ALLOW_LOGIN to serve it (socket only)';
+  const devices: DeviceRegistry = {
+    pair: () => Promise.resolve({ code: 'ABCD-EFGH', expiresAt: 5 }), list: () => Promise.resolve([]), revoke: () => Promise.resolve(false),
+  };
+  const { hub, session, connect, request } = setup(t, { devices, webOff: () => off, origin: 'https://pi.tail1.ts.net' });
+  hub.start(session);
+  const socket = connect('socket');
+  const refused = await request(socket, 'admin.pair');
+  assert.deepEqual(refused?.t === 'res' && !refused.ok && refused.error, { code: 'unavailable',
+    message: 'The web app is off: set PI_DURABLE_ORIGIN and PI_DURABLE_ALLOW_LOGIN to serve it (socket only). Pair once it is on.' });
+  off = undefined;
+  const paired = await request(socket, 'admin.pair');
+  assert.deepEqual(paired?.t === 'res' && paired.ok && paired.result, { code: 'ABCD-EFGH', expiresAt: 5, origin: 'https://pi.tail1.ts.net' });
 });
 
 test('requests beyond the in-flight limit are refused', async t => {
