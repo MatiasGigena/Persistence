@@ -1,9 +1,8 @@
-// The overlay panels' shared parts: a bordered, near-full-screen frame holding a stack of views
-// (a breadcrumb title, an optional header, the top view, a one-line key hint), a selectable list,
-// a scrollable text view, and a one-key confirmation box. Only pi-tui; colors come from the shell
+// The overlay panels' shared parts: a bordered, full-screen frame holding a stack of views (a
+// breadcrumb title, an optional header, the top view, a one-line key hint), a selectable list, a
+// scrollable text view, and a one-key confirmation box. Only pi-tui; colors come from the shell
 // through PanelTheme, NARROW from the theme, and `clean` from the chat. Below NARROW columns (a phone)
-// the frame fills the screen, hints are short, and lists show compact rows with the selection's detail
-// above the hint.
+// hints are short, and lists show compact rows with the selection's detail above the hint.
 import { decodeKittyPrintable, getKeybindings, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, Keybinding, TUI } from '@earendil-works/pi-tui';
 import { clean } from '../chat.ts';
@@ -101,7 +100,7 @@ export class PanelFrame implements Component {
     if (!view || width < 8) return [];
     const { dim, bold } = this.theme;
     const narrow = this.tui.terminal.columns < NARROW;
-    const inner = width - 4, height = Math.max(6, this.tui.terminal.rows - 2 * panelMargin(this.tui.terminal.columns));
+    const inner = width - 4, height = Math.max(6, this.tui.terminal.rows);
     const crumbs = this.stack.map((v, i) => (i === this.stack.length - 1 ? bold(v.title) : dim(v.title))).join(dim(' › '));
     const rule = (left: string, label: string, right: string): string => {
       const text = truncateToWidth(label, width - 6, ELLIPSIS);
@@ -121,15 +120,14 @@ export class PanelFrame implements Component {
   }
 }
 
-/** The panels' distance from the screen's edges: none on a narrow screen. */
-const panelMargin = (columns: number): number => (columns < NARROW ? 0 : 1);
-
-/** Shows `frame` as a near-full-screen overlay; resolves when it closes. Hiding the overlay hands focus back. */
+/**
+ * Shows `frame` as a full-screen overlay; resolves when it closes. Hiding the overlay hands focus back. No margin:
+ * overlays have no backdrop, so the chat would show through it, cut at the panel's border.
+ */
 export function openPanel(tui: TUI, frame: PanelFrame): Promise<void> {
   return new Promise(resolve => {
     // pi-tui remembers the focused component (the editor) when the overlay opens, and hide() refocuses it.
-    const m = panelMargin(tui.terminal.columns);
-    const handle = tui.showOverlay(frame, { anchor: 'center', width: '100%', maxHeight: '100%', margin: { top: m, bottom: m, left: 2 * m, right: 2 * m } });
+    const handle = tui.showOverlay(frame, { anchor: 'center', width: '100%', maxHeight: '100%' });
     frame.onClose = () => { handle.hide(); tui.requestRender(); resolve(); };
   });
 }

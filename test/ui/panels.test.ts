@@ -121,15 +121,13 @@ function harness(columns = 80, rows = 20) {
     /** The top overlay rendered at `width`. */
     render: (width: number): string[] => panel().render(width),
     press: (...keys: string[]): void => { for (const k of keys) terminal.input(k); },
-    /** The panel at the width pi-tui gives it (the terminal less the 2-column margins, none on a phone), styles kept. */
-    raw: (): string[] => panel().render(panelWidth(columns)),
-    screen: (): string => panel().render(panelWidth(columns)).map(stripTerminalSequences).join('\n'),
+    /** The panel at the width pi-tui gives it (the whole terminal), styles kept. */
+    raw: (): string[] => panel().render(columns),
+    screen: (): string => panel().render(columns).map(stripTerminalSequences).join('\n'),
   };
 }
 
 const tick = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
-/** A panel's width: below 60 columns it has no margins. */
-const panelWidth = (columns: number): number => (columns < 60 ? columns : columns - 4);
 
 describe('agents panel', () => {
   test('an empty list says how to get agents, and Esc closes it and refocuses the editor', async () => {
@@ -270,9 +268,9 @@ describe('memory panel', () => {
     const closed = openMemoryPanel(h.tui, session, theme);
     await tick();
     const lines = h.raw();
-    for (const line of lines) assert.equal(visibleWidth(line), 66, line);
+    for (const line of lines) assert.equal(visibleWidth(line), 70, line);
     assert.ok(lines.map(stripTerminalSequences).some(l => /0\+1 {2}a very lon.*…/.test(l)), lines.join('\n'));
-    assert.equal(lines.length, 10);
+    assert.equal(lines.length, 12);
     h.press(KEY.esc);
     await closed;
   });
@@ -328,15 +326,15 @@ describe('panels on a phone', () => {
     for (const line of lines) assert.equal(visibleWidth(line), width, stripTerminalSequences(line));
   };
 
-  test('below 60 columns a panel fills the screen, agent rows drop the parent, and hints are short', async () => {
+  test('a panel fills the screen; below 60 columns agent rows drop the parent, and hints are short', async () => {
     for (const [columns, rows] of sizes) {
       const session = new FakeSession(), h = harness(columns, rows);
       session.agents = [agent('Ada', true), agent('Bob', false, 'sub', 'Ada')];
       const closed = openAgentsPanel(h.tui, session, theme);
       const narrow = columns < 60, lines = h.raw();
-      fitsExactly(lines, panelWidth(columns));
-      assert.equal(lines.length, narrow ? rows : rows - 2);
-      assert.deepEqual(h.options.at(-1)?.margin, narrow ? { top: 0, bottom: 0, left: 0, right: 0 } : { top: 1, bottom: 1, left: 2, right: 2 });
+      fitsExactly(lines, columns);
+      assert.equal(lines.length, rows);
+      assert.equal(h.options.at(-1)?.margin, undefined, 'no margin, where the chat would show through cut');
       const screen = h.screen();
       assert.equal(/parent Ada/.test(screen), !narrow, screen);
       assert.match(screen, narrow ? /○ Bob {2}sub {3}idle/ : /○ Bob\s+sub\s+parent Ada\s+idle/);
@@ -354,7 +352,7 @@ describe('panels on a phone', () => {
       session.view = [{ id: 0, n: 2, text: 'older' }, { id: 2, n: 1, text }];
       const closed = openMemoryPanel(h.tui, session, theme);
       await tick();
-      fitsExactly(h.raw(), panelWidth(columns));
+      fitsExactly(h.raw(), columns);
       const screen = h.screen().split('\n');
       const detail = screen.slice(-4, -1).map(line => line.slice(2, -2).trim()).filter(Boolean).join(' ');
       assert.equal(detail === text, columns < 60, screen.join('\n'));
