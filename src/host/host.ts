@@ -30,6 +30,8 @@ let instance: Instance | undefined;
 let reader: Interface | undefined;
 let watcher: AttachedReplicatedState<ConversationView> | undefined;
 let stopping = false;
+// A send in progress: its reply prints mid-wait, and the chat loop prompts once the send returns.
+let sending = false;
 let closing: Promise<void> | undefined;
 const shutdown = new AbortController();
 const close = (): Promise<void> | undefined => closing ??= instance?.close();
@@ -102,7 +104,7 @@ async function watchReplies(): Promise<AttachedReplicatedState<ConversationView>
       const text = (entry.model ?? []).map(message => textContent(message.content)).join('');
       if (!text || !['pi.assistant', REPORT_KIND].includes(entry.kind)) continue;
       process.stdout.write(`\r\x1b[K${entry.kind === REPORT_KIND ? text : `pi> ${text}`}\n\n`);
-      reader?.prompt(true);
+      if (!sending) reader?.prompt(true);
     }
   };
   view.subscribe(show);
@@ -239,8 +241,10 @@ async function main(): Promise<void> {
     else if (line === '/status') await printStatus();
     else if (isCommand(line)) console.error(unknownCommand(line));
     else {
+      sending = true;
       try { await send(line, undefined, { print: false }); }
       catch (error) { if (!stopping) console.error(`pi-durable: ${errorMessage(error)}`); }
+      finally { sending = false; }
     }
   }
 }
