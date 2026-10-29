@@ -510,6 +510,11 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
     assert.match(failing[2] ?? '', /^Standing agent Researcher: Unknown model nowhere\/y/);
     assert.match(failing[3] ?? '', /^Standing agents Coder, Reviewer cannot run: No credentials for faux/);
     assert.deepEqual(calls, ['faux'], 'each provider is checked once');
+    // A catalog problem that is a sentence already gets one period, not two.
+    const typo = await rosterWarnings({ Coder: { ...faux, model: { provider: 'claude-cli', modelId: 'gpt' }, tools: [] } },
+      { models, access: () => Promise.resolve({ ok: true }) });
+    assert.deepEqual(typo, ['Standing agent Coder: Unknown model claude-cli/gpt. Use opus, sonnet, haiku or fable. '
+      + 'Set another model for Coder in settings.json\'s "agents" (docs/operations.md).']);
 
     const unverified = await ok({ ok: false, reason: 'timeout' });
     assert.match(unverified.at(-1) ?? '', /could not verify the credentials for faux in time/);
