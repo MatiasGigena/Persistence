@@ -26,7 +26,12 @@ export interface PanelContext {
   notice(text: string, level?: NoticeLevel): void;
 }
 
-interface Level { readonly view: View; readonly body: HTMLElement }
+interface Level {
+  readonly view: View;
+  readonly body: HTMLElement;
+  /** What had focus here when a level was pushed over this one: it gets focus back when this level shows again. */
+  returnTo?: Element | null;
+}
 
 /** Finds a required element of index.html by id and type. */
 export function byId<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -171,6 +176,8 @@ export class Sheet {
 
   /** Shows `view` on top of the current level. */
   push(view: View): void {
+    const below = this.stack.at(-1);
+    if (below) below.returnTo = document.activeElement;
     this.add(view);
     this.show('push');
   }
@@ -220,6 +227,19 @@ export class Sheet {
     if (motion) playOnce(top.body, `level-${motion}`);
     this.body.replaceChildren(top.body);
     this.body.scrollTop = 0;
+    if (motion) this.refocus(top, motion);
+  }
+
+  /**
+   * Focus went with the level that left (the row that pushed, the crumb that went back): a pushed level focuses its
+   * title, so a screen reader names it, and one gone back to focuses what pushed the level above it.
+   */
+  private refocus(top: Level, motion: 'push' | 'pop'): void {
+    const back = motion === 'pop' ? top.returnTo : undefined;
+    top.returnTo = undefined;
+    if (top.body.contains(document.activeElement)) return;
+    if (back instanceof HTMLElement && top.body.contains(back)) back.focus();
+    else this.title.focus({ preventScroll: true });
   }
 }
 

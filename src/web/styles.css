@@ -647,6 +647,8 @@ dialog::backdrop { background: var(--scrim); }
 .sheet-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px var(--gutter); flex: none; }
 .sheet-heading { flex: 1; min-width: 0; }
 .sheet-title { font: 600 1.25rem/1.25 var(--serif); margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Focused by sheet.ts when a level is pushed, for screen readers: not a control, so no ring. */
+.sheet-title:focus-visible { outline: none; }
 .crumbs { display: flex; flex-wrap: wrap; gap: 0 4px; font-size: 0.8125rem; }
 .crumb {
   border: 0; background: none; padding: 4px 0; color: var(--accent); font-weight: 500;
