@@ -404,6 +404,20 @@ type Browser = {
   readonly watched: WeakSet<Page>;
 };
 
+/**
+ * A launch failure for lack of a Chromium executable, with this installation's fix: Playwright's own text tells the user
+ * to run `npx playwright install`, a package this one does not have. Any other failure as it is.
+ */
+function launchError(error: unknown, executablePath: string | undefined): unknown {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/executable doesn't exist/i.test(message)) return error;
+  if (executablePath) {
+    return new Error(`PI_DURABLE_CHROMIUM names ${executablePath}, which does not exist. The user can fix the path, or unset it to use Playwright's Chromium.`);
+  }
+  return new Error(`Chromium for the browser tools is not installed (${message.split('\n')[0] ?? ''}). The user can run `
+    + 'npx --no-install playwright-core install chromium in the installation directory, or set PI_DURABLE_CHROMIUM to a Chromium executable.');
+}
+
 const result = (text: string, details: JsonValue = {}, isError = false): ToolExecutionResult =>
   ({ output: [{ type: 'text', text }], details, ...(isError ? { isError } : {}) });
 
@@ -548,7 +562,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
         headless: true, chromiumSandbox: true, serviceWorkers: 'block', viewport: { width: 1280, height: 800 },
         proxy: { server, username, password }, args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
         ...(options.executablePath ? { executablePath: options.executablePath } : {}),
-      });
+      }).catch((error: unknown) => { throw launchError(error, options.executablePath); });
       try {
         // Before any page loads: the gates must see the first request.
         await launched.route('**/*', (route) => guardRequest(browser, route));
@@ -597,7 +611,8 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     });
     browser.tail = queued.catch(() => undefined);
     const limit = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => stop(reject, `Browser operation timed out after ${Math.round(timeoutMs / 1000)} s`), timeoutMs);
+      timer = setTimeout(() => stop(reject, `Browser operation timed out after ${Math.round(timeoutMs / 1000)} s. `
+        + 'The browser was closed, so its page is gone: start again with browser_goto (the profile keeps its logins).'), timeoutMs);
       onAbort = () => stop(reject, 'Browser operation cancelled');
       signal?.addEventListener('abort', onAbort, { once: true });
     });

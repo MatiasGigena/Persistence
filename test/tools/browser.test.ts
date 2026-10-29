@@ -183,6 +183,23 @@ describe('browser helpers', () => {
     assert.equal(launched, false);
   });
 
+  test('a missing Chromium names this installation\'s fix, not Playwright\'s', async () => {
+    // Playwright's own text, as playwright-core 1.62 throws it, names a package this installation does not have.
+    const missing = 'browserType.launchPersistentContext: Executable doesn\'t exist at /home/u/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell\n'
+      + '╔══╗\n║ Looks like Playwright was just installed or updated. ║\n║     npx playwright install     ║\n╚══╝';
+    const extension = createBrowserExtension({ profileRoot: tmpdir(), lookup, launch: () => Promise.reject(new Error(missing)) });
+    await assert.rejects(caller(extension)('browser_goto', { url: 'http://127.0.0.1:9/' }), { message:
+      'Chromium for the browser tools is not installed (browserType.launchPersistentContext: Executable doesn\'t exist at '
+      + '/home/u/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell). The user can run '
+      + 'npx --no-install playwright-core install chromium in the installation directory, or set PI_DURABLE_CHROMIUM to a Chromium executable.' });
+    const configured = createBrowserExtension({ profileRoot: tmpdir(), lookup, executablePath: '/opt/chrome',
+      launch: () => Promise.reject(new Error('browserType.launchPersistentContext: Failed to launch chromium because executable doesn\'t exist at /opt/chrome')) });
+    await assert.rejects(caller(configured)('browser_goto', { url: 'http://127.0.0.1:9/' }),
+      /^Error: PI_DURABLE_CHROMIUM names \/opt\/chrome, which does not exist\. The user can fix the path, or unset it to use Playwright's Chromium\.$/);
+    await extension.close();
+    await configured.close();
+  });
+
   test('localOnly is asked with the browser key', async () => {
     const asked: string[] = [];
     const extension = createBrowserExtension({
@@ -228,7 +245,9 @@ describe('browser helpers', () => {
     t.after(() => rm(root, { recursive: true, force: true }));
     const hang: BrowserOptions['launch'] = () => new Promise(() => undefined);
     const call = caller(createBrowserExtension({ profileRoot: root, launch: hang, timeoutMs: 50 }));
-    await assert.rejects(call('browser_eval', { expression: '1' }), /timed out/);
+    // A timeout closes the browser: the agent must learn its page is gone, or it would click on nothing.
+    await assert.rejects(call('browser_eval', { expression: '1' }), { message: 'Browser operation timed out after 0 s. '
+      + 'The browser was closed, so its page is gone: start again with browser_goto (the profile keeps its logins).' });
     const controller = new AbortController();
     const slow = caller(createBrowserExtension({ profileRoot: root, launch: hang }));
     const pending = slow('browser_eval', { expression: '1' }, withAbortSignal(controller.signal, BACKGROUND_CONTEXT));

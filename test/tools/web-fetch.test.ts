@@ -112,6 +112,7 @@ describe('web_fetch refusals', () => {
   test('non-http schemes and credentials are refused', async () => {
     assert.equal((await webFetch('file:///etc/passwd')).text, 'Refused: only http and https URLs, not file:');
     assert.equal((await webFetch('ftp://example.com/x')).text, 'Refused: only http and https URLs, not ftp:');
+    assert.equal((await webFetch('example.com/docs')).text, 'Refused: example.com/docs is not a valid URL; include the scheme, as in https://example.com/docs.');
     assert.equal((await webFetch('http://user:pw@example.com/')).text, 'Refused: URLs with embedded credentials are not supported.');
     assert.equal((await webFetch('not a url')).ok, false);
   });
@@ -192,7 +193,8 @@ describe('web_fetch content', () => {
       if (req.url === '/img') { res.writeHead(200, { 'content-type': 'image/png' }).end('png'); return; }
       res.writeHead(404, 'Not Found').end();
     });
-    assert.match((await webFetch(`${base}/missing`, local)).text, /HTTP 404: Not Found/);
+    // An HTTP error is the server's answer, not a page that failed to render: no JavaScript hint.
+    assert.equal((await webFetch(`${base}/missing`, local)).text, `${base}/missing: HTTP 404: Not Found`);
     assert.match((await webFetch(`${base}/img`, local)).text, /Unsupported content type: image\/png$/);
   });
 

@@ -142,7 +142,11 @@ async function checkedAddress(url: URL, options: WebFetchOptions): Promise<Looku
 
 function checkUrl(raw: string, base?: URL): URL {
   let url: URL;
-  try { url = new URL(raw, base); } catch { throw new Refusal(`Refused: ${raw} is not a valid URL.`); }
+  try { url = new URL(raw, base); } catch {
+    // Models often leave out the scheme ("example.com/docs"); say how to fix it rather than only refusing.
+    const hint = !base && !raw.includes('://') && URL.canParse(`https://${raw}`) ? `; include the scheme, as in https://${raw}` : '';
+    throw new Refusal(`Refused: ${raw} is not a valid URL${hint}.`);
+  }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Refusal(`Refused: only http and https URLs, not ${url.protocol}`);
   if (url.username || url.password) throw new Refusal('Refused: URLs with embedded credentials are not supported.');
   return url;
@@ -506,7 +510,8 @@ export async function webFetch(raw: string, options: WebFetchOptions = {}, signa
     return fail(error instanceof Error ? error.message : String(error));
   }
   if (result.error) {
-    const final = result.error.startsWith('Unsupported content type') || result.error.startsWith('Response too large');
+    // The JavaScript hint is for pages that loaded but would not extract, not for the server's own refusals.
+    const final = /^(HTTP \d|Unsupported content type|Response too large)/.test(result.error);
     return fail(final ? result.error : `${result.error}\n\nThe page may be JavaScript-rendered. Try a different URL for the same content, or the browser tools.`);
   }
   const header = result.title ? `# ${result.title}\n\nSource: ${result.url.href}\n\n---\n\n` : '';
