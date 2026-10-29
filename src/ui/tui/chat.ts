@@ -217,7 +217,8 @@ export interface ChatViewOptions {
 /**
  * A ChatFeed as a component. `sync()` reads the feed: new ids get a block, changed items update theirs,
  * and unchanged blocks keep their cached lines. Local notices (`notice()`) sit after the item that was last
- * when they were added. Reusable for any feed, Pi's or an agent's.
+ * when they were added. A dim first line counts the history items it leaves out, so the top of the view does not
+ * look like the start of the chat. Reusable for any feed, Pi's or an agent's.
  */
 export class ChatView implements Component {
   private readonly feed: ChatFeed;
@@ -228,6 +229,8 @@ export class ChatView implements Component {
   private readonly notices = new Map<string | undefined, ItemBlock[]>();
   private hidden: ReadonlySet<string> | undefined;
   private order: ItemBlock[] = [];
+  /** History items still in the feed that the view leaves out. */
+  private earlier = 0;
   private noticeCount = 0;
 
   constructor(feed: ChatFeed, theme: Theme, options: ChatViewOptions = {}) {
@@ -248,9 +251,11 @@ export class ChatView implements Component {
     this.hidden ??= new Set(items.slice(0, Math.max(0, items.length - this.backlog)).map(item => item.id));
     const live = new Set<string>();
     const order = [...this.notices.get(undefined) ?? []];
+    this.earlier = 0;
     for (const item of items) {
       live.add(item.id);
-      if (!this.hidden.has(item.id)) {
+      if (this.hidden.has(item.id)) this.earlier++;
+      else {
         let block = this.blocks.get(item.id);
         if (block?.item.kind === item.kind) block.update(item);
         else this.blocks.set(item.id, block = new ItemBlock(item, this.state));
@@ -279,6 +284,12 @@ export class ChatView implements Component {
   render(width: number): string[] {
     const lines: string[] = [];
     let previous: ChatItem['kind'] | undefined;
+    if (this.earlier) {
+      const count = `${this.earlier} earlier ${this.earlier === 1 ? 'item' : 'items'}`;
+      const text = width < NARROW ? `· ${count} · /mem` : `· ${count} not shown; /mem browses the whole chat`;
+      lines.push(truncateToWidth(this.state.theme.dim(text), width));
+      previous = 'notice';
+    }
     for (const block of this.order) {
       const rendered = block.render(width);
       if (!rendered.length) continue;

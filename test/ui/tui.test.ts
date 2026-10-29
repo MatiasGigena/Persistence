@@ -184,11 +184,14 @@ test('the view opens on the last items of the history, then shows every new one'
   const items: ChatItem[] = Array.from({ length: 10 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `m${i}` }));
   const feed = new FakeFeed(items);
   const view = new ChatView(feed, theme, { backlog: 2 });
-  assert.deepEqual(plain(view.render(20)).filter(Boolean), ['❯ m8', '❯ m9']);
+  assert.deepEqual(plain(view.render(80)).filter(Boolean), ['· 8 earlier items not shown; /mem browses the whole chat', '❯ m8', '❯ m9']);
   view.notice('local');
-  feed.set([...items, { kind: 'user', id: 'u10', text: 'm10' }]);
+  feed.set([...items.slice(3), { kind: 'user', id: 'u10', text: 'm10' }]);
   view.sync();
-  assert.deepEqual(plain(view.render(20)).filter(Boolean), ['❯ m8', '❯ m9', '· local', '❯ m10']);
+  assert.deepEqual(plain(view.render(30)).filter(Boolean), ['· 5 earlier items · /mem', '❯ m8', '❯ m9', '· local', '❯ m10'],
+    'the count follows the feed, and is short on a phone');
+  assert.deepEqual(plain(new ChatView(new FakeFeed(items.slice(0, 2)), theme, { backlog: 2 }).render(80)), ['❯ m0', '', '❯ m1'],
+    'no count when the whole history shows');
 });
 
 test('the footer shows the status on one line, truncated to the width', () => {
