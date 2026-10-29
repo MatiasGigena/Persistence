@@ -11,7 +11,7 @@ import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
 import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
-import { resumeInstance, settleAgents } from '../runtime/recovery.ts';
+import { isWork, resumeInstance, settleAgents } from '../runtime/recovery.ts';
 import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts';
 import { listAgents, REPORT_KIND } from '../agents/index.ts';
 import { claudeCliProvider } from '../providers/claude-cli.ts';
@@ -87,8 +87,8 @@ async function resumePending(): Promise<void> {
   const current = opened();
   const inspection = await current.harness.inspect(current.context);
   if (!inspection.tasks.length && !inspection.submissions.length) return;
-  // An agent's anchor task is bookkeeping (a new chat's standing agents have one each), not work to report.
-  const tasks = inspection.tasks.filter(task => task.record.kind !== 'agents.anchor').length;
+  // A new chat's standing agents have an anchor task each: not work to report.
+  const tasks = inspection.tasks.filter(isWork).length;
   const queued = inspection.submissions.length;
   const work = [tasks && `${tasks} pending task(s)`, queued && `${queued} queued message(s)`].filter(Boolean);
   if (work.length) console.error(`Resuming ${work.join(' and ')}…`);
