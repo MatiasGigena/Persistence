@@ -3,7 +3,7 @@
 import { imageUrl, toChatImage } from './attach.ts';
 import { ChatView, el, initViewer, play } from './chat-view.ts';
 import { announce } from './copy.ts';
-import { errorText, guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
+import { errorText, guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
@@ -438,17 +438,21 @@ function start(): void {
     place(attachments, nodes);
     drawSend();
   };
+  /** The images being read, in the order they were added: each joins `attached` in that order. */
+  let readQueue: Promise<void> = Promise.resolve();
   const attach = (files: readonly File[]): void => {
     const room = IMAGE_LIMITS.perMessage - attached.length - reading;
     if (files.length > room) notice(`At most ${IMAGE_LIMITS.perMessage} images per message.`, 'warn');
-    for (const file of files.slice(0, Math.max(0, room))) {
-      reading++;
+    const batch = files.slice(0, Math.max(0, room));
+    if (!batch.length) return;
+    reading += batch.length;
+    drawAttachments();
+    readQueue = inOrder(batch, toChatImage, result => {
+      if (result.ok) attached = [...attached, result.value];
+      else notice(`Image not attached: ${errorText(result.error)}`, 'error');
+      reading--;
       drawAttachments();
-      toChatImage(file).then(
-        image => { attached = [...attached, image]; },
-        (error: unknown) => notice(`Image not attached: ${errorText(error)}`, 'error'),
-      ).finally(() => { reading--; drawAttachments(); });
-    }
+    }, readQueue);
   };
   attachButton.addEventListener('click', () => attachFile.click());
   attachFile.addEventListener('change', () => {
