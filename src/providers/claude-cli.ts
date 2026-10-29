@@ -449,7 +449,10 @@ function streamClaude(model: Model<Api>, context: TranscriptContext, options: Si
         ? `claude-cli: ${bin} not found. Install Claude Code or set PI_DURABLE_CLAUDE_BIN.` : `claude-cli: ${error.message}` }));
       proc.on('close', (code, sig) => {
         if (buffer.trim()) parse(buffer);
-        finish({ error: `claude-cli: claude exited (${sig ?? `status ${code}`}) without a reply${stderr.trim() ? `: ${stderr.trim().split('\n').at(-1)}` : ''}` });
+        const last = stderr.trim().split('\n').at(-1) ?? '';
+        // An option this provider passes that the CLI does not know (--thinking-display, say) means an old CLI.
+        const old = /unknown option/i.test(last) ? '. This Claude Code is too old for pi-durable: update it (claude update).' : '';
+        finish({ error: `claude-cli: claude exited (${sig ?? `status ${code}`}) without a reply${last ? `: ${last}` : ''}${old}` });
       });
       proc.stdin.on('error', () => {}); // a CLI that exits early closes its stdin; close reports why
       // The prompt goes on stdin, not argv, so its length is not limited by the OS; stream-json carries its images.

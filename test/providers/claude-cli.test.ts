@@ -310,6 +310,7 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
       { lines: [init, { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1_900_000_000, rateLimitType: 'five_hour' } }] },
       { lines: [init], stderr: 'boom\nfatal: something broke\n', exit: 2 },
       { lines: [init, { type: 'system', subtype: 'api_retry', attempt: 1, error_status: 401, error: 'authentication_failed' }] },
+      { stderr: "error: unknown option '--thinking-display'\n", exit: 1 },
     ]);
     const ask = async () => (await collect(cli.models.streamSimple(cli.model, { messages: [user('x')] }))).message;
     const overloaded = await ask();
@@ -323,6 +324,9 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     assert.equal(crashed.errorMessage, 'claude-cli: claude exited (status 2) without a reply: fatal: something broke');
     const signedOut = await ask();
     assert.match(signedOut.errorMessage ?? '', /not signed in.*claude auth login/);
+    // A CLI older than the options this provider passes says which one; the fix is to update it.
+    assert.equal((await ask()).errorMessage,
+      'claude-cli: claude exited (status 1) without a reply: error: unknown option \'--thinking-display\'. This Claude Code is too old for pi-durable: update it (claude update).');
     assert.ok(await until(async () => (await cli.calls()).filter(c => c.killed).length === 2), 'limit and 401 calls were killed');
   });
 
