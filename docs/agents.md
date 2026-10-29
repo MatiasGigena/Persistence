@@ -144,8 +144,8 @@ Only standing agents have sessions; an ad-hoc agent keeps one conversation.
     a sub and ends its run, so it is idle while its task is not (`Coder's current task is still running (its sub
     agents Helper, Tester are busy); send_message to steer it, or stop_agent first.`).
 
-  It also refuses for an agent that is not standing (`Lead is not a standing agent; use spawn_agent or
-  send_message.`), for an unknown name, and for any caller but Pi. `stop_agent` clears every one of these: it stops
+  It also refuses for an agent that is not standing (`Lead is not a standing agent: give it the task with
+  send_message, or spawn_agent a new agent under another name.`), for an unknown name, and for any caller but Pi. `stop_agent` clears every one of these: it stops
   the agent's sessions and its subs, and a stopped run's delivery ends.
 - **`send_message`** to a standing agent goes to its current session: corrections, questions and steering of the task
   at hand. Its reports reach Pi as `[Coder] ...`, as any main agent's.
@@ -227,7 +227,11 @@ What the model sees (descriptions abridged to their content):
 | `stop_agent` | `name` | `Stopped X.`, `Stopped X and its sub agents A, B.`; Pi stopping a sub also gets `Its main agent M is not told; message it if it should know.` |
 | `delete_agent` | `name` | `Deleted X. Its chat stays readable with zoom("X").` or `Deleted X and its sub agents A, B. Their chats stay readable with zoom("X").`; refusals: `Only Pi can delete agents.`, `Pi cannot be deleted.`, `X is a standing agent; ...`, `X is busy; stop_agent X first, then delete it.`, `A message to X is still on its way; ...` |
 
-Refusals are plain texts such as `No agent named X.`, `An agent named X already exists; use send_message.`,
+Refusals are plain texts such as `No agent named X. The agents are A, B.` (or `There are none.`: an unknown name, in
+Pi's tools and in `zoom("X")`, lists the names there are, so a misspelt one is fixed in one step; other agents get
+only `No agent named X.`), `An agent named X
+already exists; use send_message.` (`X is a standing agent: give it a new task with delegate, or steer its current one
+with send_message.` when Pi spawns a standing agent's name),
 `Invalid name: use a letter, then up to 31 letters, digits, _ or -, and not "Pi".`, `Sub agents cannot address Pi;
 message your main agent instead.`, `X is not your sub agent.`
 
