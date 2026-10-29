@@ -36,19 +36,23 @@ export async function readClientConfig(env: NodeJS.ProcessEnv = process.env): Pr
   let text: string;
   try { text = await readFile(path, 'utf8'); }
   catch (error) { if (errorCode(error) === 'ENOENT') return undefined; throw error; }
-  const invalid = (): never => { throw new Error(`Invalid remote client configuration at ${path}; fix it or use --local`); };
+  const invalid = (why: string): never => { throw new Error(`Invalid remote client configuration at ${path}: ${why}; fix it or use --local`); };
   let value: unknown;
-  try { value = JSON.parse(text); } catch { return invalid(); }
-  if (!isRecord(value) || !validId(value.machineId) || Object.keys(value).some(key => !['machineId', 'ssh'].includes(key))) return invalid();
+  try { value = JSON.parse(text); } catch { return invalid('it is not valid JSON'); }
+  if (!isRecord(value)) return invalid('it must be an object like {"machineId":…,"ssh":{"host":…}}');
+  if (!validId(value.machineId)) return invalid('machineId must be a UUID');
+  const extra = Object.keys(value).find(key => !['machineId', 'ssh'].includes(key));
+  if (extra !== undefined) return invalid(`unknown key ${extra}`);
   if (value.ssh === undefined) return { machineId: value.machineId };
   const ssh = value.ssh;
-  if (!isRecord(ssh) || typeof ssh.host !== 'string'
-    || (ssh.command !== undefined && typeof ssh.command !== 'string')
-    || (ssh.dataDir !== undefined && typeof ssh.dataDir !== 'string')
-    || Object.keys(ssh).some(key => !['host', 'command', 'dataDir'].includes(key))) return invalid();
-  const target: SshTarget = { host: ssh.host,
-    ...ssh.command !== undefined ? { command: ssh.command } : {}, ...ssh.dataDir !== undefined ? { dataDir: ssh.dataDir } : {} };
-  try { validateTarget(target); } catch { return invalid(); }
+  if (!isRecord(ssh)) return invalid('ssh must be an object like {"host":…}');
+  if (typeof ssh.host !== 'string') return invalid('ssh.host must be a string');
+  for (const key of ['command', 'dataDir']) if (ssh[key] !== undefined && typeof ssh[key] !== 'string') return invalid(`ssh.${key} must be a string`);
+  const unknown = Object.keys(ssh).find(key => !['host', 'command', 'dataDir'].includes(key));
+  if (unknown !== undefined) return invalid(`unknown key ssh.${unknown} (ports, users and keys go in ~/.ssh/config)`);
+  const target: SshTarget = { host: ssh.host, ...typeof ssh.command === 'string' ? { command: ssh.command } : {},
+    ...typeof ssh.dataDir === 'string' ? { dataDir: ssh.dataDir } : {} };
+  try { validateTarget(target); } catch (error) { return invalid(error instanceof Error ? error.message : String(error)); }
   return { machineId: value.machineId, ssh: target };
 }
 
