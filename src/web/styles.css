@@ -52,7 +52,9 @@
   --rise: 8px;
   --pop: 0.96;
   --shake: 3px;
-  font-synthesis: none;
+  /* Bold and italic may be synthesized: many monospace fonts (Android's among them) have one face, and without it
+     **bold**, *em* and headings would read as plain text. */
+  font-synthesis: weight style;
   font-variant-ligatures: none;
 }
 

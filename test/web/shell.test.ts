@@ -81,6 +81,16 @@ test('the installed app and offline page share the Pi Cloud dark theme', async (
   assert.match(manifest, /"background_color": "#000000"/);
 });
 
+test('bold and italic still show where the monospace font has only a regular face', async () => {
+  // Android's monospace (and many a desktop's) ships one face: forbidding synthesis made **bold**, *em* and headings
+  // plain text there.
+  const css = await readFile(join(WEB, 'styles.css'), 'utf8');
+  for (const [, value = ''] of css.matchAll(/font-synthesis:\s*([^;]+);/g)) {
+    assert.match(value, /\bweight\b/, `font-synthesis: ${value} drops synthetic bold`);
+    assert.match(value, /\bstyle\b/, `font-synthesis: ${value} drops synthetic italic`);
+  }
+});
+
 test('the service worker marks a set complete only after its files agree on one version', async () => {
   const sw = await readFile(join(WEB, 'sw.ts'), 'utf8');
   const stable = /async function fetchStable[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
