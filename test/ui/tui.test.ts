@@ -339,7 +339,7 @@ test('the first Ctrl+C says in the footer that a second one quits, until the sec
   assert.ok(footerText({ ...STATUS, hint: 'ctrl+c again to detach' }, theme, 0, 20).includes('ctrl+c again to detach'));
 });
 
-test('/effort NAME sets the effort; /effort alone opens the picker, and Enter takes the highlighted level', async () => {
+test('/effort NAME sets the effort; /effort alone opens the picker on the current level, and Enter takes the highlighted one', async () => {
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
   // Polls, so a loaded machine only makes the test slower.
@@ -353,6 +353,10 @@ test('/effort NAME sets the effort; /effort alone opens the picker, and Enter ta
   await until(() => /✓ low/.test(terminal.text()) && /balanced/.test(terminal.text()), 'the picker');
   terminal.type('\x1b[B', '\r'); // down to medium, then Enter
   await until(() => session.status().thinkingLevel === 'medium', 'medium');
+  terminal.type('/effort', '\r');
+  await until(() => /✓ medium/.test(terminal.text()), 'the picker again');
+  terminal.type('\x1b[B', '\r'); // from medium, the current level, down to high
+  await until(() => session.status().thinkingLevel === 'high', 'high');
   terminal.type('/exit', '\r');
   await done;
 });

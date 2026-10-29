@@ -158,6 +158,8 @@ export interface ListOptions {
   readonly typeToFilter?: boolean;
   /** The filter the list opens with (with `typeToFilter`). */
   readonly filter?: string;
+  /** The key of the row selected when the list opens (default: the first row). */
+  readonly selected?: string;
   /** Whether this is the panel's first level, for the hint. */
   readonly root?: boolean;
   /** What a narrow screen shows of the selected row besides its compact form. */
@@ -182,6 +184,7 @@ export class ListView implements PanelView {
     this.title = options.title;
     this.atEnd = options.followEnd ?? false;
     this.filter = options.filter ?? '';
+    this.key = options.selected;
   }
 
   hint(narrow: boolean): string {
