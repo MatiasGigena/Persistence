@@ -39,8 +39,14 @@ export type FooterStatus = Omit<SessionStatus, 'agents'> & {
 export const STEP_WIDTH = 60;
 export const STEP_COMPACT = 24;
 
-/** One footer segment: `rank` orders what is kept when the line is too narrow (0 first). */
-interface Segment { readonly text: string; readonly rank: number }
+/**
+ * One footer segment: `rank` orders what is kept when the line is too narrow (0 first). `fit`, when set, gives a form
+ * at most `columns` wide, so a long segment is cut to the room left rather than dropped.
+ */
+interface Segment { readonly text: string; readonly rank: number; readonly fit?: (columns: number) => string }
+
+/** The narrowest cut of a segment worth showing. */
+const FIT_MIN = 12;
 
 /** Tools state, a lost link, and a chat scrolled up: shown at every width. */
 const TOOLS = -1;
@@ -49,19 +55,22 @@ const TOOLS = -1;
 function segments(status: FooterStatus, theme: Theme, frame: number, compact: boolean): Segment[] {
   const { dim } = theme;
   const slash = status.model.indexOf('/');
-  const model = compact && slash > 0 ? status.model.slice(slash + 1) : status.model;
+  const id = slash > 0 ? status.model.slice(slash + 1) : status.model;
+  const model = compact ? id : status.model;
   const list: Segment[] = [
     ...status.hint ? [{ text: theme.warning(status.hint), rank: TOOLS }] : [],
     ...status.reconnecting ? [{ text: theme.warning('reconnecting…'), rank: TOOLS }] : [],
     ...status.scrolled ? [{ text: theme.accent(compact ? '↓ pgdn' : '↓ more below (pgdn)'), rank: TOOLS }] : [],
-    { text: model, rank: 4 },
+    // Cut, a model loses its provider first: the id says more.
+    { text: model, rank: 4, fit: columns => truncateToWidth(id, columns, '…') },
     { text: dim(compact ? `think ${status.thinkingLevel}` : `thinking ${status.thinkingLevel}`), rank: 7 },
     { text: status.toolsEnabled ? theme.warning(`tools on${status.machine ? ` @ ${status.machine.label}` : ''}`)
       : dim(`tools off${status.machine ? ` @ ${status.machine.label}` : ''}`), rank: TOOLS },
   ];
   if (status.busy) {
     list.push({ text: theme.accent(`${SPINNER[frame % SPINNER.length] ?? ''} ${compact ? 'busy' : 'working'}`), rank: 0 });
-    if (status.step) list.push({ text: dim(truncateToWidth(status.step, compact ? STEP_COMPACT : STEP_WIDTH, '…')), rank: 1 });
+    const { step } = status, longest = compact ? STEP_COMPACT : STEP_WIDTH;
+    if (step) list.push({ text: dim(truncateToWidth(step, longest, '…')), rank: 1, fit: columns => dim(truncateToWidth(step, columns, '…')) });
     if (status.queued) list.push({ text: dim(`${status.queued} queued`), rank: 2 });
   }
   const { memory } = status;
@@ -82,21 +91,26 @@ function segments(status: FooterStatus, theme: Theme, frame: number, compact: bo
  * The footer's text within `width` columns (default: unlimited); `frame` picks the busy spinner's glyph.
  * Below NARROW columns it uses short forms. Segments are kept in priority order (working, tools, current step,
  * queued, agents, model, memory failures, memory size, thinking, summaries) until one does not fit, and shown in their
- * usual order; a key hint, the tools state, "reconnecting…" and the scrolled-up mark are never dropped.
+ * usual order; a key hint, the tools state, "reconnecting…" and the scrolled-up mark are never dropped. The step and
+ * the model are cut to the room left instead, when that is at least FIT_MIN columns.
  */
 export function footerText(status: FooterStatus, theme: Theme, frame = 0, width = Number.POSITIVE_INFINITY): string {
   const separator = theme.dim(' · ');
   const all = segments(status, theme, frame, width < NARROW);
-  const kept = new Set<Segment>(all.filter(s => s.rank === TOOLS));
-  let used = [...kept].reduce((sum, s) => sum + visibleWidth(s.text), 0) + Math.max(0, kept.size - 1) * visibleWidth(separator);
+  const kept = new Map<Segment, string>(all.filter(s => s.rank === TOOLS).map(s => [s, s.text]));
+  let used = [...kept.values()].reduce((sum, text) => sum + visibleWidth(text), 0) + Math.max(0, kept.size - 1) * visibleWidth(separator);
   for (const segment of [...all].sort((a, b) => a.rank - b.rank)) {
     if (kept.has(segment)) continue;
-    const extra = visibleWidth(segment.text) + visibleWidth(separator);
-    if (used + extra > width) break;
-    kept.add(segment);
-    used += extra;
+    const room = width - used - visibleWidth(separator);
+    let { text } = segment;
+    if (visibleWidth(text) > room) {
+      if (!segment.fit || room < FIT_MIN) break;
+      text = segment.fit(room);
+    }
+    kept.set(segment, text);
+    used += visibleWidth(text) + visibleWidth(separator);
   }
-  return all.filter(s => kept.has(s)).map(s => s.text).join(separator);
+  return all.flatMap(s => kept.get(s) ?? []).join(separator);
 }
 
 /** Renders `footerText` for the current status at the render width. `tick()` advances the spinner. */

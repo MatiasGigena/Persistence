@@ -458,7 +458,15 @@ test('the footer fills by priority and never drops the tools state', () => {
     }
   }
   assert.equal(at(BUSY, 40), 'tools off · ⠋ busy · 2 queued · 2/3 ag');
-  assert.equal(at(BUSY, 56), 'tools off · ⠋ busy · 2 queued · 2/3 ag', 'the long model id does not fit');
+  assert.equal(at(BUSY, 56), 'claude-sonnet-… · tools off · ⠋ busy · 2 queued · 2/3 ag', 'the long model id is cut to the room left');
+  assert.equal(at(BUSY, 52), 'tools off · ⠋ busy · 2 queued · 2/3 ag', 'and dropped when that is too little');
+  const hermes = { ...STATUS, model: 'openrouter/nousresearch/hermes-3-llama-3.1-405b-instruct-extended' };
+  assert.equal(at(hermes, 70), 'nousresearch/hermes-3-llama-3.1-405b-instruct-extended · tools off',
+    'a model too long with its provider shows its id');
+  assert.equal(at(hermes, 60), 'nousresearch/hermes-3-llama-3.1-405b-instruct-e… · tools off');
+  const command = 'bash cd /home/sample/projects/app && npm run build -- --watch=false --verbose';
+  assert.equal(at({ ...BUSY, step: command }, 80), 'tools off · ⠋ working · bash cd /home/sample/projects/app && npm run build -- -…',
+    'a long step is cut to the room left, not dropped');
   assert.equal(at({ ...BUSY, model: 'claude-cli/haiku' }, 56), 'haiku · tools off · ⠋ busy · 2 queued · 2/3 ag');
   assert.equal(at(STATUS, 40), 'model-1 · tools off · 1 failed');
   assert.equal(at(STATUS, 56), 'model-1 · think high · tools off · mem 37KB · 1 failed');
