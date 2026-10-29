@@ -63,7 +63,7 @@ function appendAt(value: unknown, path: readonly (string | number)[], delta: str
 const compact = (args: unknown): string => JSON.stringify(args) ?? '';
 
 /** Why a message went unanswered, by pi-durable's reason code; other codes show as they are. */
-const UNANSWERED: Readonly<Record<string, string>> = { no_model: 'the model is not available; pick another with /model' };
+const UNANSWERED: Readonly<Record<string, string>> = { no_model: 'the model is not available; pick another model' };
 
 /** An agent input entry's sender and text: a report (`agents.report`) or a message (`agents.message`). */
 function reportOf(entry: EntryRecord): { from: string; text: string } | undefined {

@@ -164,7 +164,7 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     catalog.models.deleteProvider(catalog.model.provider);
     await session.send('anyone there?');
     const notice = await until(() => find(session.chat, 'notice'), 'the notice', session.chat);
-    assert.deepEqual([notice.text, notice.level], ['Not answered: the model is not available; pick another with /model.', 'warn']);
+    assert.deepEqual([notice.text, notice.level], ['Not answered: the model is not available; pick another model.', 'warn']);
   });
 
   test('an agents.report input is a report item from its agent', async (t) => {
