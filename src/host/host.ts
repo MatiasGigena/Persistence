@@ -6,7 +6,7 @@ import type { AttachedReplicatedState } from '@earendil-works/chord';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { cleanupSessionResources } from '@earendil-works/pi-ai';
 import type { Message, Models } from '@earendil-works/pi-ai';
-import type { ConversationView } from '@earendil-works/pi-durable';
+import type { ConversationView, EntryRecord } from '@earendil-works/pi-durable';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
 import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
@@ -54,14 +54,21 @@ const textContent = (content: Message['content'] | undefined): string => typeof 
   : (content ?? []).flatMap(block => block.type === 'text' ? [block.text] : []).join('');
 const field = (value: unknown, key: string): unknown => isRecord(value) ? value[key] : undefined;
 
+/** An agent's report as its name and text: what the terminal UI shows, without the note to Pi its model text ends with. */
+function reportOf({ kind, data }: EntryRecord): { name: string; text: string } | undefined {
+  const name = field(data, 'name'), text = field(data, 'text');
+  return kind === REPORT_KIND && typeof name === 'string' && typeof text === 'string' ? { name, text } : undefined;
+}
+
 async function printHistory(limit?: number): Promise<void> {
   const { root, context } = opened();
   const entries = await transcript(root, context);
   const messages = entries.flatMap(entry => (entry.model ?? []).map(message => ({ entry, message })))
     .filter(({ message }) => ['user', 'assistant'].includes(message.role) && textContent(message.content));
   for (const { entry, message } of limit ? messages.slice(-limit) : messages) {
-    const who = entry.kind === REPORT_KIND ? 'Agent' : message.role === 'user' ? 'You' : 'Pi';
-    console.log(`${who}: ${textContent(message.content)}\n`);
+    const report = reportOf(entry);
+    if (report) console.log(`${report.name}: ${report.text}\n`);
+    else console.log(`${message.role === 'user' ? 'You' : 'Pi'}: ${textContent(message.content)}\n`);
   }
   if (!messages.length) console.log('No messages saved yet.');
 }
@@ -105,9 +112,11 @@ async function watchReplies(): Promise<AttachedReplicatedState<ConversationView>
     for (const entry of value.entries) {
       if (seen.has(entry.id)) continue;
       seen.add(entry.id);
-      const text = (entry.model ?? []).map(message => textContent(message.content)).join('');
-      if (!text || !['pi.assistant', REPORT_KIND].includes(entry.kind)) continue;
-      process.stdout.write(`\r\x1b[K${entry.kind === REPORT_KIND ? text : `pi> ${text}`}\n\n`);
+      const report = reportOf(entry);
+      const reply = entry.kind === 'pi.assistant' ? (entry.model ?? []).map(message => textContent(message.content)).join('') : '';
+      const line = report ? `[${report.name}] ${report.text}` : reply && `pi> ${reply}`;
+      if (!line) continue;
+      process.stdout.write(`\r\x1b[K${line}\n\n`);
       if (!sending) reader?.prompt(true);
     }
   };
