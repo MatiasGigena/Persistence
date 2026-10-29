@@ -24,6 +24,8 @@ const RESTARTING = 'The server is restarting; reconnecting…';
 const DRAFT_KEY = 'pd.draft';
 /** sessionStorage: the value a reload was last made for, so a reload happens once per new value. */
 const RELOAD_KEY = 'pd.reloaded';
+/** sessionStorage: how many images a reload for new files dropped, said once the reloaded app is ready. */
+const LOST_KEY = 'pd.lost-images';
 /** How long the link may be reconnecting before the banner says so. */
 const RECONNECT_BANNER_MS = 2_000;
 /** How long after a send the button cannot become stop, so a double tap does not abort what it just sent. */
@@ -155,10 +157,14 @@ function gone(why: keyof typeof GONE): void {
   show('gone');
 }
 
-/** Reloads once for `value` (new assets, a new server boot, a protocol change); false when already done. */
-async function reloadOnce(value: string): Promise<boolean> {
+/**
+ * Reloads once for `value` (new assets, a new server boot, a protocol change); false when already done. `prepare` runs
+ * only when the reload goes ahead.
+ */
+async function reloadOnce(value: string, prepare: () => void = () => undefined): Promise<boolean> {
   if (load(session, RELOAD_KEY) === value) return false;
   save(session, RELOAD_KEY, value);
+  prepare();
   // Let a changed service worker take over first, and have the shell revalidated (its files are served stale while
   // they revalidate, ADR 0032), so the reload gets the new files.
   await navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => undefined);
@@ -312,6 +318,12 @@ function start(): void {
   let byeReason = '';
   /** The link is ready: only then is store.status.busy current. */
   let linkReady = false;
+  /**
+   * Images the reload that started this page dropped (reloadForFiles), said at the first `ready`. Read at once: a page
+   * waiting to reload may reconnect meanwhile, and must not take the count meant for its successor.
+   */
+  let lostImages = Number(load(session, LOST_KEY)) || 0;
+  save(session, LOST_KEY, '');
 
   const link = new Link({
     connect: socket,
@@ -667,6 +679,11 @@ function start(): void {
         byeReason = '';
         save(session, RELOAD_KEY, '');
         reveal();
+        if (lostImages) {
+          const one = lostImages === 1;
+          notice(`The app reloaded for an update, and ${one ? 'an image' : `${lostImages} images`} could not be kept; attach ${one ? 'it' : 'them'} again.`, 'warn');
+          lostImages = 0;
+        }
         for (const [id, { text, steer, images }] of outbox) deliver(id, text, steer, images);
         // Warms Chat settings' lists once the page is idle, so the sheet opens filled.
         prefetchSettings(link, store);
@@ -694,9 +711,11 @@ function start(): void {
   /** Reloads once for `value`, to run new app files. */
   async function reloadForFiles(value: string): Promise<void> {
     // Messages not yet admitted would be lost with the page: they go back into the draft.
-    // Their images cannot be kept: only the text survives a reload.
+    // Their images cannot be kept, nor those attached to the draft: only the text survives a reload, so the reloaded
+    // app says how many went.
     if (outbox.size) save(local, DRAFT_KEY, [...[...outbox.values()].map(sent => sent.text), input.value].filter(Boolean).join('\n\n'));
-    await reloadOnce(value);
+    const images = attached.length + [...outbox.values()].reduce((sum, sent) => sum + sent.images.length, 0);
+    await reloadOnce(value, () => save(session, LOST_KEY, images ? String(images) : ''));
   }
 
   // The service worker has a newer set of the app's files than this page runs on (sw.ts, `announce`).
