@@ -62,6 +62,9 @@ function appendAt(value: unknown, path: readonly (string | number)[], delta: str
 
 const compact = (args: unknown): string => JSON.stringify(args) ?? '';
 
+/** Why a message went unanswered, by pi-durable's reason code; other codes show as they are. */
+const UNANSWERED: Readonly<Record<string, string>> = { no_model: 'the model is not available; pick another with /model' };
+
 /** An agent input entry's sender and text: a report (`agents.report`) or a message (`agents.message`). */
 function reportOf(entry: EntryRecord): { from: string; text: string } | undefined {
   const { data } = entry;
@@ -314,7 +317,7 @@ export class ConversationFeed implements ChatFeed {
     if (record.type !== 'input' || record.status !== 'unanswered') return;
     // A model error already shows as the failed answer's notice.
     if (record.reason === 'model_error') return;
-    const text = record.reason !== 'aborted' ? `Not answered: ${record.reason}.`
+    const text = record.reason !== 'aborted' ? `Not answered: ${UNANSWERED[record.reason] ?? record.reason}.`
       : record.entry === undefined ? 'Queued message withdrawn.' : 'Interrupted.';
     this.push({ kind: 'notice', id: `submission:${record.id}`, text, level: record.reason === 'aborted' ? 'info' : 'warn' });
   }

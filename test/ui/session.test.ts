@@ -159,6 +159,14 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     assert.deepEqual(session.chat.items().map(item => item.kind), ['user', 'thinking', 'notice']);
   });
 
+  test('a message its model cannot answer says why, not the SDK\'s reason code', async (t) => {
+    const { session, catalog } = await open(t, []);
+    catalog.models.deleteProvider(catalog.model.provider);
+    await session.send('anyone there?');
+    const notice = await until(() => find(session.chat, 'notice'), 'the notice', session.chat);
+    assert.deepEqual([notice.text, notice.level], ['Not answered: the model is not available; pick another with /model.', 'warn']);
+  });
+
   test('an agents.report input is a report item from its agent', async (t) => {
     const { instance, session } = await open(t, [fauxAssistantMessage('thanks, Bob')]);
     await instance.root.submit({ type: 'input', content: '[Bob] built it',
