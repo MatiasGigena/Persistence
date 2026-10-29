@@ -178,6 +178,10 @@ describe('agents panel', () => {
     assert.equal(feed.subscribers, 1);
     feed.push({ kind: 'report', id: 'r1', from: 'Cy', text: 'done' });
     assert.match(h.screen(), /\[Cy\] done/);
+    feed.push({ kind: 'assistant', id: 'a2', text: '\n\n', streaming: false });
+    feed.push({ kind: 'thinking', id: 'th2', text: ' \n', streaming: true });
+    feed.push({ kind: 'tool', id: 't2', name: 'bash', args: '{"command":"ls"}', output: '', status: 'running' });
+    assert.match(h.screen(), /\[Cy\] done +│\n│ +│\n│ … bash ls/, 'whitespace-only items take no lines');
     h.press(KEY.esc);
     assert.ok(feed.closed);
     assert.equal(feed.subscribers, 0);
