@@ -80,7 +80,11 @@ async function resumePending(): Promise<void> {
   const current = opened();
   const inspection = await current.harness.inspect(current.context);
   if (!inspection.tasks.length && !inspection.submissions.length) return;
-  console.error(`Resuming ${inspection.tasks.length} pending task(s)…`);
+  // An agent's anchor task is bookkeeping (a new chat's standing agents have one each), not work to report.
+  const tasks = inspection.tasks.filter(task => task.record.kind !== 'agents.anchor').length;
+  const queued = inspection.submissions.length;
+  const work = [tasks && `${tasks} pending task(s)`, queued && `${queued} queued message(s)`].filter(Boolean);
+  if (work.length) console.error(`Resuming ${work.join(' and ')}…`);
   await resumeInstance(current);
 }
 

@@ -72,7 +72,7 @@ test('--plain chat explains the terminal UI commands it lacks, and names an unkn
   assert.equal(await chat.exited, 0, chat.output);
 });
 
-test('--plain chat prints Pi\'s reply, then one prompt', { timeout: 20000 }, async t => {
+test('--plain chat on a new chat reports no resumed work, and prints Pi\'s reply, then one prompt', { timeout: 20000 }, async t => {
   const folder = await tempFolder(t);
   const bin = join(folder, 'claude'), script = join(folder, 'script.json'), log = join(folder, 'calls.jsonl');
   await writeFile(bin, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(FAKE)} "$@"\n`, { mode: 0o755 });
@@ -89,6 +89,8 @@ test('--plain chat prints Pi\'s reply, then one prompt', { timeout: 20000 }, asy
   chat.child.stdin.write('/exit\r');
   assert.equal(await chat.exited, 0, chat.output);
   const shown = stripVTControlCharacters(chat.output).replaceAll('\r', '');
+  // The standing agents' anchor tasks are not unfinished work.
+  assert.doesNotMatch(shown, /Resuming/, shown);
   assert.doesNotMatch(shown, /you> you> /, shown);
   assert.match(shown, /pi> first answer\n\nyou> again\n/, shown);
 });
