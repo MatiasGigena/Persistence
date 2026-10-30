@@ -154,7 +154,7 @@ class Line implements Component {
   private readonly minWidth: number;
   constructor(text: () => string, minWidth = 0) { this.text = text; this.minWidth = minWidth; }
   invalidate(): void {}
-  render(width: number): string[] { return width < this.minWidth ? [] : [truncateToWidth(this.text(), width)]; }
+  render(width: number): string[] { return width < this.minWidth ? [] : [truncateToWidth(this.text(), width, '…')]; }
 }
 
 /** Text lines the editor shows at most on a terminal `rows` high: about 30% of it, borders included. */
@@ -229,7 +229,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   if (info.signal?.aborted) return;
   const terminal = info.terminal ?? new ProcessTerminal();
   const tui = new TuiAltScreen(terminal);
-  const chat = new ChatView(session.chat, theme, info.backlog === undefined ? {} : { backlog: info.backlog });
+  const chat = new ChatView(session.chat, theme, { history: '/mem', ...info.backlog === undefined ? {} : { backlog: info.backlog } });
   const { attached } = info;
   const footer = new Footer(() => {
     const status = session.status();
@@ -238,6 +238,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       ...status,
       ...attached ? { reconnecting: attached.state() === 'reconnecting' } : {},
       ...step ? { step } : {},
+      ...scroll.isFollowingEnd ? {} : { scrolled: true },
       ...ctrlCHint ? { hint: attached ? 'ctrl+c again to detach' : 'ctrl+c again to quit' } : {},
     };
   }, theme);
@@ -271,8 +272,9 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   const document = new Container();
   document.addChild(header);
   document.addChild(chat);
+  const scroll = new ScrollView(document, { follow: 'end', primary: true, overscroll: 'chain' });
   const layout = new VStack([
-    { component: new ScrollView(document, { follow: 'end', primary: true, overscroll: 'chain' }), basis: 0, grow: 1, shrink: 1, minSize: 1 },
+    { component: scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
     { component: footer, basis: 'auto', shrink: 0 },
     { component: editor, basis: 'auto', shrink: 1, minSize: 3 },
   ]);

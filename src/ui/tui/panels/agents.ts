@@ -67,21 +67,25 @@ export class ChatRenderer {
     this.markdown = markdownTheme(theme);
   }
 
+  /** The items with a blank line between them; items with nothing to show (only whitespace) take no space. */
   render(items: readonly ChatItem[], width: number): string[] {
-    if (items.length === 0) return [this.theme.dim('Nothing here yet.')];
-    return items.flatMap((item, i) => {
+    const lines: string[] = [];
+    for (const item of items) {
       let hit = this.cache.get(item);
       if (hit?.width !== width) this.cache.set(item, hit = { width, lines: this.item(item, width) });
-      return i === 0 ? hit.lines : ['', ...hit.lines];
-    });
+      if (!hit.lines.length) continue;
+      if (lines.length) lines.push('');
+      lines.push(...hit.lines);
+    }
+    return lines.length ? lines : [this.theme.dim('Nothing here yet.')];
   }
 
   private item(item: ChatItem, width: number): string[] {
     const { accent, dim, error } = this.theme;
     switch (item.kind) {
       case 'user': return wrap(item.text, width - 2).map((l, i) => `${i === 0 ? accent('›') : ' '} ${l}`);
-      case 'assistant': return new Markdown(item.text, 0, 0, this.markdown).render(width);
-      case 'thinking': return wrap(item.text, width).map(l => dim(italic(l)));
+      case 'assistant': return item.text.trim() ? new Markdown(item.text.trim(), 0, 0, this.markdown).render(width) : [];
+      case 'thinking': return item.text.trim() ? wrap(item.text.trim(), width).map(l => dim(italic(l))) : [];
       case 'tool': {
         const mark = item.status === 'running' ? dim('…') : item.status === 'error' ? error('✗') : dim('✓');
         return [`${mark} ${truncateToWidth(`${accent(clean(item.name))} ${dim(toolSummary(item.name, item.args))}`, width - 2, '…')}`];
