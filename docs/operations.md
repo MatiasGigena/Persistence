@@ -400,7 +400,7 @@ currently refused; the connector supports coding/read kits and autoreview's fixe
 - Older per-project databases in subfolders of the data dir are left untouched and
   are not imported.
 - The CLI and host run with umask 077. New directories are 700 and new files 600.
-- `--status` and `--history` on a missing database print `No saved session yet.`
+- `--status` and `--history` on a missing database print `No saved chat yet.`
   and create nothing.
 
 ## Durability and recovery

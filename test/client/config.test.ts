@@ -139,6 +139,6 @@ test('bridge resolves only the socket and ignores broken client/model settings w
   assert.equal(socket, join(folder, 'local-state', 'chat.sqlite.sock'));
   await assert.rejects(exec(launcher, ['bridge'], { env: { ...env, PI_DURABLE_MODEL: 'invalid' } }), { stderr: /pi-durable bridge: no pi-durable server is running here: .*chat\.sqlite\.sock does not exist/ });
   const { stdout } = await exec(launcher, ['--local', '--status'], { env: { ...env, PI_DURABLE_MODEL: 'provider/model' } });
-  assert.match(stdout, /No saved session yet/);
+  assert.match(stdout, /No saved chat yet\./);
   await assert.rejects(stat(join(folder, 'local-state')), { code: 'ENOENT' });
 });

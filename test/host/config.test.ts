@@ -219,7 +219,7 @@ test('inspection of absent state creates no directory', async t => {
   await assert.rejects(stat(dataDir), { code: 'ENOENT' });
   const env = { ...process.env, PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
   const { stdout } = await exec(launcher, ['--history', '--data-dir', dataDir, '--cwd', folder], { env });
-  assert.match(stdout, /No saved session/);
+  assert.match(stdout, /No saved chat yet\./);
   await assert.rejects(stat(dataDir), { code: 'ENOENT' });
 });
 

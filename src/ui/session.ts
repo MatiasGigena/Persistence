@@ -201,7 +201,9 @@ export async function createUiSession(
         const model = currentModel();
         const levels = thinkingLevels(instance.models, model);
         if (!isThinkingLevel(level) || !levels.includes(level)) {
-          throw new Error(`${model.provider}/${model.modelId} takes ${levels.join(', ')}; not ${level}.`);
+          // A model that does not reason takes only `off`.
+          const takes = levels.some(each => each !== 'off') ? `takes ${levels.join(', ')}` : 'has no reasoning effort to set';
+          throw new Error(`${model.provider}/${model.modelId} ${takes}; not ${level}.`);
         }
         await instance.setThinkingLevel(level);
         chosenThinking = level;

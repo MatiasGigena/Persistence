@@ -62,6 +62,12 @@ function appendAt(value: unknown, path: readonly (string | number)[], delta: str
 
 const compact = (args: unknown): string => JSON.stringify(args) ?? '';
 
+/** What failed, by pi-durable's task kind; other kinds show as they are. */
+const FAILED: Readonly<Record<string, string>> = { 'pi.generation': 'The reply' };
+
+/** Why a message went unanswered, by pi-durable's reason code; other codes show as they are. */
+const UNANSWERED: Readonly<Record<string, string>> = { no_model: 'the model is not available; pick another model' };
+
 /** An agent input entry's sender and text: a report (`agents.report`) or a message (`agents.message`). */
 function reportOf(entry: EntryRecord): { from: string; text: string } | undefined {
   const { data } = entry;
@@ -192,7 +198,7 @@ export class ConversationFeed implements ChatFeed {
       case 'submission': return this.submission(event.record);
       case 'auto_retry_start': return this.retry(event.attempt, event.at, event.errorMessage);
       case 'task_failed':
-        return this.push({ kind: 'notice', id: `task:${event.taskId}`, text: `${event.kind} failed: ${event.message}`, level: 'error' });
+        return this.push({ kind: 'notice', id: `task:${event.taskId}`, text: `${FAILED[event.kind] ?? event.kind} failed: ${event.message}`, level: 'error' });
       default: return;
     }
   }
@@ -312,9 +318,9 @@ export class ConversationFeed implements ChatFeed {
 
   private submission(record: SubmissionRecord): void {
     if (record.type !== 'input' || record.status !== 'unanswered') return;
-    // A model error already shows as the failed answer's notice.
-    if (record.reason === 'model_error') return;
-    const text = record.reason !== 'aborted' ? `Not answered: ${record.reason}.`
+    // A model error already shows as the failed answer's notice, a faulted run as its task_failed notice.
+    if (record.reason === 'model_error' || record.reason === 'faulted') return;
+    const text = record.reason !== 'aborted' ? `Not answered: ${UNANSWERED[record.reason] ?? record.reason}.`
       : record.entry === undefined ? 'Queued message withdrawn.' : 'Interrupted.';
     this.push({ kind: 'notice', id: `submission:${record.id}`, text, level: record.reason === 'aborted' ? 'info' : 'warn' });
   }

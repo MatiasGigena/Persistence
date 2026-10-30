@@ -159,6 +159,24 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     assert.deepEqual(session.chat.items().map(item => item.kind), ['user', 'thinking', 'notice']);
   });
 
+  test('a message its model cannot answer says why, not the SDK\'s reason code', async (t) => {
+    const { session, catalog } = await open(t, []);
+    catalog.models.deleteProvider(catalog.model.provider);
+    await session.send('anyone there?');
+    const notice = await until(() => find(session.chat, 'notice'), 'the notice', session.chat);
+    assert.deepEqual([notice.text, notice.level], ['Not answered: the model is not available; pick another model.', 'warn']);
+  });
+
+  test('a run that faults says so once, without the task kind or the SDK\'s reason code', async (t) => {
+    // A non-finite number is not strict JSON: the run's task faults.
+    const { session } = await open(t, [fauxAssistantMessage([fauxToolCall('date', { x: Number.NaN })])]);
+    await session.send('what day is it?');
+    await until(() => !session.status().busy && find(session.chat, 'notice'), 'the notice', session.chat);
+    await idle(session);
+    const notices = session.chat.items().flatMap(item => item.kind === 'notice' ? [[item.text, item.level]] : []);
+    assert.deepEqual(notices, [['The reply failed: Value contains a non-finite number and is not strict JSON', 'error']]);
+  });
+
   test('an agents.report input is a report item from its agent', async (t) => {
     const { instance, session } = await open(t, [fauxAssistantMessage('thanks, Bob')]);
     await instance.root.submit({ type: 'input', content: '[Bob] built it',
@@ -433,6 +451,7 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     const { instance, session, efforts, cwd, databasePath, settingsPath } = await openRoutes(t);
     const bob = await spawnBob(instance, session);
     assert.deepEqual(await session.thinkingLevels(), ['off'], 'faux/one does not reason');
+    await assert.rejects(session.setThinkingLevel('high'), { message: 'faux/one has no reasoning effort to set; not high.' });
     await session.setModel('faux', 'two');
     assert.deepEqual(await session.thinkingLevels(), ['off', 'minimal', 'low', 'medium', 'high']);
     await session.setThinkingLevel('low');
