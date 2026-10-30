@@ -61,12 +61,19 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       const state = el('p', 'sheet-note');
       const stop = el('button', 'btn btn-quiet', `Stop ${name}`);
       stop.type = 'button';
+      /** Why the last stop failed: shown here too, as the chat's notice is behind the sheet; cleared by the next tap. */
+      let stopError = '';
       stop.addEventListener('click', () => {
         stop.disabled = true;
+        stopError = '';
+        draw();
         ctx.link.request('stopAgents', { name }).then(
           ({ names }) => ctx.notice(names.length ? `Stopped ${names.join(', ')}.` : `No agent named ${name}.`),
-          (error: unknown) => ctx.notice(`Stop failed: ${errorText(error)}`, 'error'),
-        ).finally(() => { stop.disabled = false; });
+          (error: unknown) => {
+            stopError = `Stop failed: ${errorText(error)}`;
+            ctx.notice(stopError, 'error');
+          },
+        ).finally(() => { stop.disabled = false; draw(); });
       });
       bar.append(state, stop);
       const scroller = el('div', 'agent-chat');
@@ -110,7 +117,8 @@ export function agentChatView(ctx: PanelContext, name: string): View {
           fadeIn(list);
         }
         const agent = ctx.store.status?.agents.find(a => a.name === name);
-        state.textContent = found?.agent.ended ?? (found && !found.feed ? 'Reconnecting…' : agent ? (agent.busy ? 'Working' : 'Idle') : '');
+        state.textContent = found?.agent.ended ?? (stopError || (found && !found.feed ? 'Reconnecting…' : agent ? (agent.busy ? 'Working' : 'Idle') : ''));
+        state.classList.toggle('is-error', Boolean(stopError) && found?.agent.ended === undefined);
         stop.hidden = !agent || found?.agent.ended !== undefined;
       };
       unsubscribe = ctx.store.subscribe(draw);

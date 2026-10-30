@@ -324,6 +324,8 @@ export function chatSettingsView(ctx: PanelContext): View {
 
       // ---------------------------------------------------------- coding tools
       let toolsBusy = false;
+      /** Why the last switch failed: kept in the note (the chat's notice is behind the sheet) until the next tap. */
+      let toolsError = '';
       const drawTools = (): void => {
         const on = ctx.store.status?.toolsEnabled ?? false;
         const policy = ctx.store.welcome?.tools;
@@ -334,11 +336,14 @@ export function chatSettingsView(ctx: PanelContext): View {
         tools.note.textContent = on
           ? `Read, write, edit and bash on the server; the chat's files and credentials stay hidden.${policy?.idleMinutes === undefined ? '' : ` Off after ${policy.idleMinutes} idle minutes.`}`
           : remoteOff ? 'The server keeps them off for the web. Use the terminal: /tools on.' : 'Off: Pi and its agents can only talk.';
+        if (toolsError) tools.note.textContent = toolsError;
       };
       tools.toggle.addEventListener('click', () => {
         toolsBusy = true;
+        toolsError = '';
         drawTools();
-        void setTools(ctx, !(ctx.store.status?.toolsEnabled ?? false)).finally(() => { toolsBusy = false; drawTools(); });
+        void setTools(ctx, !(ctx.store.status?.toolsEnabled ?? false)).then(why => { toolsError = why; })
+          .finally(() => { toolsBusy = false; drawTools(); });
       });
 
       // ---------------------------------------------------------- notifications

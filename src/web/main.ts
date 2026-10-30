@@ -2,7 +2,8 @@
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { imageUrl, toChatImage } from './attach.ts';
 import { ChatView, el, initViewer, play } from './chat-view.ts';
-import { errorText, guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
+import { announce } from './copy.ts';
+import { errorText, guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
@@ -12,7 +13,7 @@ import { memoryView } from './panels/memory.ts';
 import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
 import { syncPush } from './push.ts';
-import { Store } from './store.ts';
+import { freshAlerts, Store } from './store.ts';
 import type { Effect } from './store.ts';
 import { IMAGE_LIMITS, restoreImages } from '../protocol/images.ts';
 import { CloseCode } from '../protocol/messages.ts';
@@ -23,6 +24,8 @@ const RESTARTING = 'The server is restarting; reconnecting…';
 const DRAFT_KEY = 'pd.draft';
 /** sessionStorage: the value a reload was last made for, so a reload happens once per new value. */
 const RELOAD_KEY = 'pd.reloaded';
+/** sessionStorage: how many images a reload for new files dropped, said once the reloaded app is ready. */
+const LOST_KEY = 'pd.lost-images';
 /** How long the link may be reconnecting before the banner says so. */
 const RECONNECT_BANNER_MS = 2_000;
 /** How long after a send the button cannot become stop, so a double tap does not abort what it just sent. */
@@ -154,10 +157,14 @@ function gone(why: keyof typeof GONE): void {
   show('gone');
 }
 
-/** Reloads once for `value` (new assets, a new server boot, a protocol change); false when already done. */
-async function reloadOnce(value: string): Promise<boolean> {
+/**
+ * Reloads once for `value` (new assets, a new server boot, a protocol change); false when already done. `prepare` runs
+ * only when the reload goes ahead.
+ */
+async function reloadOnce(value: string, prepare: () => void = () => undefined): Promise<boolean> {
   if (load(session, RELOAD_KEY) === value) return false;
   save(session, RELOAD_KEY, value);
+  prepare();
   // Let a changed service worker take over first, and have the shell revalidated (its files are served stale while
   // they revalidate, ADR 0032), so the reload gets the new files.
   await navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => undefined);
@@ -311,6 +318,12 @@ function start(): void {
   let byeReason = '';
   /** The link is ready: only then is store.status.busy current. */
   let linkReady = false;
+  /**
+   * Images the reload that started this page dropped (reloadForFiles), said at the first `ready`. Read at once: a page
+   * waiting to reload may reconnect meanwhile, and must not take the count meant for its successor.
+   */
+  let lostImages = Number(load(session, LOST_KEY)) || 0;
+  save(session, LOST_KEY, '');
 
   const link = new Link({
     connect: socket,
@@ -437,17 +450,21 @@ function start(): void {
     place(attachments, nodes);
     drawSend();
   };
+  /** The images being read, in the order they were added: each joins `attached` in that order. */
+  let readQueue: Promise<void> = Promise.resolve();
   const attach = (files: readonly File[]): void => {
     const room = IMAGE_LIMITS.perMessage - attached.length - reading;
     if (files.length > room) notice(`At most ${IMAGE_LIMITS.perMessage} images per message.`, 'warn');
-    for (const file of files.slice(0, Math.max(0, room))) {
-      reading++;
+    const batch = files.slice(0, Math.max(0, room));
+    if (!batch.length) return;
+    reading += batch.length;
+    drawAttachments();
+    readQueue = inOrder(batch, toChatImage, result => {
+      if (result.ok) attached = [...attached, result.value];
+      else notice(`Image not attached: ${errorText(result.error)}`, 'error');
+      reading--;
       drawAttachments();
-      toChatImage(file).then(
-        image => { attached = [...attached, image]; },
-        (error: unknown) => notice(`Image not attached: ${errorText(error)}`, 'error'),
-      ).finally(() => { reading--; drawAttachments(); });
-    }
+    }, readQueue);
   };
   attachButton.addEventListener('click', () => attachFile.click());
   attachFile.addEventListener('change', () => {
@@ -536,9 +553,15 @@ function start(): void {
     }));
   };
   let lastStatus = '';
+  /** Notices already read out, or history from the first load. */
+  const alerted = new Set<string>();
   store.subscribe(() => {
+    const items = store.rootView();
     // Until the link is ready, items come from a snapshot (a first load, a reconnect): history, drawn without entrances.
-    view.set(store.rootView(), linkReady);
+    view.set(items, linkReady);
+    // A failed send or a server warning only shows in the feed: read it out too. The first load's are history.
+    const alerts = freshAlerts(items, alerted);
+    if (loaded && alerts.length) announce(alerts.join(' '));
     const status = JSON.stringify(store.status ?? null);
     if (status !== lastStatus) { lastStatus = status; drawStatus(); }
   });
@@ -656,6 +679,11 @@ function start(): void {
         byeReason = '';
         save(session, RELOAD_KEY, '');
         reveal();
+        if (lostImages) {
+          const one = lostImages === 1;
+          notice(`The app reloaded for an update, and ${one ? 'an image' : `${lostImages} images`} could not be kept; attach ${one ? 'it' : 'them'} again.`, 'warn');
+          lostImages = 0;
+        }
         for (const [id, { text, steer, images }] of outbox) deliver(id, text, steer, images);
         // Warms Chat settings' lists once the page is idle, so the sheet opens filled.
         prefetchSettings(link, store);
@@ -683,9 +711,11 @@ function start(): void {
   /** Reloads once for `value`, to run new app files. */
   async function reloadForFiles(value: string): Promise<void> {
     // Messages not yet admitted would be lost with the page: they go back into the draft.
-    // Their images cannot be kept: only the text survives a reload.
+    // Their images cannot be kept, nor those attached to the draft: only the text survives a reload, so the reloaded
+    // app says how many went.
     if (outbox.size) save(local, DRAFT_KEY, [...[...outbox.values()].map(sent => sent.text), input.value].filter(Boolean).join('\n\n'));
-    await reloadOnce(value);
+    const images = attached.length + [...outbox.values()].reduce((sum, sent) => sum + sent.images.length, 0);
+    await reloadOnce(value, () => save(session, LOST_KEY, images ? String(images) : ''));
   }
 
   // The service worker has a newer set of the app's files than this page runs on (sw.ts, `announce`).

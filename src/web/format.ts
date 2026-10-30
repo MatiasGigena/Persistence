@@ -1,5 +1,6 @@
 // Text helpers of the web app with no DOM: tool summaries, the status line, memory zoom parsing, sizes. They
 // mirror the terminal UI's wording (src/ui/tui/), which cannot load in a browser; test/web checks the two agree.
+// Also `inOrder`, which keeps attached images in the order they were picked, here so Node tests reach it.
 import type { MemoryStats, ModelChoice, SessionStatus, ViewLine } from '../protocol/messages.ts';
 
 // Control characters other than newline and tab, and terminal escapes, never reach the page.
@@ -227,4 +228,22 @@ export function loadStep(elapsed: number, state: keyof typeof LINK_TEXT): LoadSt
   const skeleton = state === 'offline' || elapsed >= LOAD_QUIET_MS;
   const line = state === 'offline' || elapsed >= LOAD_SLOW_MS ? LINK_TEXT[state] : undefined;
   return { skeleton, text: line?.text ?? '', retry: line?.retry ?? false };
+}
+
+/** What `inOrder` hands on for one item: its value, or why it failed. */
+export type Settled<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown };
+
+/**
+ * Reads every item of `items` at once, and hands each result to `settle` in the items' order, not in the order the reads
+ * finish: the photo picked first stays first, however long it takes to scale. `after` is an earlier batch's chain, so a
+ * later batch never lands ahead of it. Returns this batch's chain.
+ */
+export function inOrder<T, R>(items: readonly T[], read: (item: T) => Promise<R>, settle: (result: Settled<R>) => void,
+  after: Promise<void> = Promise.resolve()): Promise<void> {
+  let chain = after;
+  for (const item of items) {
+    const result = read(item).then((value): Settled<R> => ({ ok: true, value }), (error: unknown): Settled<R> => ({ ok: false, error }));
+    chain = chain.then(() => result).then(settle);
+  }
+  return chain;
 }

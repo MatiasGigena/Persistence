@@ -47,17 +47,21 @@ export function confirmTools(ctx: PanelContext): Promise<boolean> {
   }, { once: true }));
 }
 
-/** Turns the tools on (after asking) or off, and says so in the chat. */
-export async function setTools(ctx: PanelContext, enabled: boolean): Promise<boolean> {
+/**
+ * Turns the tools on (after asking) or off, and says so in the chat. Resolves to why the change failed, for the sheet
+ * to show where the switch is; '' when it went through or the user declined.
+ */
+export async function setTools(ctx: PanelContext, enabled: boolean): Promise<string> {
   if (enabled && !await confirmTools(ctx)) {
     ctx.notice('Coding tools stay off.');
-    return false;
+    return '';
   }
   try {
     await ctx.link.request('tools.set', enabled ? { enabled, confirm: ENABLE_TOOLS } : { enabled });
-    return true;
+    return '';
   } catch (error) {
-    ctx.notice(`Tools not changed: ${errorText(error)}`, 'error');
-    return false;
+    const why = `Tools not changed: ${errorText(error)}`;
+    ctx.notice(why, 'error');
+    return why;
   }
 }

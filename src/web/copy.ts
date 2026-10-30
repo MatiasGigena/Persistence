@@ -14,7 +14,7 @@ const ICONS = {
 const FEEDBACK_MS = 1_600;
 
 /** Says `text` in the #live region: cleared first, then set a frame later, so a repeat is announced again. */
-function announce(text: string): void {
+export function announce(text: string): void {
   const live = document.getElementById('live');
   if (!live) return;
   live.textContent = '';
