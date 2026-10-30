@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Terminal: tool output drops hyperlinks and other escape sequences whole, and carriage returns overwrite as in a
+  terminal (progress bars show their last state); the panels no longer show stray `[31m`. The panels fill the screen,
+  so the chat no longer shows through around them. Whitespace-only items leave no blank lines in the agent chat view,
+  and cut lines end in `…`. A long step or model is cut to fit the footer instead of dropped; one long provider/id no
+  longer pushes names and notes off the /model picker.
+- `--plain` prints one `you>` prompt after Pi's reply, not two; a new chat no longer opens with
+  `Resuming 3 pending task(s)…` for the standing agents' bookkeeping; agents' reports in `--plain` and `--history`
+  show as name and text, without the note meant for Pi.
+- A faulted reply shows one notice, `The reply failed: …`, instead of the task kind and `Not answered: faulted.`; a
+  missing model says so instead of `no_model`; `/effort` on a model that does not reason says it has no effort to
+  set; `--status` and `--history` on a missing chat say `No saved chat yet.`
+- Web app: bold and italic show with a monospace font that has one face; ligatures stay off in code and tool output
+  (`--`, `->`, `!=` read as typed); task-list items show their checkbox without a bullet; picked images attach in
+  the order they were picked.
 - `--plain` no longer drops lines typed ahead or pasted after the first.
 - The terminal footer no longer overflows a narrow screen while "reconnecting…" shows.
 - Web app: re-pairing after a revoke works without a reload; sheets opened while disconnected load once the link is
@@ -14,6 +28,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   says codes last 5 minutes, as they do.
 
 ### Added
+
+- Terminal: a dim first line counts the history items the chat leaves out and points at /mem; the footer shows
+  `↓ more below (pgdn)` while the chat is scrolled up; /effort opens on the current level.
+- Web app: warnings and errors are read out to screen readers; focus stays in the menu sheet when a level opens or
+  closes; a reload for an update says how many attached images it dropped; a failed tools switch or agent stop shows
+  inside the sheet.
 
 - Images in the chat (ADR 0031). In the web app, paste or drop a screenshot into the composer, or pick one with the
   new image button (the photo picker on a phone): it shows as a thumbnail with a remove button and goes to Pi's model
