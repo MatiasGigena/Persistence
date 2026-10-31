@@ -96,6 +96,37 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     } finally { await instance.close(); }
   });
 
+  test('code mode on a remote destination returns no server path for its output files', async t => {
+    const options = await temporary(t);
+    const recorded = recorder();
+    // 1x1 PNG: the image is saved like the truncated output's full text.
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const code = `// @options: {"max_output_tokens": 20}\ntext('x'.repeat(5000));\nimage('data:image/png;base64,${png}');`;
+    const catalog = offlineModels(router({ Pi: ({ last }) => last ? say('done') : call(['codemode', { code }]) }));
+    const instance = await openInstance({ ...options, ...catalog, ...recorded, allowTools: true });
+    const lastCodemode = async () => {
+      const entries = await transcript(instance.root, instance.context);
+      const results = entries.flatMap(entry => entry.model ?? [])
+        .flatMap(message => message.role === 'toolResult' && message.toolName === 'codemode' ? [message] : []);
+      const last = results.at(-1);
+      assert.ok(last);
+      return last.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n');
+    };
+    try {
+      await submit(instance, 'remote script', 'cm-remote', laptop);
+      const remote = await lastCodemode();
+      assert.match(remote, /Could not save the full output: .*remote machine "My laptop"/);
+      assert.match(remote, /could not be saved: .*remote machine "My laptop"/);
+      assert.doesNotMatch(remote, /pi-codemode-/, 'no server temp path is offered to a remote read');
+      assert.doesNotMatch(remote, /\[Full output:/);
+      assert.equal(recorded.calls.length, 0, 'nothing was dispatched to the remote machine');
+      await submit(instance, 'server script', 'cm-server');
+      const local = await lastCodemode();
+      assert.match(local, /\[Full output: .*pi-codemode-[^/]*\/output\.txt/);
+      assert.match(local, /\[Image saved to .*pi-codemode-/);
+    } finally { await instance.close(); }
+  });
+
   test('the dedicated review tool dispatches only its fixed helper command to the delegated machine', async t => {
     const options = await temporary(t);
     const recorded = recorder();

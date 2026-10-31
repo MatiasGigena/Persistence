@@ -51,6 +51,10 @@ delete agents; credentials stay unreachable.
   `codemode` call and its result are. The web feed and the terminal show the `codemode` call, not its nested calls.
 - A restart in the middle of a script replays it; a nested `bash`/`write`/`edit` interrupted by the restart is not
   run twice (its own replay policy), and the script sees it as interrupted.
-- Remote destinations: the script runs on the server, and its coding-tool calls dispatch to the pinned machine.
+- Remote destinations: the script runs on the server, and its coding-tool calls dispatch to the pinned machine. Its
+  output files (a truncated result's full text, `image()` files) would land in the server's temp directory, which the
+  remote `read` cannot see, so on a remote destination (or with no valid one) code mode saves none: the result says
+  why instead of naming a path, and the script should ask for less output (`max_output_tokens`). On the server they
+  are saved as before.
 - Updating pi-durable or pi-codemode can change the replay fingerprint: a script interrupted across that upgrade
   ends with an error instead of replaying.

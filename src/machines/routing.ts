@@ -60,6 +60,8 @@ export interface MachineRouting {
    * resolves, as the routed coding tools do, so `/tools off` stops an invocation already resolving.
    */
   localOnly(extension: Extension, allowed?: () => boolean): Extension;
+  /** The conversation's current pinned destination; rejects when it has none (execution is blocked). */
+  destination(conversationId: ConversationId, context: Context): Promise<MachineTarget>;
   /** Called inside the spawning tool's once-only transaction, immediately after creating the child. */
   pinSpawn(tx: Tx, parent: ConversationId, child: ConversationId): Promise<void>;
   /** Persist a new root delivery's exact source-session route in the transaction that creates its task. */
@@ -167,6 +169,7 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
   return {
     tools,
     initialize: context => harness().commit(async tx => { await tx.doc(RoutingDoc); }, context),
+    destination: resolve,
     localOnly: (extension, allowed) => ({
       ...extension,
       tools: extension.tools?.map(tool => ({

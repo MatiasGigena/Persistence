@@ -392,7 +392,16 @@ export async function openInstance({
   // resolves among the tools enabled when it runs and keeps its own guards and routing (ADR 0033).
   const codemode = createCodemode({ others: [...Agents.tools ?? [], ...ShowImage.tools ?? [],
     ...Object.values(kits).flatMap(kit => kit.tools)].map(tool => tool.name), allowed: () => toolsAllowed,
-    ...codemodeTimeoutMs === undefined ? {} : { timeoutMs: codemodeTimeoutMs } });
+    ...codemodeTimeoutMs === undefined ? {} : { timeoutMs: codemodeTimeoutMs },
+    // A script runs on the server; on a remote destination its output files would be paths the remote read cannot see.
+    ...routing ? { outputRefusal: async (conversationId: ConversationId, context: Context) => {
+      let target: MachineTarget;
+      try { target = await routing.destination(conversationId, context); } catch {
+        return 'this run has no valid machine destination, so code mode saves no output files.';
+      }
+      return target.machineId === 'server' ? undefined
+        : `code mode saves no output files on remote machine ${JSON.stringify(target.label)}; ask the script for less output (max_output_tokens) instead.`;
+    } } : {} });
   const Codemode = whileAllowed(codemode.extension, () => toolsAllowed);
   const registry = createRegistry();
   // Register implementations even in chat-only mode, so pending tasks remain

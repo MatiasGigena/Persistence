@@ -3,6 +3,10 @@ import type { CodemodeSandboxBase } from '@earendil-works/pi-codemode';
 import { hook, ToolTask } from '@earendil-works/pi-durable';
 import type { Extension, ToolHookCall, ToolRegistration, Wrap } from '@earendil-works/pi-durable';
 import { CODEMODE_TOOL_NAME, createCodemodeExtension } from '@earendil-works/pi-durable/codemode';
+import { err, FileError } from '@earendil-works/pi-durable/env';
+import type { ExecutionEnv } from '@earendil-works/pi-durable/env';
+import type { Context } from '@earendil-works/chord';
+import type { ConversationId } from '@earendil-works/pi-durable';
 import { CODEMODE_OPTIONS_PREFIX, parseCodemodeSource } from '@earendil-works/pi-codemode/source';
 
 /**
@@ -48,6 +52,16 @@ export function withDefaultTimeout(source: string, timeoutMs = CODEMODE_TIMEOUT_
   return (source.split('\n')[0] ?? '').trimStart().startsWith(CODEMODE_OPTIONS_PREFIX) ? line + parsed.code : `${line}\n${source}`;
 }
 
+/**
+ * The environment pi-durable writes a script's output files with (a truncated result's full text, its images) when
+ * they may not be saved: both writes it makes fail with `reason`, so the result says so instead of naming a path.
+ */
+function refusingOutput(reason: string): ExecutionEnv {
+  const refused = () => Promise.resolve(err(new FileError('not_supported', reason)));
+  // pi-durable's code mode uses only these two methods of its call's environment (outputFiles, outputDir).
+  return { createTempDir: refused, writeFile: refused } as unknown as ExecutionEnv;
+}
+
 export type CodemodeExtension = Extension & { readonly tools: readonly ToolRegistration[] };
 
 export interface Codemode {
@@ -68,10 +82,15 @@ export function scriptRefusal(call: Pick<ToolHookCall, 'name' | 'parent'>): stri
  * any nested call outside SCRIPT_TOOLS too, for a tool `others` missed.
  */
 export function createCodemode({ sandbox = new CodemodeSandbox({ memoryLimitBytes: CODEMODE_MEMORY_LIMIT }), others = [],
-  allowed = () => true, timeoutMs = CODEMODE_TIMEOUT_MS }: {
+  allowed = () => true, timeoutMs = CODEMODE_TIMEOUT_MS, outputRefusal }: {
   sandbox?: CodemodeSandboxBase; others?: readonly string[]; allowed?: () => boolean;
   /** Default deadline of a script that sets none; tests shorten it. */
   timeoutMs?: number;
+  /**
+   * Why a call's output files may not be saved, or undefined: on a remote destination the server's temp directory
+   * is not what the remote `read` reads, so no path is returned for it.
+   */
+  outputRefusal?: (conversationId: ConversationId, context: Context) => Promise<string | undefined>;
 } = {}): Codemode {
   const base = createCodemodeExtension({ sandbox, models: false });
   if (base.name !== CODEMODE_EXTENSION) throw new Error(`pi-durable renamed the code mode extension to ${base.name}.`);
@@ -90,7 +109,8 @@ export function createCodemode({ sandbox = new CodemodeSandbox({ memoryLimitByte
     extension: { ...base, tools: (base.tools ?? []).map(tool => tool.name !== CODEMODE_TOOL_NAME ? tool : { ...tool,
       async execute(args, api, context) {
         const code = withDefaultTimeout((args as { code: string }).code, timeoutMs);
-        return tool.execute({ ...args as object, code }, api, context);
+        const refused = await outputRefusal?.(api.conversationId, context);
+        return tool.execute({ ...args as object, code }, refused === undefined ? api : { ...api, env: refusingOutput(refused) }, context);
       } }), sections: (base.sections ?? []).map(each => ({ ...each,
       render: (input, context) => input.agent.tools.some(tool => tool.name === CODEMODE_TOOL_NAME) ? each.render(input, context) : undefined })),
     hooks: [...base.hooks ?? [], guard], wraps: [...base.wraps ?? [], ...wraps] },
