@@ -13,7 +13,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks; `roster.ts`: the standing agents and kit names.
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and
-  `web-fetch.ts` (`web_fetch`), and `autoreview.ts` (the Reviewer's installed skill helper, fixed P0–P2, through guarded/routed execution).
+  `web-fetch.ts` (`web_fetch`), `autoreview.ts` (the Reviewer's installed skill helper, fixed P0–P2, through guarded/routed execution), `show-image.ts`, and `codemode.ts` (scripts that call the coding tools, ADR 0033).
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
 - `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents, /mem, /model and /effort). The TUI never imports pi-durable.
 - `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`.
