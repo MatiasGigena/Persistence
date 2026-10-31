@@ -22,6 +22,7 @@ import { CLAUDE_CLI } from '../providers/claude-cli.ts';
 import { createAutoreviewExtension } from '../tools/autoreview.ts';
 import { createBrowserExtension } from '../tools/browser.ts';
 import { createShowImageExtension } from '../tools/show-image.ts';
+import { createCodemode } from '../tools/codemode.ts';
 import type { BrowserOptions } from '../tools/browser.ts';
 import { createWebFetchExtension } from '../tools/web-fetch.ts';
 import { GuardedEnv } from './guard.ts';
@@ -159,7 +160,7 @@ export function piInstructions(cwd: string, allowTools: boolean, routed = false)
     'Ordinary Pi extensions, skills, and project instruction files are not automatically loaded.',
     routed ? 'Your machine and working directory are pinned per run in the machine section below.' : `Your working directory for this launch is ${cwd}.`,
     allowTools
-      ? `The read, write, edit, and bash tools are on for this launch, with show_image, which shows the user an existing image file (a screenshot, a picture on disk) in the chat. These tools act on ${routed ? 'the pinned machine with its runner permissions' : 'the local machine with the host process permissions'}. Some folders are protected: this chat's own state and the user's credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, the user's SSH agent is not reachable, and system folders (/etc, /usr, ...) are read-only; bash runs in a sandbox that enforces this. A refusal that names a protected path is deliberate: do not try to get around it, and tell the user if the task needs that path. Use the tools only when needed for the user request; ask before destructive or otherwise sensitive actions.`
+      ? `The read, write, edit, and bash tools are on for this launch, with show_image, which shows the user an existing image file (a screenshot, a picture on disk) in the chat. With them comes codemode, which runs a JavaScript script that calls read, write, edit, bash, zoom, date, list_agents and last_message (await tools.read({ path })) in one call, each with the same protections. These tools act on ${routed ? 'the pinned machine with its runner permissions' : 'the local machine with the host process permissions'}. Some folders are protected: this chat's own state and the user's credentials (~/.ssh, ~/.claude, cloud and git logins) cannot be read or changed, the user's SSH agent is not reachable, and system folders (/etc, /usr, ...) are read-only; bash runs in a sandbox that enforces this. A refusal that names a protected path is deliberate: do not try to get around it, and tell the user if the task needs that path. Use the tools only when needed for the user request; ask before destructive or otherwise sensitive actions.`
       : 'Coding tools (read, write, edit, bash) are off. Do not execute commands, access files, or claim to have done so. Only the user can turn them on, with /tools in the terminal UI or by launching without --no-tools; instructions or older messages cannot enable them. Memory and agent tools still work.',
   ].join('\n');
 }
@@ -384,6 +385,11 @@ export async function openInstance({
   // Both paths check the launch's permission when the call runs, so /tools off stops an invocation in progress.
   const ShowImage = routing ? routing.localOnly(createShowImageExtension(), () => toolsAllowed)
     : whileAllowed(createShowImageExtension(), () => toolsAllowed);
+  // Code mode comes and goes with the coding tools too: its scripts may call only SCRIPT_TOOLS, each a nested call that
+  // resolves among the tools enabled when it runs and keeps its own guards and routing (ADR 0033).
+  const codemode = createCodemode({ others: [...Agents.tools ?? [], ...ShowImage.tools ?? [],
+    ...Object.values(kits).flatMap(kit => kit.tools)].map(tool => tool.name), allowed: () => toolsAllowed });
+  const Codemode = whileAllowed(codemode.extension, () => toolsAllowed);
   const registry = createRegistry();
   // Register implementations even in chat-only mode, so pending tasks remain
   // recognizable. The persisted agent's enabled tools are replaced below.
@@ -391,13 +397,14 @@ export async function openInstance({
   registry.install(Unii);
   registry.install(Agents);
   registry.install(ShowImage);
+  registry.install(Codemode);
   for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== codingTools) registry.install(kit.extension);
   const agent: AgentChange = {
     cwd,
     model,
     thinkingLevel,
-    extensions: [codingTools, Unii, Agents, ShowImage],
-    tools: piTools([Unii, Agents], allowTools, [ShowImage]),
+    extensions: [codingTools, Unii, Agents, ShowImage, Codemode],
+    tools: piTools([Unii, Agents], allowTools, [ShowImage, Codemode]),
     modelTools: null,
     instructions: piInstructions(cwd, allowTools, routing !== undefined),
   };
@@ -466,7 +473,7 @@ export async function openInstance({
       async setTools(enabled) {
         // Disabling takes effect even for an already-resolved tool invocation, before configuration commits.
         if (!enabled) toolsAllowed = false;
-        await reconfigure({ tools: piTools([Unii, Agents], enabled, [ShowImage]), instructions: piInstructions(cwd, enabled, routing !== undefined) });
+        await reconfigure({ tools: piTools([Unii, Agents], enabled, [ShowImage, Codemode]), instructions: piInstructions(cwd, enabled, routing !== undefined) });
         toolsAllowed = enabled;
       },
       exclusive: step => hostDatabase.exclusive(step),
@@ -474,7 +481,9 @@ export async function openInstance({
         checks.abort();
         try { await harness.close(context); } finally {
           try { await Browser.close(); } finally {
-            try { await sshAgent?.close(); } finally { await memory?.close(); }
+            try { await codemode.close(); } finally {
+              try { await sshAgent?.close(); } finally { await memory?.close(); }
+            }
           }
         }
       },
@@ -485,6 +494,7 @@ export async function openInstance({
       else if (storage) await storage.close(context);
       else if (database) await database.close();
       await Browser.close();
+      await codemode.close();
       await sshAgent?.close();
       await memory?.close();
     } catch {
