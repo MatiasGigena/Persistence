@@ -9,7 +9,9 @@ import type { Agent, EntryRecord } from '@earendil-works/pi-durable';
 import { AgentsDoc } from '../../src/agents/index.ts';
 import { answerText, openInstance, transcript } from '../../src/runtime/runtime.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
-import { CODEMODE_TOOL_NAME, createCodemode, SCRIPT_TOOLS, scriptRefusal } from '../../src/tools/codemode.ts';
+import { parseCodemodeSource } from '@earendil-works/pi-codemode/source';
+import { CODEMODE_TIMEOUT_MS, CODEMODE_TOOL_NAME, createCodemode, SCRIPT_TOOLS, scriptRefusal, withDefaultTimeout } from '../../src/tools/codemode.ts';
+import { resumeInstance } from '../../src/runtime/recovery.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 
 async function temporary(t: TestContext) {
@@ -59,6 +61,19 @@ test('the guard stops a running script\'s next call once /tools is off, and leav
   assert.deepEqual(await handlers.beforeTool({ name: 'read', parent }), { block: 'Coding tools are off for this launch.' });
   assert.equal(await handlers.beforeTool({ name: 'read' }), undefined);
   assert.deepEqual(extension.wraps?.map(wrap => 'tool' in wrap ? wrap.tool : ''), ['spawn_agent']);
+});
+
+test('withDefaultTimeout gives every script a finite deadline and keeps the script\'s own options', () => {
+  const plain = withDefaultTimeout('text(1);');
+  // The options line's newline stays with the code, so the script's line numbers do not move.
+  assert.deepEqual(parseCodemodeSource(plain), { code: '\ntext(1);', options: { timeoutMs: CODEMODE_TIMEOUT_MS } });
+  const tokens = withDefaultTimeout('// @options: {"max_output_tokens": 50}\ntext(1);', 2_000);
+  assert.deepEqual(parseCodemodeSource(tokens).options, { maxOutputTokens: 50, timeoutMs: 2_000 });
+  assert.equal(parseCodemodeSource(tokens).code, '\ntext(1);');
+  const own = '// @options: {"timeout_ms": 10}\ntext(1);';
+  assert.equal(withDefaultTimeout(own), own, 'a script\'s own timeout_ms stays');
+  assert.equal(withDefaultTimeout('   '), '   ', 'an invalid source is left for pi-durable to report');
+  assert.equal(withDefaultTimeout(plain), plain, 'idempotent, so a replay gets the same source');
 });
 
 describe('code mode (offline)', { concurrency: false, timeout: 60_000 }, () => {
@@ -162,6 +177,53 @@ text(out.join('\\n'));`),
       const agent = await instance.root.agent(instance.context);
       assert.ok(!names(agent, 'tools').includes(CODEMODE_TOOL_NAME));
       for (const name of ['read', 'write', 'edit', 'bash']) assert.ok(!names(agent, 'callable').includes(name));
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('a script that never ends times out at the default deadline', async (t) => {
+    const options = await temporary(t);
+    const catalog = offlineModels([script('while (true) {}'), fauxAssistantMessage('Stopped.')]);
+    const instance = await openInstance({ ...options, ...catalog, allowTools: true, codemodeTimeoutMs: 500 });
+    try {
+      const started = Date.now();
+      assert.equal(await ask(instance, 'Loop forever.'), 'Stopped.');
+      const result = await codemodeResult(instance);
+      assert.equal(result.isError, true, result.text);
+      assert.match(result.text, /timed out/i);
+      assert.ok(Date.now() - started < 30_000);
+    } finally {
+      await instance.close();
+    }
+  });
+
+  test('the persisted default deadline also bounds a script interrupted by a restart', async (t) => {
+    const options = await temporary(t);
+    const running = offlineModels([script('while (true) {}'), fauxAssistantMessage('never')]);
+    let instance = await openInstance({ ...options, ...running, allowTools: true, codemodeTimeoutMs: 300 });
+    try {
+      void instance.root.submit({ type: 'input', content: 'Loop forever.' }, instance.context).catch(() => undefined);
+      // Wait until the script has started (the code mode task exists), then shut down mid-script.
+      for (let tries = 0; tries < 200; tries++) {
+        const { tasks } = await instance.harness.inspect(instance.context);
+        if (tasks.some(task => JSON.stringify(task.record).includes(CODEMODE_TOOL_NAME))) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    } finally {
+      await instance.close();
+    }
+    await new Promise(resolve => setTimeout(resolve, 400));
+    const reopened = offlineModels([fauxAssistantMessage('Recovered.')]);
+    // A longer default now: the deadline that ends the replay is the persisted one, not this launch's.
+    instance = await openInstance({ ...options, ...reopened, allowTools: true, codemodeTimeoutMs: 60_000 });
+    try {
+      const started = Date.now();
+      await resumeInstance(instance);
+      const result = await codemodeResult(instance);
+      assert.equal(result.isError, true, result.text);
+      assert.match(result.text, /timed out/i);
+      assert.ok(Date.now() - started < 30_000);
     } finally {
       await instance.close();
     }

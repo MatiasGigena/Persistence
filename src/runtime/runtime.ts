@@ -82,6 +82,8 @@ export interface InstanceOptions {
   readonly rosterChecks?: Partial<Omit<RosterCheckOptions, 'chromium' | 'authFile' | 'signal'>> | false;
   /** Route each server submission and its agents to an immutable machine destination. */
   readonly dispatcher?: RoutingDispatcher;
+  /** A code mode script's deadline when it sets none; default CODEMODE_TIMEOUT_MS. Tests shorten it. */
+  readonly codemodeTimeoutMs?: number;
 }
 
 /** The opened root; `memory` is undefined when inspecting. */
@@ -320,6 +322,7 @@ export async function openInstance({
   authFile,
   rosterChecks = {},
   dispatcher,
+  codemodeTimeoutMs,
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Started even with the tools off: /tools on needs no restart. Inspection runs no tools.
@@ -388,7 +391,8 @@ export async function openInstance({
   // Code mode comes and goes with the coding tools too: its scripts may call only SCRIPT_TOOLS, each a nested call that
   // resolves among the tools enabled when it runs and keeps its own guards and routing (ADR 0033).
   const codemode = createCodemode({ others: [...Agents.tools ?? [], ...ShowImage.tools ?? [],
-    ...Object.values(kits).flatMap(kit => kit.tools)].map(tool => tool.name), allowed: () => toolsAllowed });
+    ...Object.values(kits).flatMap(kit => kit.tools)].map(tool => tool.name), allowed: () => toolsAllowed,
+    ...codemodeTimeoutMs === undefined ? {} : { timeoutMs: codemodeTimeoutMs } });
   const Codemode = whileAllowed(codemode.extension, () => toolsAllowed);
   const registry = createRegistry();
   // Register implementations even in chat-only mode, so pending tasks remain

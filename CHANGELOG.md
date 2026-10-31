@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   calls `read`, `write`, `edit`, `bash`, `zoom`, `date`, `list_agents` and `last_message` in one tool call
   (`await tools.read({ path })`). Each call is an ordinary nested tool call with the same guards, protected folders
   and machine routing; scripts cannot spawn, delegate, message or delete agents, show images, browse, fetch, or start
-  model calls. `/tools off` stops it, also mid-script. Scripts survive a restart (pi-durable's journal). Adds the
+  model calls. `/tools off` stops it, also mid-script. A script that sets no `timeout_ms` gets a 5 minute deadline, kept across a restart. Scripts survive a restart (pi-durable's journal). Adds the
   dependency `@earendil-works/pi-codemode` 1.3.0.
 - Images in the chat (ADR 0031). In the web app, paste or drop a screenshot into the composer, or pick one with the
   new image button (the photo picker on a phone): it shows as a thumbnail with a remove button and goes to Pi's model

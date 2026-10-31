@@ -20,9 +20,14 @@ delete agents; credentials stay unreachable.
 ## Decision
 
 - **pi-durable's durable code mode, not Pi Cloud's.** `src/tools/codemode.ts` wraps `createCodemodeExtension` with a
-  `CodemodeSandbox` (worker thread, 256 MiB QuickJS heap, pi-codemode's default 5 min deadline). Names: extension
+  `CodemodeSandbox` (worker thread, 256 MiB QuickJS heap). Names: extension
   `codemode`, tool `codemode`, and pi-durable's documents `pi.codemode.run`, `pi.codemode.journal`,
   `pi.codemode.store`; all persisted. `@earendil-works/pi-codemode` is pinned at 1.3.0 like the other packages.
+- **Every script has a finite, persisted deadline.** pi-durable records a deadline only for a script whose
+  `// @options:` line sets `timeout_ms`, and its replayable sandbox path runs a script without one with no limit. So
+  the tool wrapper adds `"timeout_ms": 300000` (`CODEMODE_TIMEOUT_MS`, 5 min) to a script that sets none, keeping its
+  `max_output_tokens`. pi-durable then persists `startedAt + timeout_ms` with the run, so a script interrupted by a
+  restart is still bounded by its original deadline (past it, it ends as timed out). A script's own `timeout_ms` stays.
 - **No `models.*`** (`models: false`): scripts start no model calls, so they spend nothing and reach no provider.
 - **Scripts call only `SCRIPT_TOOLS`**: `read`, `write`, `edit`, `bash`, `zoom`, `date`, `list_agents`,
   `last_message`. Where code mode is selected, every other tool the host has (agent management, `show_image`, the

@@ -3,6 +3,7 @@ import type { CodemodeSandboxBase } from '@earendil-works/pi-codemode';
 import { hook, ToolTask } from '@earendil-works/pi-durable';
 import type { Extension, ToolHookCall, ToolRegistration, Wrap } from '@earendil-works/pi-durable';
 import { CODEMODE_TOOL_NAME, createCodemodeExtension } from '@earendil-works/pi-durable/codemode';
+import { CODEMODE_OPTIONS_PREFIX, parseCodemodeSource } from '@earendil-works/pi-codemode/source';
 
 /**
  * Code mode (ADR 0033): the `codemode` tool runs a model-written JavaScript script in a QuickJS sandbox
@@ -25,6 +26,28 @@ export const SCRIPT_TOOLS: readonly string[] = ['read', 'write', 'edit', 'bash',
 /** QuickJS heap per script; allocations beyond it fail inside the script as out of memory. */
 export const CODEMODE_MEMORY_LIMIT = 256 * 1024 * 1024;
 
+/**
+ * A script's deadline when it sets no `timeout_ms`. pi-durable persists a deadline only for a script that sets one, and
+ * its sandbox runs a script without one with no limit, so every script gets this one (`withDefaultTimeout`).
+ */
+export const CODEMODE_TIMEOUT_MS = 300_000;
+
+/**
+ * `source` with `timeout_ms` set in its options line when it sets none: pi-durable then persists the deadline, so it
+ * bounds the script across restarts too. Deterministic, so a replay of the same arguments gets the same deadline
+ * rule. A source that does not parse is returned as is, for pi-durable to report.
+ */
+export function withDefaultTimeout(source: string, timeoutMs = CODEMODE_TIMEOUT_MS): string {
+  let parsed: ReturnType<typeof parseCodemodeSource>;
+  try { parsed = parseCodemodeSource(source); } catch { return source; }
+  if (parsed.options.timeoutMs !== undefined) return source;
+  const options = { ...parsed.options.maxOutputTokens === undefined ? {} : { max_output_tokens: parsed.options.maxOutputTokens },
+    timeout_ms: timeoutMs };
+  const line = `${CODEMODE_OPTIONS_PREFIX} ${JSON.stringify(options)}`;
+  // With an options line, `code` starts at its newline; without one, the script follows the new line unchanged.
+  return (source.split('\n')[0] ?? '').trimStart().startsWith(CODEMODE_OPTIONS_PREFIX) ? line + parsed.code : `${line}\n${source}`;
+}
+
 export type CodemodeExtension = Extension & { readonly tools: readonly ToolRegistration[] };
 
 export interface Codemode {
@@ -45,7 +68,11 @@ export function scriptRefusal(call: Pick<ToolHookCall, 'name' | 'parent'>): stri
  * any nested call outside SCRIPT_TOOLS too, for a tool `others` missed.
  */
 export function createCodemode({ sandbox = new CodemodeSandbox({ memoryLimitBytes: CODEMODE_MEMORY_LIMIT }), others = [],
-  allowed = () => true }: { sandbox?: CodemodeSandboxBase; others?: readonly string[]; allowed?: () => boolean } = {}): Codemode {
+  allowed = () => true, timeoutMs = CODEMODE_TIMEOUT_MS }: {
+  sandbox?: CodemodeSandboxBase; others?: readonly string[]; allowed?: () => boolean;
+  /** Default deadline of a script that sets none; tests shorten it. */
+  timeoutMs?: number;
+} = {}): Codemode {
   const base = createCodemodeExtension({ sandbox, models: false });
   if (base.name !== CODEMODE_EXTENSION) throw new Error(`pi-durable renamed the code mode extension to ${base.name}.`);
   const guard = hook(ToolTask, {
@@ -60,7 +87,11 @@ export function createCodemode({ sandbox = new CodemodeSandbox({ memoryLimitByte
     .map(name => ({ tool: name, wrap: (tool: ToolRegistration) => ({ ...tool, callers: ['model'] as const }) }));
   return {
     // The section lists what scripts can call; without the tool offered (tools off, standing agents) it says nothing.
-    extension: { ...base, tools: base.tools ?? [], sections: (base.sections ?? []).map(each => ({ ...each,
+    extension: { ...base, tools: (base.tools ?? []).map(tool => tool.name !== CODEMODE_TOOL_NAME ? tool : { ...tool,
+      async execute(args, api, context) {
+        const code = withDefaultTimeout((args as { code: string }).code, timeoutMs);
+        return tool.execute({ ...args as object, code }, api, context);
+      } }), sections: (base.sections ?? []).map(each => ({ ...each,
       render: (input, context) => input.agent.tools.some(tool => tool.name === CODEMODE_TOOL_NAME) ? each.render(input, context) : undefined })),
     hooks: [...base.hooks ?? [], guard], wraps: [...base.wraps ?? [], ...wraps] },
     close: () => sandbox.close(),
