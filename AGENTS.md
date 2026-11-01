@@ -22,6 +22,9 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/machines/routing.ts`: persisted per-request, run and agent-session execution targets; `src/server/machines.ts`: authenticated connector dispatch, never host fallback.
 - `src/web/`: the phone web app, vanilla DOM TypeScript served type-stripped (own `tsconfig.json`; `sw.ts` has `sw/tsconfig.json`). `format.ts`, `store.ts`, `link.ts` and `markdown.ts` stay DOM-free so `test/web/` runs them in Node.
 - `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
+- `docs/showcase/`: animated illustrations of the TUI and web app (a separate Vite + React project on the
+  stageshow kit, outside `npm run check`); `demos/tui/` and `demos/web/` mirror `src/ui/tui/` and `src/web/`.
+- `.agents/skills/`: vendored agent skills (stageshow), ignored by lint.
 - `tsconfig.json`, `eslint.config.ts`: the type and lint rules `npm run check` enforces.
 
 ## Verify
@@ -82,4 +85,5 @@ A change is done when both pass and the docs below still match the code.
 - Changing `src/protocol/`, or what the server or a client sends: [docs/protocol.md](docs/protocol.md); bump
   `PROTOCOL` for anything not additive.
 - Making a design decision: add an ADR in [docs/decisions/](docs/decisions/).
+- Changing what the TUI or web app shows: keep `docs/showcase/demos/tui/` and `demos/web/` in step.
 - Code style and commit messages: [CONTRIBUTING.md](CONTRIBUTING.md).
