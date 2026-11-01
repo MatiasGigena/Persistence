@@ -34,6 +34,25 @@ const quote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
 const clean = (text: string): string => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
   .replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 1024);
 
+/**
+ * How to fix a failed SSH start, from ssh's stderr and exit code, or ''. The connector runs ssh with BatchMode and strict
+ * host keys, so a password prompt, a passphrase prompt or a new host key fails instead of asking.
+ */
+function fixHint(target: SshTarget, stderr: string, code: number | null): string {
+  if (/Host key verification failed|host key is known|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(stderr)) {
+    return ` Run ssh ${target.host} once to check and accept its host key; pi-durable never accepts one itself.`;
+  }
+  // ssh's own "Permission denied (publickey,password)." only, not an EACCES the remote bridge reports.
+  if (/Permission denied \(/.test(stderr)) {
+    return ` pi-durable signs in without prompts: set up key-based login for ${target.host} (ssh-copy-id), and add a key with a passphrase to your ssh-agent.`;
+  }
+  if (code === 127 || /command not found|: not found/i.test(stderr)) {
+    const executable = target.command ?? 'pi-durable';
+    return ` ${executable} is not on the remote PATH of a noninteractive login: install it there, or name its full path with --remote-bin.`;
+  }
+  return '';
+}
+
 function remoteCommand(target: SshTarget): string {
   // Restrict destinations to aliases, DNS/IP addresses and an optional SSH username. In particular, no options,
   // whitespace, URI/port syntax, or shell metacharacters; ssh_config supplies ports and identity configuration.
@@ -98,7 +117,7 @@ export function sshConnector(target: SshTarget, options: SshOptions = {}): Conne
       killer.unref();
     };
     const cancelled = (): void => stop('SSH connection cancelled');
-    const failure = (fallback: string): string => `SSH: ${clean(stderr) || fallback}`;
+    const failure = (fallback: string, code: number | null = null): string => `SSH: ${clean(stderr) || fallback}${fixHint(target, stderr, code)}`;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk.slice(0, STDERR_MAX - stderr.length); });
@@ -137,7 +156,7 @@ export function sshConnector(target: SshTarget, options: SshOptions = {}): Conne
     child.once('close', (code, signal) => {
       clearTimeout(killer);
       disposePipes();
-      finish(failure(`connection closed (${signal ?? `exit ${code ?? 'unknown'}`})`));
+      finish(failure(`connection closed (${signal ?? `exit ${code ?? 'unknown'}`})`, code));
     });
     options.signal?.addEventListener('abort', cancelled, { once: true });
     child.once('spawn', () => {

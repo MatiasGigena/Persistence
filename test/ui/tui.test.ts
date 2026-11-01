@@ -4,9 +4,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
-import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, runTui } from '../../src/ui/tui/app.ts';
+import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui, statusText } from '../../src/ui/tui/app.ts';
 import type { AttachedLink, LinkState, TuiInfo } from '../../src/ui/tui/app.ts';
-import { ChatView, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
+import { ChatView, clean, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
 import { Footer, footerText, SPIN_FAST, SPIN_SLOW, STEP_WIDTH, spinnerInterval } from '../../src/ui/tui/footer.ts';
 import type { FooterStatus } from '../../src/ui/tui/footer.ts';
 import { theme } from '../../src/ui/tui/theme.ts';
@@ -153,6 +153,20 @@ test('tool output collapses to a preview and expands', () => {
   assert.equal(expanded.at(-1), '  line 10');
 });
 
+test('tool output loses hyperlinks and other escapes whole, and carriage returns overwrite as in a terminal', () => {
+  const output = [
+    'see \x1b]8;;file:///tmp/a.txt\x07a.txt\x1b]8;;\x1b\\ here',
+    '\x1b[1mbold\x1b(B\x1b[m plain\x1b7\x1b8',
+    'fetching 10%\rfetching 100%\r',
+    'abcdef\rXY',
+    'crlf\r\nnext',
+  ].join('\n');
+  const view = new ChatView(new FakeFeed([{ kind: 'tool', id: 't1', name: 'bash', args: '{"command":"ls"}', output, status: 'done' }]), theme);
+  view.toolsExpanded = true;
+  assert.deepEqual(plain(view.render(60)), ['✓ bash ls', '  see a.txt here', '  bold plain', '  fetching 100%', '  XYcdef', '  crlf', '  next']);
+  assert.equal(clean('\x1b[31mred\x1b[0m ok'), 'red ok', 'the panels share the same cleaning');
+});
+
 test('reports, notices and collapsed thinking', () => {
   const view = new ChatView(new FakeFeed([
     { kind: 'thinking', id: 'th', text: 'first thought\nsecond thought', streaming: false },
@@ -169,12 +183,26 @@ test('reports, notices and collapsed thinking', () => {
 test('the view opens on the last items of the history, then shows every new one', () => {
   const items: ChatItem[] = Array.from({ length: 10 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `m${i}` }));
   const feed = new FakeFeed(items);
-  const view = new ChatView(feed, theme, { backlog: 2 });
-  assert.deepEqual(plain(view.render(20)).filter(Boolean), ['❯ m8', '❯ m9']);
+  const view = new ChatView(feed, theme, { backlog: 2, history: '/mem' });
+  assert.deepEqual(plain(view.render(80)).filter(Boolean), ['· 8 earlier items not shown; /mem browses the whole chat', '❯ m8', '❯ m9']);
   view.notice('local');
-  feed.set([...items, { kind: 'user', id: 'u10', text: 'm10' }]);
+  feed.set([...items.slice(3), { kind: 'user', id: 'u10', text: 'm10' }]);
   view.sync();
-  assert.deepEqual(plain(view.render(20)).filter(Boolean), ['❯ m8', '❯ m9', '· local', '❯ m10']);
+  assert.deepEqual(plain(view.render(30)).filter(Boolean), ['· 5 earlier items · /mem', '❯ m8', '❯ m9', '· local', '❯ m10'],
+    'the count follows the feed, and is short on a phone');
+  assert.deepEqual(plain(new ChatView(new FakeFeed(items.slice(0, 2)), theme, { backlog: 2 }).render(80)), ['❯ m0', '', '❯ m1'],
+    'no count when the whole history shows');
+  const other = new ChatView(new FakeFeed(items), theme, { backlog: 2 });
+  assert.deepEqual(plain(other.render(80)).filter(Boolean)[0], '· 8 earlier items not shown', 'no command unless one is given');
+  assert.deepEqual(plain(other.render(30)).filter(Boolean)[0], '· 8 earlier items');
+});
+
+test("the TUI's chat points at /mem for the history it leaves out", async () => {
+  const items: ChatItem[] = Array.from({ length: 10 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `m${i}` }));
+  const { terminal, done } = await startTui(new FakeSession(items));
+  assert.ok(terminal.screen().includes('· 4 earlier items not shown; /mem browses the whole chat'), terminal.screen().join('\n'));
+  terminal.type('\x04');
+  await done;
 });
 
 test('the footer shows the status on one line, truncated to the width', () => {
@@ -259,20 +287,76 @@ test('slash commands dispatch, and Ctrl+C twice exits', async () => {
   assert.equal(terminal.stopped, true);
 });
 
-test('/effort NAME sets the effort; /effort alone opens the picker, and Enter takes the highlighted level', async () => {
+test('/status says where the tools run when a client routes them to a machine', () => {
+  assert.doesNotMatch(statusText(STATUS), /tools run on/);
+  const lines = statusText({ ...STATUS, machine: { machineId: 'm1', label: 'laptop', cwd: '/home/u/src' } }).split('\n');
+  assert.deepEqual(lines.slice(0, 2), ['model faux/model-1 · thinking high · tools off', 'tools run on laptop in /home/u/src']);
+});
+
+test('a line that starts with a path is sent to Pi, not taken as a command', async () => {
+  assert.equal(isCommand('/status'), true);
+  assert.equal(isCommand('/model claude-cli/opus'), true);
+  assert.equal(isCommand('/'), true);
+  assert.equal(isCommand('/etc/hosts is empty, why?'), false);
+  assert.equal(isCommand('/tmp/x.log'), false);
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/etc/hosts is empty, why?', '\r');
+  await delay(30);
+  assert.deepEqual(session.sent, ['/etc/hosts is empty, why?']);
+  assert.doesNotMatch(terminal.text(), /Unknown command/);
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('a message that was not sent says so, and ↑ brings it back to the editor', async () => {
+  const session = new FakeSession();
+  session.send = () => Promise.reject(new Error('the link is down'));
+  const { terminal, done } = await startTui(session);
+  terminal.type('my long message', '\r');
+  await delay(30);
+  assert.match(terminal.text(), /Not sent: the link is down \(↑ brings the message back\)/);
+  terminal.type('\x1b[A', '\r');
+  await delay(30);
+  assert.equal((terminal.text().match(/Not sent: the link is down/g) ?? []).length, 2, '↑ then Enter resends it');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('the first Ctrl+C says in the footer that a second one quits, until the second would no longer count', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session, undefined, new FakeTerminal(40, 15));
+  const footer = (): string => terminal.screen().find(row => row.includes('tools off')) ?? '';
+  assert.doesNotMatch(footer(), /ctrl\+c again/);
+  terminal.type('draft', '\x03');
+  await delay(30);
+  assert.match(footer(), /ctrl\+c again to quit/, 'kept on a phone-width footer');
+  await delay(1100);
+  assert.doesNotMatch(footer(), /ctrl\+c again/);
+  assert.equal(terminal.stopped, false);
+  terminal.type('\x03', '\x03');
+  await done;
+  assert.ok(footerText({ ...STATUS, hint: 'ctrl+c again to detach' }, theme, 0, 20).includes('ctrl+c again to detach'));
+});
+
+test('/effort NAME sets the effort; /effort alone opens the picker on the current level, and Enter takes the highlighted one', async () => {
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
   // Polls, so a loaded machine only makes the test slower.
   const until = async (check: () => boolean, what: string) => {
     for (const end = Date.now() + 5_000; !check(); await delay(20)) if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
   };
-  terminal.type('/effort low', '\r');
+  terminal.type('/effort LOW', '\r');
   await until(() => /Effort: low \(from the next request; saved as default\)/.test(terminal.text()), 'the notice');
-  assert.equal(session.status().thinkingLevel, 'low');
+  assert.equal(session.status().thinkingLevel, 'low', 'any case');
   terminal.type('/effort', '\r');
   await until(() => /✓ low/.test(terminal.text()) && /balanced/.test(terminal.text()), 'the picker');
   terminal.type('\x1b[B', '\r'); // down to medium, then Enter
   await until(() => session.status().thinkingLevel === 'medium', 'medium');
+  terminal.type('/effort', '\r');
+  await until(() => /✓ medium/.test(terminal.text()), 'the picker again');
+  terminal.type('\x1b[B', '\r'); // from medium, the current level, down to high
+  await until(() => session.status().thinkingLevel === 'high', 'high');
   terminal.type('/exit', '\r');
   await done;
 });
@@ -356,6 +440,12 @@ test('on a phone the chat is compact, and no line is wider than the screen', () 
     assert.ok(lines.includes(narrow ? '∴ first thought +1 ^t' : '∴ first thought (+1 lines, ctrl+t)'));
     assert.equal(lines.find(line => line.includes('Heading'))?.startsWith(narrow ? 'Heading' : '  Heading'), true, 'Markdown padding');
   }
+  const long = new ChatView(new FakeFeed([
+    { kind: 'thinking', id: 'th', text: `${'a long thought '.repeat(8)}\nmore`, streaming: false },
+    { kind: 'tool', id: 't', name: 'bash', args: '{"command":"ls"}', output: 'with words '.repeat(8), status: 'done' },
+  ]), theme).render(40).map(line => stripTerminalSequences(line));
+  assert.deepEqual(long.filter(line => line.includes('…') || line.includes('...')).map(line => line.endsWith('… +1 ^t') || line.endsWith('…')),
+    [true, true], `cut lines end in one ellipsis character, as the footer's and the panels' do:\n${long.join('\n')}`);
 });
 
 const BUSY: FooterStatus = {
@@ -372,7 +462,15 @@ test('the footer fills by priority and never drops the tools state', () => {
     }
   }
   assert.equal(at(BUSY, 40), 'tools off · ⠋ busy · 2 queued · 2/3 ag');
-  assert.equal(at(BUSY, 56), 'tools off · ⠋ busy · 2 queued · 2/3 ag', 'the long model id does not fit');
+  assert.equal(at(BUSY, 56), 'claude-sonnet-… · tools off · ⠋ busy · 2 queued · 2/3 ag', 'the long model id is cut to the room left');
+  assert.equal(at(BUSY, 52), 'tools off · ⠋ busy · 2 queued · 2/3 ag', 'and dropped when that is too little');
+  const hermes = { ...STATUS, model: 'openrouter/nousresearch/hermes-3-llama-3.1-405b-instruct-extended' };
+  assert.equal(at(hermes, 70), 'nousresearch/hermes-3-llama-3.1-405b-instruct-extended · tools off',
+    'a model too long with its provider shows its id');
+  assert.equal(at(hermes, 60), 'nousresearch/hermes-3-llama-3.1-405b-instruct-e… · tools off');
+  const command = 'bash cd /home/sample/projects/app && npm run build -- --watch=false --verbose';
+  assert.equal(at({ ...BUSY, step: command }, 80), 'tools off · ⠋ working · bash cd /home/sample/projects/app && npm run build -- -…',
+    'a long step is cut to the room left, not dropped');
   assert.equal(at({ ...BUSY, model: 'claude-cli/haiku' }, 56), 'haiku · tools off · ⠋ busy · 2 queued · 2/3 ag');
   assert.equal(at(STATUS, 40), 'model-1 · tools off · 1 failed');
   assert.equal(at(STATUS, 56), 'model-1 · think high · tools off · mem 37KB · 1 failed');
@@ -382,6 +480,26 @@ test('the footer fills by priority and never drops the tools state', () => {
     + ' · mem 142 msgs · 37 KB view · 3 summarizing · 1 failed · 2/3 agents busy');
   assert.equal(at(BUSY, 12), 'tools off');
   assert.equal(at({ ...BUSY, toolsEnabled: true }, 5), 'tool…', 'cut, never dropped');
+  // Two segments that are never dropped: the separator between them counts, so a third does not push tools off.
+  const reconnecting = { ...STATUS, reconnecting: true };
+  for (let width = 26; width <= 40; width++) assert.match(at(reconnecting, width), /reconnecting… · .*tools off/, `${width}`);
+});
+
+test('the footer marks a chat scrolled up from its end, until it is back at the end', async () => {
+  const items: ChatItem[] = Array.from({ length: 30 }, (_, i) => ({ kind: 'user', id: `u${i}`, text: `m${i}` }));
+  for (const [columns, mark] of [[80, '↓ more below (pgdn)'], [40, '↓ pgdn']] as const) {
+    const { terminal, done } = await startTui(new FakeSession(items), undefined, new FakeTerminal(columns, 12), { backlog: 30 });
+    const footer = (): string => terminal.screen().find(row => row.includes('tools off')) ?? assert.fail(terminal.screen().join('\n'));
+    assert.ok(!footer().includes(mark), footer());
+    terminal.type('\x1b[5~');
+    await delay(30);
+    assert.ok(footer().includes(mark), footer());
+    terminal.type('\x1b[6~', '\x1b[6~', '\x1b[6~');
+    await delay(30);
+    assert.ok(!footer().includes(mark), footer());
+    terminal.type('\x04');
+    await done;
+  }
 });
 
 test('the spinner slows down over SSH and on a narrow screen', () => {
@@ -436,6 +554,18 @@ test('/stop interrupts Pi, as Esc does', async () => {
   await delay(10);
   assert.equal(session.aborts, 1);
   assert.deepEqual(session.sent, [], '/stop is not sent to Pi');
+  assert.match(terminal.text(), /Nothing to stop: Pi is idle\./);
+  session.update({ agents: [{ name: 'Scout', role: 'main', parent: 'Pi', busy: true }] });
+  terminal.type('/stop', '\r');
+  await delay(10);
+  assert.match(terminal.text(), /Pi is idle; 1 agent is working: \/stop all stops them\./);
+  session.update({ busy: true });
+  const mark = terminal.output.length;
+  terminal.type('/stop', '\r');
+  terminal.type('\x1b');
+  await delay(80);
+  assert.equal(session.aborts, 4);
+  assert.doesNotMatch(stripTerminalSequences(terminal.output.slice(mark)), /Pi is idle|Nothing to stop/, 'silent while Pi works');
   terminal.type('/exit', '\r');
   await done;
 });
@@ -455,6 +585,11 @@ test('/stop all stops Pi and every agent; /stop Name stops one agent', async () 
   assert.match(terminal.text(), /Stopped Ada\./);
   assert.match(terminal.text(), /Stopped Bob\./);
   assert.match(terminal.text(), /No agent named ghost\./);
+  assert.doesNotMatch(terminal.text(), /Agents:/, 'no list when there are no agents');
+  session.update({ agents: [{ name: 'Ada', role: 'main', parent: 'Pi', busy: false }, { name: 'Bob', role: 'sub', parent: 'Ada', busy: true }] });
+  terminal.type('/stop ghost', '\r');
+  await delay(10);
+  assert.match(terminal.text(), /No agent named ghost\. Agents: Ada, Bob\./);
   assert.deepEqual(session.sent, []);
   terminal.type('/exit', '\r');
   await done;

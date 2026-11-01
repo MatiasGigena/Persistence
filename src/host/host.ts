@@ -6,12 +6,12 @@ import type { AttachedReplicatedState } from '@earendil-works/chord';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { cleanupSessionResources } from '@earendil-works/pi-ai';
 import type { Message, Models } from '@earendil-works/pi-ai';
-import type { ConversationView } from '@earendil-works/pi-durable';
+import type { ConversationView, EntryRecord } from '@earendil-works/pi-durable';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
 import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
-import { resumeInstance, settleAgents } from '../runtime/recovery.ts';
+import { isWork, resumeInstance, settleAgents } from '../runtime/recovery.ts';
 import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts';
 import { listAgents, REPORT_KIND } from '../agents/index.ts';
 import { claudeCliProvider } from '../providers/claude-cli.ts';
@@ -19,7 +19,7 @@ import { backupOffline } from '../server/backup.ts';
 import { formatBytes } from '../server/admin.ts';
 import { serve } from '../server/serve.ts';
 import { createUiSession } from '../ui/session.ts';
-import { runTui } from '../ui/tui/app.ts';
+import { isCommand, runTui } from '../ui/tui/app.ts';
 import { errorMessage, isRecord, parseConfig } from './config.ts';
 import type { ModelSource } from './config.ts';
 
@@ -30,6 +30,8 @@ let instance: Instance | undefined;
 let reader: Interface | undefined;
 let watcher: AttachedReplicatedState<ConversationView> | undefined;
 let stopping = false;
+// A send in progress: its reply prints mid-wait, and the chat loop prompts once the send returns.
+let sending = false;
 let closing: Promise<void> | undefined;
 const shutdown = new AbortController();
 const close = (): Promise<void> | undefined => closing ??= instance?.close();
@@ -52,14 +54,21 @@ const textContent = (content: Message['content'] | undefined): string => typeof 
   : (content ?? []).flatMap(block => block.type === 'text' ? [block.text] : []).join('');
 const field = (value: unknown, key: string): unknown => isRecord(value) ? value[key] : undefined;
 
+/** An agent's report as its name and text: what the terminal UI shows, without the note to Pi its model text ends with. */
+function reportOf({ kind, data }: EntryRecord): { name: string; text: string } | undefined {
+  const name = field(data, 'name'), text = field(data, 'text');
+  return kind === REPORT_KIND && typeof name === 'string' && typeof text === 'string' ? { name, text } : undefined;
+}
+
 async function printHistory(limit?: number): Promise<void> {
   const { root, context } = opened();
   const entries = await transcript(root, context);
   const messages = entries.flatMap(entry => (entry.model ?? []).map(message => ({ entry, message })))
     .filter(({ message }) => ['user', 'assistant'].includes(message.role) && textContent(message.content));
   for (const { entry, message } of limit ? messages.slice(-limit) : messages) {
-    const who = entry.kind === REPORT_KIND ? 'Agent' : message.role === 'user' ? 'You' : 'Pi';
-    console.log(`${who}: ${textContent(message.content)}\n`);
+    const report = reportOf(entry);
+    if (report) console.log(`${report.name}: ${report.text}\n`);
+    else console.log(`${message.role === 'user' ? 'You' : 'Pi'}: ${textContent(message.content)}\n`);
   }
   if (!messages.length) console.log('No messages saved yet.');
 }
@@ -78,7 +87,11 @@ async function resumePending(): Promise<void> {
   const current = opened();
   const inspection = await current.harness.inspect(current.context);
   if (!inspection.tasks.length && !inspection.submissions.length) return;
-  console.error(`Resuming ${inspection.tasks.length} pending task(s)…`);
+  // A new chat's standing agents have an anchor task each: not work to report.
+  const tasks = inspection.tasks.filter(isWork).length;
+  const queued = inspection.submissions.length;
+  const work = [tasks && `${tasks} pending task(s)`, queued && `${queued} queued message(s)`].filter(Boolean);
+  if (work.length) console.error(`Resuming ${work.join(' and ')}…`);
   await resumeInstance(current);
 }
 
@@ -99,10 +112,12 @@ async function watchReplies(): Promise<AttachedReplicatedState<ConversationView>
     for (const entry of value.entries) {
       if (seen.has(entry.id)) continue;
       seen.add(entry.id);
-      const text = (entry.model ?? []).map(message => textContent(message.content)).join('');
-      if (!text || !['pi.assistant', REPORT_KIND].includes(entry.kind)) continue;
-      process.stdout.write(`\r\x1b[K${entry.kind === REPORT_KIND ? text : `pi> ${text}`}\n\n`);
-      reader?.prompt(true);
+      const report = reportOf(entry);
+      const reply = entry.kind === 'pi.assistant' ? (entry.model ?? []).map(message => textContent(message.content)).join('') : '';
+      const line = report ? `[${report.name}] ${report.text}` : reply && `pi> ${reply}`;
+      if (!line) continue;
+      process.stdout.write(`\r\x1b[K${line}\n\n`);
+      if (!sending) reader?.prompt(true);
     }
   };
   view.subscribe(show);
@@ -132,6 +147,17 @@ async function chatTui(): Promise<void> {
     console.warn = warn;
     await session.close();
   }
+}
+
+/** The terminal UI's commands that line-by-line chat lacks, with what to do instead. */
+const TUI_ONLY: Readonly<Record<string, string>> = { model: 'relaunch with --model PROVIDER/ID',
+  effort: 'relaunch with --thinking LEVEL', thinking: 'relaunch with --thinking LEVEL', tools: 'relaunch with or without --no-tools',
+  mem: 'run --status for the memory counters', stop: 'Ctrl+C closes the host; unfinished work resumes next launch' };
+
+/** What line-by-line chat answers to a slash command it does not run. */
+function unknownCommand(line: string): string {
+  const word = line.split(/\s/, 1)[0] ?? line, instead = TUI_ONLY[word.slice(1)];
+  return instead ? `${word} is in the terminal UI only; here, ${instead}.` : `Unknown command ${word}. Use /help.`;
 }
 
 const SOURCE: Readonly<Record<ModelSource, string>> = { flag: '--model', env: 'PI_DURABLE_MODEL',
@@ -203,7 +229,9 @@ async function main(): Promise<void> {
   console.log(`Tools: ${config.allowTools ? 'ENABLED — your user permissions, minus the protected folders (chat state, credentials hidden; system read-only)' : 'OFF (--no-tools was given; relaunch without it to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
   await printHistory(6);
   watcher = await watchReplies();
-  reader = createInterface({ input: process.stdin, output: process.stdout });
+  reader = createInterface({ input: process.stdin, output: process.stdout, prompt: 'you> ' });
+  // The iterator buffers lines typed or pasted while a command or a send runs; question() would drop them.
+  const lines = reader[Symbol.asyncIterator]();
   reader.on('SIGINT', () => stop('SIGINT'));
   reader.once('close', () => {
     if (!stopping) {
@@ -213,20 +241,23 @@ async function main(): Promise<void> {
     }
   });
   while (!stopping) {
-    let line: string;
-    // The reader's close listener sets `stopping`, so a question rejected by close ends the loop.
-    try { line = (await reader.question('you> ', { signal: shutdown.signal })).trim(); }
-    catch (error) { if (stopping) break; throw error; }
+    reader.prompt();
+    // Closing the reader (Ctrl+D, a signal, shutdown) ends the iterator.
+    const next = await lines.next();
+    if (next.done || stopping) break;
+    const line = next.value.trim();
     if (!line) continue;
     if (line === '/exit' || line === '/quit') break;
     if (line === '/help') console.log('/history — saved messages\n/agents — spawned agents and whether they are busy\n/status — storage, memory and pending work\n/exit — close without discarding unfinished work\nAgents work in the background; their reports and Pi\'s replies print as they arrive.\nHere, tools and the model change only by relaunching (--no-tools, --model); the terminal UI has /tools and /model.');
     else if (line === '/history') await printHistory();
     else if (line === '/agents') await printAgents();
     else if (line === '/status') await printStatus();
-    else if (line.startsWith('/')) console.error('Unknown command. Use /help.');
+    else if (isCommand(line)) console.error(unknownCommand(line));
     else {
+      sending = true;
       try { await send(line, undefined, { print: false }); }
       catch (error) { if (!stopping) console.error(`pi-durable: ${errorMessage(error)}`); }
+      finally { sending = false; }
     }
   }
 }

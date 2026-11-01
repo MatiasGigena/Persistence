@@ -42,6 +42,20 @@ export function turnEnds(items: readonly ViewItem[]): Set<string> {
   return ends;
 }
 
+/**
+ * The warnings and errors among `items` to read out to a screen reader: each notice not in `seen`, as "Error: …" or
+ * "Warning: …". Every notice's id goes into `seen`, so each is read once and info notices never.
+ */
+export function freshAlerts(items: readonly ViewItem[], seen: Set<string>): string[] {
+  const alerts: string[] = [];
+  for (const item of items) {
+    if (item.kind !== 'notice' || seen.has(item.id)) continue;
+    seen.add(item.id);
+    if (item.level !== 'info') alerts.push(`${item.level === 'error' ? 'Error' : 'Warning'}: ${item.text}`);
+  }
+  return alerts;
+}
+
 /** A feed's mirror. `waiting`: an op did not fit; `items` messages are ignored until the next snapshot. */
 export interface Mirror {
   readonly items: readonly ChatItem[];

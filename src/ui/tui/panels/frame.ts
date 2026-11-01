@@ -1,11 +1,14 @@
-// The overlay panels' shared parts: a bordered, near-full-screen frame holding a stack of views
-// (a breadcrumb title, an optional header, the top view, a one-line key hint), a selectable list,
-// a scrollable text view, and a one-key confirmation box. Only pi-tui; colors come from the shell
-// through PanelTheme, and NARROW from the theme. Below NARROW columns (a phone) the frame fills the
-// screen, hints are short, and lists show compact rows with the selection's detail above the hint.
+// The overlay panels' shared parts: a bordered, full-screen frame holding a stack of views (a
+// breadcrumb title, an optional header, the top view, a one-line key hint), a selectable list, a
+// scrollable text view, and a one-key confirmation box. Only pi-tui; colors come from the shell
+// through PanelTheme, NARROW from the theme, and `clean` from the chat. Below NARROW columns (a phone)
+// hints are short, and lists show compact rows with the selection's detail above the hint.
 import { decodeKittyPrintable, getKeybindings, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component, Keybinding, TUI } from '@earendil-works/pi-tui';
+import { clean } from '../chat.ts';
 import { NARROW } from '../theme.ts';
+
+export { clean };
 
 /** The colors a panel uses; the shell passes its palette in. Each takes plain text and returns it styled. */
 export interface PanelTheme {
@@ -37,11 +40,6 @@ const ELLIPSIS = '…';
 const DETAIL_LINES = 3;
 /** Whether `data` is `binding`, as the user configured it (Pi's selectors use the same bindings). */
 const is = (data: string, binding: Keybinding): boolean => getKeybindings().matches(data, binding);
-
-/** Text from the host made safe to draw: tabs become spaces, other control characters (and so ANSI) go. */
-export function clean(text: string): string {
-  return text.replace(/\t/g, '  ').replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '');
-}
 
 /** `line` cut or padded to exactly `width` columns. */
 function fit(line: string, width: number): string {
@@ -102,7 +100,7 @@ export class PanelFrame implements Component {
     if (!view || width < 8) return [];
     const { dim, bold } = this.theme;
     const narrow = this.tui.terminal.columns < NARROW;
-    const inner = width - 4, height = Math.max(6, this.tui.terminal.rows - 2 * panelMargin(this.tui.terminal.columns));
+    const inner = width - 4, height = Math.max(6, this.tui.terminal.rows);
     const crumbs = this.stack.map((v, i) => (i === this.stack.length - 1 ? bold(v.title) : dim(v.title))).join(dim(' › '));
     const rule = (left: string, label: string, right: string): string => {
       const text = truncateToWidth(label, width - 6, ELLIPSIS);
@@ -122,15 +120,14 @@ export class PanelFrame implements Component {
   }
 }
 
-/** The panels' distance from the screen's edges: none on a narrow screen. */
-const panelMargin = (columns: number): number => (columns < NARROW ? 0 : 1);
-
-/** Shows `frame` as a near-full-screen overlay; resolves when it closes. Hiding the overlay hands focus back. */
+/**
+ * Shows `frame` as a full-screen overlay; resolves when it closes. Hiding the overlay hands focus back. No margin:
+ * overlays have no backdrop, so the chat would show through it, cut at the panel's border.
+ */
 export function openPanel(tui: TUI, frame: PanelFrame): Promise<void> {
   return new Promise(resolve => {
     // pi-tui remembers the focused component (the editor) when the overlay opens, and hide() refocuses it.
-    const m = panelMargin(tui.terminal.columns);
-    const handle = tui.showOverlay(frame, { anchor: 'center', width: '100%', maxHeight: '100%', margin: { top: m, bottom: m, left: 2 * m, right: 2 * m } });
+    const handle = tui.showOverlay(frame, { anchor: 'center', width: '100%', maxHeight: '100%' });
     frame.onClose = () => { handle.hide(); tui.requestRender(); resolve(); };
   });
 }
@@ -159,6 +156,10 @@ export interface ListOptions {
   readonly verb?: string;
   /** Typing filters at once, as in Pi's selectors: `/` is a plain character, and Esc closes even while filtering. */
   readonly typeToFilter?: boolean;
+  /** The filter the list opens with (with `typeToFilter`). */
+  readonly filter?: string;
+  /** The key of the row selected when the list opens (default: the first row). */
+  readonly selected?: string;
   /** Whether this is the panel's first level, for the hint. */
   readonly root?: boolean;
   /** What a narrow screen shows of the selected row besides its compact form. */
@@ -182,6 +183,8 @@ export class ListView implements PanelView {
     this.options = options;
     this.title = options.title;
     this.atEnd = options.followEnd ?? false;
+    this.filter = options.filter ?? '';
+    this.key = options.selected;
   }
 
   hint(narrow: boolean): string {
@@ -328,7 +331,7 @@ export class TextView implements PanelView {
 
 /** Plain text wrapped to `width`, paragraph by paragraph. */
 export function wrap(text: string, width: number): string[] {
-  return wrapTextWithAnsi(clean(text.replace(/\r\n?/g, '\n')), width);
+  return wrapTextWithAnsi(clean(text), width);
 }
 
 /** A question in a small box. Only `y` says yes; any other key, Esc and Enter included, says no. */

@@ -76,6 +76,16 @@ test('ClientLink.start reports concrete, bounded sanitized SSH stderr (auth, hos
     const link = new ClientLink({ connect: sshConnector({ host: 'vps' }, fake), client: 'test' });
     await assert.rejects(link.start(), error => error instanceof Error && error.message.includes(message) && !error.message.includes('\x1b'));
   }
+  // Each common failure says how to fix it: the connector never prompts and never accepts a host key itself.
+  for (const [message, code, fix] of [
+    ['Permission denied (publickey).', 255, /without prompts.*key-based login for me@vps/],
+    ['No ED25519 host key is known for vps and you have requested strict checking.\r\nHost key verification failed.', 255, /Run ssh me@vps once/],
+    ['bash: line 1: pi-durable: command not found', 127, /not on the remote PATH.*--remote-bin/],
+  ] as const) {
+    const fake = fixture(`process.stderr.write(${JSON.stringify(message)}); process.exitCode = ${code};`);
+    const link = new ClientLink({ connect: sshConnector({ host: 'me@vps' }, fake), client: 'test' });
+    await assert.rejects(link.start(), error => error instanceof Error && fix.test(error.message));
+  }
   const fake = fixture("process.stderr.write('failure '.repeat(5000)); process.exitCode = 1;");
   const target = sink();
   await sshConnector({ host: 'vps' }, fake)(target.events);

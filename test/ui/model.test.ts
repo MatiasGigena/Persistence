@@ -126,9 +126,9 @@ function harness(columns = 100, rows = 20) {
   const panel = (): Component => { const p = overlays.at(-1); assert.ok(p, 'the picker is open'); return p; };
   return {
     tui, editor, terminal,
-    // Below 60 columns a panel has no margins.
-    raw: (): string[] => panel().render(columns < 60 ? columns : columns - 4),
-    screen: (): string => panel().render(columns < 60 ? columns : columns - 4).map(stripTerminalSequences).join('\n'),
+    // A panel fills the screen.
+    raw: (): string[] => panel().render(columns),
+    screen: (): string => panel().render(columns).map(stripTerminalSequences).join('\n'),
   };
 }
 
@@ -142,8 +142,7 @@ describe('model picker', () => {
       const session = new FakeSession(), h = harness(columns, rows);
       const closed = openModelPanel(h.tui, session, theme);
       await tick();
-      const width = columns < 60 ? columns : columns - 4;
-      for (const line of h.raw()) assert.equal(visibleWidth(line), width, line);
+      for (const line of h.raw()) assert.equal(visibleWidth(line), columns, line);
       const screen = h.screen().split('\n');
       if (columns < 60) {
         assert.ok(screen.some(line => /^│ → ✓ faux\/a +│$/.test(line)), screen.join('\n'));
@@ -181,12 +180,23 @@ describe('model picker', () => {
     assert.match(screen, /type to filter · ↑↓ move · enter select · esc close/);
   });
 
+  test('one long provider/id does not push the other rows\' names and notes off', async () => {
+    const session = new FakeSession(), h = harness(100);
+    const long: ModelChoice = { provider: 'openrouter', id: 'nousresearch/hermes-3-llama-3.1-405b-instruct-extended', name: 'Hermes 3', available: true };
+    session.list = Promise.resolve([...MODELS, long]);
+    void openModelPanel(h.tui, session, theme);
+    await tick();
+    const rows = modelLines(h.screen());
+    assert.match(rows.find(row => row.includes('cloud/big')) ?? '', /cloud\/big {2,}Cloud Big · needs CLOUD_API_KEY +│$/, rows.join('\n'));
+    assert.match(rows.find(row => row.includes('openrouter/')) ?? '', /instruct-extended {2}Hermes 3 +│$/, 'the long one is not padded');
+  });
+
   test('typing filters at once, slashes included; backspace widens it again', async () => {
     const session = new FakeSession(), h = harness();
     void openModelPanel(h.tui, session, theme);
     await tick();
     h.terminal.type('faux/b');
-    assert.deepEqual(modelLines(h.screen()).map(line => line.trimEnd()), ['│ →   faux/b     Faux B                                                                        │']);
+    assert.deepEqual(modelLines(h.screen()).map(line => line.replace(/ +│$/, ' │')), ['│ →   faux/b     Faux B │']);
     assert.match(h.screen(), /filter faux\/b▏/);
     h.terminal.type('zzz');
     assert.match(h.screen(), /No matches\./);
@@ -286,10 +296,26 @@ describe('/model and /tools in the chat', () => {
     assert.match(terminal.text(), /Model not changed: No credentials for cloud\./);
     assert.ok(terminal.output.includes(appTheme.error('Model not changed: No credentials for cloud.')), 'the notice is red');
 
+    terminal.type('/exit', KEY.enter);
+    await done;
+  });
+
+  test('/model WORD opens the picker filtered by it, and Enter takes the match', async () => {
+    const session = new FakeSession();
+    const { terminal, done } = await startTui(session);
+    terminal.type('/model Faux B', KEY.enter);
+    await delay(30);
+    assert.match(terminal.text(), /filter Faux B▏/);
+    assert.doesNotMatch(terminal.text(), /Usage: \/model/);
+    terminal.type(KEY.enter);
+    await delay(30);
+    assert.deepEqual(session.modelCalls, ['faux/b']);
     terminal.type('/model nope', KEY.enter);
     await delay(30);
-    assert.match(terminal.text(), /Usage: \/model provider\/id/);
-    assert.equal(session.modelCalls.length, 2);
+    assert.match(terminal.text(), /No matches\./);
+    terminal.type(KEY.esc);
+    await delay(80);
+    assert.deepEqual(session.modelCalls, ['faux/b']);
     terminal.type('/exit', KEY.enter);
     await done;
   });
@@ -322,7 +348,7 @@ describe('/model and /tools in the chat', () => {
     assert.ok(terminal.output.includes(appTheme.warning('tools on')), 'the footer warns');
 
     const mark = terminal.output.length;
-    terminal.type('/tools off', KEY.enter);
+    terminal.type('/tools Off', KEY.enter);
     await delay(30);
     assert.deepEqual(session.toolCalls, [true, false]);
     assert.match(since(terminal, mark), /Coding tools off/);

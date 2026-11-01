@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
-import { connect } from 'node:net';
+import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -23,6 +23,15 @@ async function until(done: () => boolean, what: () => string, ms = 15_000): Prom
     if (Date.now() - start > ms) throw new Error(`timed out: ${what()}`);
     await new Promise(resolve => setTimeout(resolve, 20));
   }
+}
+
+/** A loopback port nothing listens on just now. */
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  await new Promise(resolve => server.close(resolve));
+  return typeof address === 'object' && address ? address.port : assert.fail('no port');
 }
 
 test('serve end to end: a socket client sends, watches the reply stream in, and gets bye 1012 on SIGTERM', { timeout: 60_000 }, async t => {
@@ -78,6 +87,9 @@ test('serve end to end: a socket client sends, watches the reply stream in, and 
   const env = { ...process.env, PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
   const { stdout } = await exec(process.execPath, [resolve('src/cli.ts'), 'backup', '--database', join(folder, 'chat.sqlite'), '--out', backups], { env });
   assert.match(stdout, /Backup written by the server: .*backups\/\d{4}-\d{2}-\d{2}T/);
+  // With the web app off, a pairing code would have nowhere to go: the server says why instead.
+  await assert.rejects(exec(process.execPath, [resolve('src/cli.ts'), 'serve', 'pair', '--database', join(folder, 'chat.sqlite')], { env }),
+    { code: 1, stderr: /The web app is off: set PI_DURABLE_ORIGIN and PI_DURABLE_ALLOW_LOGIN/ });
   const [dir] = await readdir(backups);
   assert.deepEqual((await readdir(join(backups, dir ?? ''))).sort(), ['chat.sqlite', 'chat.unii'], 'no settings.json yet');
 
@@ -93,8 +105,10 @@ test('the launcher runs serve under the flock, serves the admin commands, and st
   const folder = await mkdtemp(join(tmpdir(), 'pd-launch-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   const launcher = resolve('bin/pi-durable');
+  // The web listener is on (loopback, on a free port), so `serve pair` has somewhere to send a device.
+  const port = await freePort();
   const env = { ...process.env, PI_DURABLE_DATA_DIR: join(folder, 'state'), OPENAI_API_KEY: 'offline-placeholder-not-a-real-key',
-    PI_DURABLE_ORIGIN: '', PI_DURABLE_ALLOW_LOGIN: '',
+    PI_DURABLE_ORIGIN: `http://127.0.0.1:${port}`, PI_DURABLE_ALLOW_LOGIN: 'me@example.com', PI_DURABLE_PORT: String(port),
     PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
   const base = ['--model', 'openai/gpt-4o-mini', '--auth-file', join(folder, 'auth.json'), '--cwd', folder];
   await assert.rejects(exec(launcher, ['serve', 'pair'], { env }), { code: 1, stderr: /No server is running for this chat/ });
@@ -109,9 +123,10 @@ test('the launcher runs serve under the flock, serves the admin commands, and st
   await assert.rejects(exec(launcher, ['serve', ...base], { env }), { code: 75, stderr: /A server runs this chat|already open/ });
   const { stdout: pair } = await exec(launcher, ['serve', 'pair'], { env });
   assert.match(pair, /^Pairing code: [0-9A-Z]{4}-[0-9A-Z]{4}$/m);
+  assert.match(pair, new RegExp(`^Enter it in the web app at http://127\\.0\\.0\\.1:${port} with a name`, 'm'), 'it says where to enter the code');
   const { stdout: devices } = await exec(launcher, ['serve', 'devices'], { env });
   assert.match(devices, /No paired devices/);
-  await assert.rejects(exec(launcher, ['serve', 'devices', '--revoke', 'tablet'], { env }), { code: 1, stderr: /No device named tablet/ });
+  await assert.rejects(exec(launcher, ['serve', 'devices', '--revoke', 'tablet'], { env }), { code: 1, stderr: /No device named tablet\. No device is paired\./ });
   const { stdout: backedUp } = await exec(launcher, ['backup'], { env });
   assert.match(backedUp, /Backup written by the server: .*state\/backups\//);
 

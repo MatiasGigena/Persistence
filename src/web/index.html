@@ -97,7 +97,7 @@ SOFTWARE.
   <form id="pair-form" class="card pair" autocomplete="off">
     <div class="lamp lamp-small" aria-hidden="true"></div>
     <h1 id="pair-title" class="screen-title">Pair this device</h1>
-    <p class="screen-text">On the server, run <code>pi-durable serve pair</code> and enter the code it prints. A code works once, for 10 minutes.</p>
+    <p class="screen-text">On the server, run <code>pi-durable serve pair</code> and enter the code it prints. A code works once, for 5 minutes.</p>
     <label class="field">
       <span class="field-label">Pairing code</span>
       <input id="pair-code" class="input input-code" name="code" required inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="XXXX-XXXX" maxlength="9" pattern="[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}">
@@ -179,7 +179,7 @@ SOFTWARE.
     <div class="sheet-head">
       <div class="sheet-heading">
         <nav id="sheet-crumbs" class="crumbs" aria-label="Back to" hidden></nav>
-        <h2 id="sheet-title" class="sheet-title"></h2>
+        <h2 id="sheet-title" class="sheet-title" tabindex="-1"></h2>
       </div>
       <button id="sheet-close" class="icon-button" type="button" aria-label="Close">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>

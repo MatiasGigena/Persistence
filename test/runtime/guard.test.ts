@@ -109,6 +109,17 @@ test('bwrapBinary(): PI_DURABLE_BWRAP, else ~/.local/bin/bwrap when present, els
   assert.equal(bwrapBinary({ PI_DURABLE_BWRAP: '/x/bwrap' }, home), '/x/bwrap');
 });
 
+test('a bubblewrap that may not create namespaces is named as such, with where the fix is', async t => {
+  const { work } = await world(t);
+  // Ubuntu 24.04's AppArmor default refuses bwrap a user namespace with these words.
+  const bwrap = join(work, 'bwrap-denied');
+  await writeFile(bwrap, '#!/bin/sh\necho "bwrap: setting up uid map: Permission denied" >&2\nexit 1\n', { mode: 0o755 });
+  const result = await new GuardedEnv({ cwd: work, protection: { hidden: [], readOnly: [] }, bwrap }).exec('echo hi', undefined, context);
+  assert.equal(String(!result.ok && result.error.message), 'bash is off: bubblewrap cannot run here: bwrap: setting up uid map: Permission denied. '
+    + 'Unprivileged user namespaces are likely off (on Ubuntu 24.04, AppArmor\'s kernel.apparmor_restrict_unprivileged_userns); '
+    + 'allow them for bwrap: see Troubleshooting in docs/operations.md.');
+});
+
 test('without a working bubblewrap, bash refuses and says how to fix it', async t => {
   const { work } = await world(t);
   const env = new GuardedEnv({ cwd: work, protection: { hidden: [], readOnly: [] }, bwrap: join(work, 'no-bwrap') });

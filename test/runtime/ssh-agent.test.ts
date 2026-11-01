@@ -47,9 +47,23 @@ test('startSshAgent(): holds the keys it could add, warns about one with a passp
   assert.match(listed, /plain/);
   assert.doesNotMatch(listed, /locked/);
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0] ?? '', new RegExp(`${locked} is not in Pi's SSH agent .*passphrase`));
+  assert.equal(warnings[0], `PI_DURABLE_SSH_KEYS: ${locked} is not in Pi's SSH agent: it has a passphrase, which nothing can ask for here. Use a key without one.`);
   await agent.close();
   assert.equal(existsSync(agent.socket), false);
+});
+
+test('startSshAgent(): names why a key could not be added, a missing file or a file that is no key', { skip: !hasAgent && 'ssh-agent is not installed' }, async t => {
+  const { dir, plain } = await keys(t);
+  const missing = join(dir, 'id_typo'), notKey = `${plain}.pub.txt`;
+  execFileSync('cp', ['/dev/null', notKey]);
+  const warnings: string[] = [];
+  const agent = await startSshAgent([missing, notKey, plain], message => warnings.push(message), env);
+  assert.ok(agent);
+  t.after(() => agent.close());
+  assert.equal(warnings[0], `PI_DURABLE_SSH_KEYS: ${missing} is not in Pi's SSH agent: there is no such file.`);
+  assert.match(warnings[1] ?? '', new RegExp(`^PI_DURABLE_SSH_KEYS: ${notKey} is not in Pi's SSH agent \\(.+\\)\\.$`));
+  assert.doesNotMatch(warnings.join('\n'), /passphrase/, 'only a key with a passphrase is said to have one');
+  assert.equal(warnings.length, 2);
 });
 
 test('startSshAgent(): without ssh-agent, warns and returns undefined', async () => {

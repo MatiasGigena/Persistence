@@ -4,6 +4,7 @@
 // server run only, and turning them on asks first.
 import { el } from '../chat-view.ts';
 import { errorText, memoryHeader, modelRef, sortModels } from '../format.ts';
+import { RequestError } from '../link.ts';
 import { disablePush, enablePush, pushState } from '../push.ts';
 import type { PushState } from '../push.ts';
 import type { Link } from '../link.ts';
@@ -25,7 +26,8 @@ export const EFFORT_HINTS: Readonly<Record<string, string>> = {
 const PUSH_TEXT: Readonly<Record<PushState, string>> = {
   unsupported: 'This browser cannot show notifications from the server.',
   install: 'On iPhone and iPad, add the app to the Home Screen (Share, Add to Home Screen) and open it from there.',
-  'no-key': 'The server has notifications off. They need PI_DURABLE_ORIGIN.',
+  // The web app runs only with PI_DURABLE_ORIGIN set: no key means push failed to start, and the log says why.
+  'no-key': 'Push could not start on the server. Its log says why (journalctl --user -u pi-durable).',
   denied: 'Blocked for this site. Allow them in the browser settings.',
   off: 'Get one when Pi answers or an agent reports while the app is closed.',
   on: 'On when Pi answers or an agent reports while no app is open.',
@@ -245,6 +247,9 @@ export function chatSettingsView(ctx: PanelContext): View {
         effort.select.disabled = on;
       };
       let shownModel = '';
+      /** A list was asked for while the link was down: asked again once it is back. */
+      let retry = false;
+      const lost = (error: unknown): void => { if (error instanceof RequestError && error.code === 'lost') retry = true; };
       const loadModels = (): void => {
         const current = ctx.store.status?.model ?? '';
         shownModel = current;
@@ -254,6 +259,7 @@ export function chatSettingsView(ctx: PanelContext): View {
           models => model.fill(modelChoices(models, current), ctx.store.status?.model ?? current),
           (error: unknown) => {
             if (!model.ready) { choose(model.select, current); model.reveal(); }
+            lost(error);
             say(`Could not list models: ${errorText(error)}`, true);
           },
         );
@@ -272,6 +278,7 @@ export function chatSettingsView(ctx: PanelContext): View {
           },
           (error: unknown) => {
             if (!effort.ready) { choose(effort.select, current, levelText(current)); effort.reveal(); }
+            lost(error);
             say(`Could not list levels: ${errorText(error)}`, true);
           },
         );
@@ -317,6 +324,8 @@ export function chatSettingsView(ctx: PanelContext): View {
 
       // ---------------------------------------------------------- coding tools
       let toolsBusy = false;
+      /** Why the last switch failed: kept in the note (the chat's notice is behind the sheet) until the next tap. */
+      let toolsError = '';
       const drawTools = (): void => {
         const on = ctx.store.status?.toolsEnabled ?? false;
         const policy = ctx.store.welcome?.tools;
@@ -327,11 +336,14 @@ export function chatSettingsView(ctx: PanelContext): View {
         tools.note.textContent = on
           ? `Read, write, edit and bash on the server; the chat's files and credentials stay hidden.${policy?.idleMinutes === undefined ? '' : ` Off after ${policy.idleMinutes} idle minutes.`}`
           : remoteOff ? 'The server keeps them off for the web. Use the terminal: /tools on.' : 'Off: Pi and its agents can only talk.';
+        if (toolsError) tools.note.textContent = toolsError;
       };
       tools.toggle.addEventListener('click', () => {
         toolsBusy = true;
+        toolsError = '';
         drawTools();
-        void setTools(ctx, !(ctx.store.status?.toolsEnabled ?? false)).finally(() => { toolsBusy = false; drawTools(); });
+        void setTools(ctx, !(ctx.store.status?.toolsEnabled ?? false)).then(why => { toolsError = why; })
+          .finally(() => { toolsBusy = false; drawTools(); });
       });
 
       // ---------------------------------------------------------- notifications
@@ -370,6 +382,7 @@ export function chatSettingsView(ctx: PanelContext): View {
       let last = '';
       const draw = (): void => {
         if (pending) return;
+        if (retry && ctx.link.state === 'ready') { retry = false; say(''); loadModels(); loadLevels(); }
         const status = ctx.store.status;
         const now = JSON.stringify([status?.model, status?.thinkingLevel, status?.busy, status?.toolsEnabled, status?.agents, status?.memory]);
         if (now === last) return;

@@ -180,7 +180,9 @@ export class MachineExecutor {
     if (existing) return existing.fingerprint === digest ? existing.promise
       : Promise.resolve(failure('PAYLOAD_MISMATCH', 'Execution id was reused with a changed payload.'));
     if (this.closed) return Promise.resolve(failure('CLOSED', 'Machine executor is closed.'));
-    if (!this.enabled) return Promise.resolve(failure('TOOLS_DISABLED', 'Machine tools are off for this process.'));
+    if (!this.enabled) {
+      return Promise.resolve(failure('TOOLS_DISABLED', `Machine tools are off on ${this.target.label}. Only the user there can turn them on, with /tools on in that terminal.`));
+    }
     const controller = new AbortController();
     const promise = this.run(call, digest, controller.signal).finally(() => { this.live.delete(call.id); });
     this.live.set(call.id, { fingerprint: digest, controller, promise });

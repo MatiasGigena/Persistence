@@ -1,6 +1,7 @@
 // Agents: the live list from the status, and each agent's conversation as a read-only feed (`feed.open`).
 import { ChatView, el } from '../chat-view.ts';
 import { errorText } from '../format.ts';
+import { RequestError } from '../link.ts';
 import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 
@@ -60,12 +61,19 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       const state = el('p', 'sheet-note');
       const stop = el('button', 'btn btn-quiet', `Stop ${name}`);
       stop.type = 'button';
+      /** Why the last stop failed: shown here too, as the chat's notice is behind the sheet; cleared by the next tap. */
+      let stopError = '';
       stop.addEventListener('click', () => {
         stop.disabled = true;
+        stopError = '';
+        draw();
         ctx.link.request('stopAgents', { name }).then(
           ({ names }) => ctx.notice(names.length ? `Stopped ${names.join(', ')}.` : `No agent named ${name}.`),
-          (error: unknown) => ctx.notice(`Stop failed: ${errorText(error)}`, 'error'),
-        ).finally(() => { stop.disabled = false; });
+          (error: unknown) => {
+            stopError = `Stop failed: ${errorText(error)}`;
+            ctx.notice(stopError, 'error');
+          },
+        ).finally(() => { stop.disabled = false; draw(); });
       });
       bar.append(state, stop);
       const scroller = el('div', 'agent-chat');
@@ -79,7 +87,27 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       scroller.append(skeleton, list);
       body.append(bar, scroller);
       view = new ChatView(list, scroller, { empty: 'Nothing here yet.' });
+      /** Set when feed.open failed as the link was down; it is asked again once the link is back. */
+      let retry = false;
+      const follow = (): void => {
+        ctx.link.request('feed.open', { name }).then(
+          ({ feed }) => {
+            if (!open) { void ctx.link.request('feed.close', { feed }).catch(() => undefined); return; }
+            opening = false;
+            ctx.store.openAgent(feed, name);
+            draw();
+          },
+          (error: unknown) => {
+            if (!open) return;
+            opening = false;
+            draw();
+            state.textContent = errorText(error);
+            retry = error instanceof RequestError && error.code === 'lost';
+          },
+        );
+      };
       const draw = (): void => {
+        if (retry && ctx.link.state === 'ready') { retry = false; follow(); }
         const found = ctx.store.agentByName(name);
         if (found) view?.set(found.agent.mirror.items);
         // A conversation kept from before a reconnect shows at once.
@@ -89,24 +117,12 @@ export function agentChatView(ctx: PanelContext, name: string): View {
           fadeIn(list);
         }
         const agent = ctx.store.status?.agents.find(a => a.name === name);
-        state.textContent = found?.agent.ended ?? (found && !found.feed ? 'Reconnecting…' : agent ? (agent.busy ? 'Working' : 'Idle') : '');
+        state.textContent = found?.agent.ended ?? (stopError || (found && !found.feed ? 'Reconnecting…' : agent ? (agent.busy ? 'Working' : 'Idle') : ''));
+        state.classList.toggle('is-error', Boolean(stopError) && found?.agent.ended === undefined);
         stop.hidden = !agent || found?.agent.ended !== undefined;
       };
       unsubscribe = ctx.store.subscribe(draw);
-      ctx.link.request('feed.open', { name }).then(
-        ({ feed }) => {
-          if (!open) { void ctx.link.request('feed.close', { feed }).catch(() => undefined); return; }
-          opening = false;
-          ctx.store.openAgent(feed, name);
-          draw();
-        },
-        (error: unknown) => {
-          if (!open) return;
-          opening = false;
-          draw();
-          state.textContent = errorText(error);
-        },
-      );
+      follow();
       draw();
     },
     dispose() {

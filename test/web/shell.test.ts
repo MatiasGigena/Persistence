@@ -4,6 +4,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { PAIR_CODE_MS } from '../../src/server/auth.ts';
 
 const WEB = fileURLToPath(new URL('../../src/web/', import.meta.url));
 
@@ -80,6 +81,24 @@ test('the installed app and offline page share the Pi Cloud dark theme', async (
   assert.match(manifest, /"background_color": "#000000"/);
 });
 
+test('bold and italic still show where the monospace font has only a regular face', async () => {
+  // Android's monospace (and many a desktop's) ships one face: forbidding synthesis made **bold**, *em* and headings
+  // plain text there.
+  const css = await readFile(join(WEB, 'styles.css'), 'utf8');
+  for (const [, value = ''] of css.matchAll(/font-synthesis:\s*([^;]+);/g)) {
+    assert.match(value, /\bweight\b/, `font-synthesis: ${value} drops synthetic bold`);
+    assert.match(value, /\bstyle\b/, `font-synthesis: ${value} drops synthetic italic`);
+  }
+});
+
+test('code and output never show ligatures, under any font shorthand', async () => {
+  // `font: …` resets font-variant-ligatures, so a value inherited from the root was lost on body, .prose and the tool
+  // blocks, and `-rw-r--r--` read as `-rw-r—r—` in a font with ligatures (JetBrains Mono, Fira Code).
+  const css = await readFile(join(WEB, 'styles.css'), 'utf8');
+  assert.ok(/\bfont:\s/.test(css), 'the sheet uses the shorthand');
+  assert.match(css, /^\*, \*::before, \*::after \{[^}]*font-variant-ligatures: none !important;/m);
+});
+
 test('the service worker marks a set complete only after its files agree on one version', async () => {
   const sw = await readFile(join(WEB, 'sw.ts'), 'utf8');
   const stable = /async function fetchStable[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
@@ -98,4 +117,10 @@ test('the service worker checks /index.html against the set like /', async () =>
   const page = /async function page[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
   assert.match(page, /!INDEX\.has\(new URL\(request\.url\)\.pathname\)/);
   assert.doesNotMatch(page, /pathname !== '\/'/);
+});
+
+test('the pairing screen states how long a code lasts as the server does', async () => {
+  const html = await readFile(join(WEB, 'index.html'), 'utf8');
+  const minutes = /A code works once, for (\d+) minutes\./.exec(html)?.[1];
+  assert.equal(Number(minutes), PAIR_CODE_MS / 60_000);
 });

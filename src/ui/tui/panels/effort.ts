@@ -18,7 +18,7 @@ const HINTS: Readonly<Record<string, string>> = {
 export async function openEffortPanel(tui: TUI, session: UiSession, theme: PanelTheme): Promise<string | undefined> {
   let levels: readonly string[] | undefined, failure: string | undefined, picked: string | undefined;
   const list = new ListView({
-    title: 'Effort', theme, root: true, verb: 'select',
+    title: 'Effort', theme, root: true, verb: 'select', selected: session.status().thinkingLevel,
     rows: () => (levels ? effortRows(levels, session.status().thinkingLevel, theme) : []),
     detail: row => HINTS[row.key],
     empty: () => (levels || failure ? 'No levels.' : 'Loading levels…'),

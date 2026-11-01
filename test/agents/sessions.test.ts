@@ -392,10 +392,12 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
       assert.deepEqual(await reportsIn(instance, ROOT_CONVERSATION_ID), ['Coder: Did it.', 'Coder: Next done.']);
 
       // Refusals: an unknown name, an ad-hoc agent, and any caller but Pi.
-      assert.equal(await run('delegate', { agent: 'Nobody', task: 'x' }, await mint()), 'No agent named Nobody.');
+      assert.equal(await run('delegate', { agent: 'Nobody', task: 'x' }, await mint()), 'No agent named Nobody. The agents are Coder.');
+      assert.equal(await run('spawn_agent', { name: 'coder', task: 'x' }, await mint()),
+        'Coder is a standing agent: give it a new task with delegate, or steer its current one with send_message.');
       await (await instance.root.submit({ type: 'input', content: 'lead' }, context)).wait(context);
       assert.equal(await run('delegate', { agent: 'lead', task: 'x' }, await mint()),
-        'Lead is not a standing agent; use spawn_agent or send_message.');
+        'Lead is not a standing agent: give it the task with send_message, or spawn_agent a new agent under another name.');
       assert.equal(await run('delegate', { agent: 'Coder', task: 'x' }, await mint(), coder.conversationId),
         'Only Pi can delegate; use send_message.');
       assert.equal(await run('delegate', { agent: 'Coder', task: 'x' }, await mint(), coder.past?.[0] ?? coder.conversationId),

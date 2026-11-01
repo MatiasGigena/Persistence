@@ -22,9 +22,17 @@ interface ViewState {
 }
 
 // Plain text from models and tools must not move the cursor: keep newlines, expand tabs, drop escape
-// sequences (CSI first, so their parameters go too) and other control characters.
-const CONTROL = /\u001b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f]/g;
-const clean = (text: string): string => text.replace(/\t/g, '  ').replace(CONTROL, '');
+// sequences whole (CSI; OSC, DCS and the like up to BEL or ST, e.g. ls's hyperlinks; two-byte ones such as
+// tput's `ESC ( B`), then other control characters.
+const ESCAPE = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b[\]P^_X][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[ -/]*[0-~]/g;
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
+
+/** A line with carriage returns as a terminal leaves it: each part overwrites the start of the one before (progress bars). */
+const overwrite = (line: string): string => line.split('\r').reduce((shown, part) => part + shown.slice(part.length));
+
+/** Host, model or tool text made safe to draw: tabs become spaces, `\r` overwrites, escape sequences and control characters go. */
+export const clean = (text: string): string => text.replace(ESCAPE, '').replace(/\r+\n/g, '\n')
+  .split('\n').map(overwrite).join('\n').replace(/\t/g, '  ').replace(CONTROL, '');
 const oneLine = (text: string): string => clean(text).replace(/\s+/g, ' ').trim();
 
 const PROMPT_START = '\x1b]133;A\x07';
@@ -121,7 +129,7 @@ class ItemBlock implements Component {
     const { toolsExpanded, thinkingExpanded } = this.state;
     const key = `${String(toolsExpanded)}${String(thinkingExpanded)}`;
     if (this.cache?.width === width && this.cache.key === key) return this.cache.lines;
-    const lines = this.build(width).map(line => truncateToWidth(line, width));
+    const lines = this.build(width).map(line => truncateToWidth(line, width, '…'));
     // OSC 133 prompt zones, as Pi marks them: ctrl+up and ctrl+down jump between your messages.
     if (this.item.kind === 'user' && lines.length) {
       lines[0] = `${PROMPT_START}${lines[0] ?? ''}`;
@@ -175,7 +183,7 @@ class ItemBlock implements Component {
     if (thinkingExpanded) return gutter(style('∴'), wrap(style(lines.join('\n')), width - 2));
     const hidden = lines.length - 1;
     const more = hidden > 0 ? theme.dim(width < NARROW ? ` +${hidden} ^t` : ` (+${hidden} lines, ctrl+t)`) : '';
-    return [`${style('∴')} ${truncateToWidth(style(first), Math.max(1, width - 2 - visibleWidth(more)))}${more}`];
+    return [`${style('∴')} ${truncateToWidth(style(first), Math.max(1, width - 2 - visibleWidth(more)), '…')}${more}`];
   }
 
   private tool(item: Extract<ChatItem, { kind: 'tool' }>, width: number): string[] {
@@ -194,7 +202,7 @@ class ItemBlock implements Component {
     const inner = Math.max(1, width - indent.length);
     if (toolsExpanded) return [header, ...lines.flatMap(line => wrap(style(line), inner)).map(line => `${indent}${line}`)];
     const shown = lines.slice(0, narrow ? TOOL_PREVIEW_NARROW : TOOL_PREVIEW)
-      .map(line => `${indent}${truncateToWidth(style(line), inner)}`);
+      .map(line => `${indent}${truncateToWidth(style(line), inner, '…')}`);
     const hidden = lines.length - shown.length;
     const more = narrow ? `+${hidden} lines ^o` : `… ${hidden} more lines, ctrl+o to expand`;
     return [header, ...shown, ...hidden > 0 ? [`${indent}${theme.dim(more)}`] : []];
@@ -204,28 +212,36 @@ class ItemBlock implements Component {
 export interface ChatViewOptions {
   /** Items of the feed's history to show when the view opens (default BACKLOG); later items always show. */
   readonly backlog?: number;
+  /** The command that browses what the view leaves out (Pi's chat: /mem); named after the count of those items. */
+  readonly history?: string;
 }
 
 /**
  * A ChatFeed as a component. `sync()` reads the feed: new ids get a block, changed items update theirs,
  * and unchanged blocks keep their cached lines. Local notices (`notice()`) sit after the item that was last
- * when they were added. Reusable for any feed, Pi's or an agent's.
+ * when they were added. A dim first line counts the history items it leaves out, and names the `history` command
+ * when given, so the top of the view does not look like the start of the chat. Reusable for any feed, Pi's or an
+ * agent's.
  */
 export class ChatView implements Component {
   private readonly feed: ChatFeed;
   private readonly state: ViewState;
   private readonly backlog: number;
+  private readonly history: string | undefined;
   private readonly blocks = new Map<string, ItemBlock>();
   /** Local notices by the id of the item they follow; undefined: before every item. */
   private readonly notices = new Map<string | undefined, ItemBlock[]>();
   private hidden: ReadonlySet<string> | undefined;
   private order: ItemBlock[] = [];
+  /** History items still in the feed that the view leaves out. */
+  private earlier = 0;
   private noticeCount = 0;
 
   constructor(feed: ChatFeed, theme: Theme, options: ChatViewOptions = {}) {
     this.feed = feed;
     this.state = { theme, toolsExpanded: false, thinkingExpanded: false };
     this.backlog = Math.max(0, options.backlog ?? BACKLOG);
+    this.history = options.history;
     this.sync();
   }
 
@@ -240,9 +256,11 @@ export class ChatView implements Component {
     this.hidden ??= new Set(items.slice(0, Math.max(0, items.length - this.backlog)).map(item => item.id));
     const live = new Set<string>();
     const order = [...this.notices.get(undefined) ?? []];
+    this.earlier = 0;
     for (const item of items) {
       live.add(item.id);
-      if (!this.hidden.has(item.id)) {
+      if (this.hidden.has(item.id)) this.earlier++;
+      else {
         let block = this.blocks.get(item.id);
         if (block?.item.kind === item.kind) block.update(item);
         else this.blocks.set(item.id, block = new ItemBlock(item, this.state));
@@ -271,6 +289,14 @@ export class ChatView implements Component {
   render(width: number): string[] {
     const lines: string[] = [];
     let previous: ChatItem['kind'] | undefined;
+    if (this.earlier) {
+      const count = `${this.earlier} earlier ${this.earlier === 1 ? 'item' : 'items'}`;
+      const { history } = this;
+      const text = width < NARROW ? `· ${count}${history ? ` · ${history}` : ''}`
+        : `· ${count} not shown${history ? `; ${history} browses the whole chat` : ''}`;
+      lines.push(truncateToWidth(this.state.theme.dim(text), width, '…'));
+      previous = 'notice';
+    }
     for (const block of this.order) {
       const rendered = block.render(width);
       if (!rendered.length) continue;

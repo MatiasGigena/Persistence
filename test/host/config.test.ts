@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
-import { chromiumPath, DEFAULT_PORT, isRecord, parseArgs, parseConfig, readSettings, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, updateSettings,
+import { chromiumPath, DEFAULT_PORT, HELP, isRecord, parseArgs, parseConfig, readSettings, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, updateSettings,
   writeSettings } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 
@@ -26,6 +26,37 @@ test('parse prompt, tools on by default (--no-tools opts out), and namespaced mo
   assert.equal(parseArgs(['backup']).allowTools, false);
   assert.equal(parseArgs(['hello', 'world']).prompt, 'hello world');
   assert.equal(parseArgs(['--', '--literal']).prompt, '--literal');
+});
+
+test('a missing --cwd, a --cwd that is a file, and a --database that is a directory are named', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pi-durable-paths-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const file = join(folder, 'notes.txt');
+  await writeFile(file, '');
+  const launch = (args: string[]) => resolveOptions(parseArgs(['--database', join(folder, 'chat.sqlite'), ...args]), {});
+  await assert.rejects(launch(['--cwd', join(folder, 'gone')]), { message: `--cwd ${join(folder, 'gone')} does not exist` });
+  await assert.rejects(launch(['--cwd', file]), { message: `--cwd ${file} is not a directory` });
+  await assert.rejects(resolveOptions(parseArgs(['--database', folder, '--cwd', folder]), {}),
+    { message: `${folder} is a directory, not the chat's SQLite file` });
+  assert.equal((await launch(['--cwd', folder])).cwd, folder);
+});
+
+test('--help lists every terminal UI command', async () => {
+  const { COMMANDS } = await import('../../src/ui/tui/app.ts');
+  const listed = /Chat commands: ([^(]*)\(/.exec(HELP)?.[1]?.split(/[\s,]+/).filter(Boolean) ?? [];
+  assert.deepEqual(listed, COMMANDS.map(c => `/${c.name}`));
+});
+
+test('--name=value is --name value; a flag takes no value, and an unknown option points at --help', () => {
+  const options = parseArgs(['--model=openrouter/vendor/model', '--thinking=low', '--print=a=b']);
+  assert.deepEqual(options.model, { provider: 'openrouter', modelId: 'vendor/model' });
+  assert.equal(options.thinkingLevel, 'low');
+  assert.equal(options.prompt, 'a=b');
+  assert.equal(parseArgs(['--print=--literal']).prompt, '--literal', 'an inline value may start with --');
+  assert.throws(() => parseArgs(['--plain=yes']), /--plain takes no value/);
+  assert.throws(() => parseArgs(['--port=7433']), /--port applies only to serve/, 'the spelling in errors is the option name');
+  assert.throws(() => parseArgs(['--no-tool']), /Unknown option: --no-tool \(pi-durable --help lists them\)/);
+  assert.equal(parseArgs(['--', '--model=x/y']).prompt, '--model=x/y', 'after -- it is a prompt');
 });
 
 test('the model: --model, else PI_DURABLE_MODEL, else settings.json, else the default', async t => {
@@ -67,7 +98,8 @@ test('the thinking level: --thinking, else settings.json, else high; updateSetti
   await updateSettings(settingsPath, { model: { provider: 'claude-cli', modelId: 'haiku' } });
   assert.deepEqual(await readSettings(settingsPath), { model: { provider: 'claude-cli', modelId: 'haiku' }, thinkingLevel: 'xhigh' });
   await writeFile(settingsPath, '{"thinkingLevel":"huge"}');
-  await assert.rejects(launch([]), /settings\.json/);
+  await assert.rejects(launch([]), /"thinkingLevel" in .*settings\.json must be one of off, minimal, low, medium, high, xhigh, max/);
+  assert.throws(() => parseArgs(['--thinking', 'hihg']), /Invalid --thinking level "hihg": use one of off, minimal, low, medium, high, xhigh, max/);
   assert.equal(await launch(['--model', 'claude-cli/haiku']), 'high', 'with --model a broken file is skipped');
 });
 
@@ -187,7 +219,7 @@ test('inspection of absent state creates no directory', async t => {
   await assert.rejects(stat(dataDir), { code: 'ENOENT' });
   const env = { ...process.env, PI_DURABLE_CLIENT_CONFIG: join(folder, 'client.json'), PI_DURABLE_REMOTE: '' };
   const { stdout } = await exec(launcher, ['--history', '--data-dir', dataDir, '--cwd', folder], { env });
-  assert.match(stdout, /No saved session/);
+  assert.match(stdout, /No saved chat yet\./);
   await assert.rejects(stat(dataDir), { code: 'ENOENT' });
 });
 

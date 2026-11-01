@@ -177,7 +177,10 @@ test('permission is off by default and not restored from the ledger', async t =>
   await executor.execute(request);
   const reopened = new MachineExecutor({ target, ledgerDir });
   t.after(() => reopened.close());
-  assert.equal(code(await reopened.execute(request)), 'TOOLS_DISABLED');
+  const off = await reopened.execute(request);
+  assert.equal(code(off), 'TOOLS_DISABLED');
+  // Pi learns which machine refused and what the user there can do about it.
+  assert.equal(text(off), 'Machine tools are off on Laptop. Only the user there can turn them on, with /tools on in that terminal.');
   reopened.setEnabled(true);
   assert.equal((await reopened.execute(request)).isError, undefined);
   reopened.setEnabled(false);

@@ -164,6 +164,12 @@ async function matching(index: Response): Promise<Shell | undefined> {
   return undefined;
 }
 
+/**
+ * `tailscale serve` answers 502 while the server is down (a restart): the tailnet is up, so the app starts from its
+ * set and reconnects by itself, rather than leaving a bare error page.
+ */
+const unreachable = (response: Response): boolean => response.status >= 502 && response.status <= 504;
+
 async function offline(): Promise<Response> {
   return await (await current())?.cache.match(OFFLINE)
     ?? new Response('Connect to Tailscale, then reload.', { status: 503, headers: { 'Content-Type': 'text/plain' } });
@@ -177,6 +183,15 @@ async function page(event: FetchEvent): Promise<Response> {
   const { request, resultingClientId: client } = event;
   let response: Response;
   try { response = await fetch(request); } catch { return offline(); }
+  // The server is down (a restart) while the tailnet is up: run the set in hand, which reconnects by itself.
+  if (unreachable(response) && INDEX.has(new URL(request.url).pathname)) {
+    const kept = await current(true);
+    const index = await kept?.cache.match('/');
+    if (kept && index) {
+      pin(client, kept);
+      return index;
+    }
+  }
   // `/index.html` is the same page as `/`: both check against the set's index.html, kept under `/`.
   if (!response.ok || !INDEX.has(new URL(request.url).pathname)) return response;
   const shell = await current(true);

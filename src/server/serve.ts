@@ -65,6 +65,8 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
         log(`push notifications off: ${errorMessage(error)}`);
       }
     }
+    // Until the listener is up (or for good, with the reason the log gives), a pairing code could not be used.
+    let webOff: string | undefined = 'it is still starting';
     let assets = 'none';
     try { assets = await assetsHash(); } catch (error) { log(`web app files unreadable: ${errorMessage(error)}`); }
     hub = new Hub({
@@ -74,18 +76,21 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
       ...push ? { push, revoked: (name: string) => push.forgetDevice(name) } : {},
       ...devices ? { devices } : {},
       backup: out => backup(config, instance.exclusive, out === undefined ? {} : { out }),
-      machines, log,
+      ...settings.origin === undefined ? {} : { origin: settings.origin },
+      webOff: () => webOff, machines, log,
     });
     unix = await listenUnix(config.socketPath, hub);
     log(`listening on ${unix.path}`);
-    if (!webWanted) log('web app off: set PI_DURABLE_ORIGIN and PI_DURABLE_ALLOW_LOGIN to serve it (socket only)');
-    else if (!devices) log('web app off: serve/devices.json is unreadable');
+    if (!webWanted) webOff = 'set PI_DURABLE_ORIGIN and PI_DURABLE_ALLOW_LOGIN to serve it (socket only)';
+    else if (!devices) webOff = 'serve/devices.json is unreadable';
     else {
       try {
         web = await startWebListener(hub, settings, devices, { log });
+        webOff = undefined;
         log(`web app on 127.0.0.1:${web.port} for ${settings.origin ?? ''}`);
-      } catch (error) { log(`web app off: ${errorMessage(error)}`); }
+      } catch (error) { webOff = errorMessage(error); }
     }
+    if (webOff !== undefined) log(`web app off: ${webOff}`);
     if (signal.aborted) return;
     session = await createUiSession(instance, { model: config.model, thinkingLevel: config.thinkingLevel, allowTools: config.allowTools,
       settingsPath: config.settingsPath, authFile: config.authFile });

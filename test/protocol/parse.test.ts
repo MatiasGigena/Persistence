@@ -116,6 +116,7 @@ const SERVER: readonly ServerMessage[] = [
   { t: 'feed.end', feed: 'agent:Bob', reason: 'Bob is gone.' },
   { t: 'notice', text: 'Coding tools on (from phone)', level: 'warn' },
   ...Object.values(RESPONSES),
+  { t: 'res', id: 15, op: 'admin.pair', ok: true, result: { code: 'K7Q2-M9XD', expiresAt: 1_800_000_000_000, origin: 'https://pi.tail1.ts.net' } },
   ...ERROR_CODES.map((code, i): ServerMessage => ({ t: 'res', id: 30 + i, ok: false, error: { code, message: `${code} happened` } })),
   { t: 'res', id: -1, ok: false, error: { code: 'bad_request', message: 'id must be an integer' } },
   { t: 'pong', n: 7 },

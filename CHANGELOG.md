@@ -5,8 +5,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Terminal: tool output drops hyperlinks and other escape sequences whole, and carriage returns overwrite as in a
+  terminal (progress bars show their last state); the panels no longer show stray `[31m`. The panels fill the screen,
+  so the chat no longer shows through around them. Whitespace-only items leave no blank lines in the agent chat view,
+  and cut lines end in `…`. A long step or model is cut to fit the footer instead of dropped; one long provider/id no
+  longer pushes names and notes off the /model picker.
+- `--plain` prints one `you>` prompt after Pi's reply, not two; a new chat no longer opens with
+  `Resuming 3 pending task(s)…` for the standing agents' bookkeeping; agents' reports in `--plain` and `--history`
+  show as name and text, without the note meant for Pi.
+- A faulted reply shows one notice, `The reply failed: …`, instead of the task kind and `Not answered: faulted.`; a
+  missing model says so instead of `no_model`; `/effort` on a model that does not reason says it has no effort to
+  set; `--status` and `--history` on a missing chat say `No saved chat yet.`
+- Web app: bold and italic show with a monospace font that has one face; ligatures stay off in code and tool output
+  (`--`, `->`, `!=` read as typed); task-list items show their checkbox without a bullet; picked images attach in
+  the order they were picked.
+- `--plain` no longer drops lines typed ahead or pasted after the first.
+- The terminal footer no longer overflows a narrow screen while "reconnecting…" shows.
+- Web app: re-pairing after a revoke works without a reload; sheets opened while disconnected load once the link is
+  back; opening the app during a server restart starts it from the cache instead of a 502 page; the pairing screen
+  says codes last 5 minutes, as they do.
+
 ### Added
 
+- Terminal: a dim first line counts the history items the chat leaves out and points at /mem; the footer shows
+  `↓ more below (pgdn)` while the chat is scrolled up; /effort opens on the current level.
+- Web app: warnings and errors are read out to screen readers; focus stays in the menu sheet when a level opens or
+  closes; a reload for an update says how many attached images it dropped; a failed tools switch or agent stop shows
+  inside the sheet.
 - Code mode (ADR 0033), with the coding tools: the `codemode` tool runs a JavaScript script in a QuickJS sandbox that
   calls `read`, `write`, `edit`, `bash`, `zoom`, `date`, `list_agents` and `last_message` in one tool call
   (`await tools.read({ path })`). Each call is an ordinary nested tool call with the same guards, protected folders
@@ -31,6 +58,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   free again. The registry gains an optional `deleted` map; older registries read unchanged.
 
 ### Changed
+
+- Clearer messages and hints throughout. In the terminal: unknown agents, models, options and `--thinking` levels
+  are listed or named; `--cwd`/`--database` mistakes are explained; `/stop` says when Pi is idle; a failed send says ↑
+  brings it back; `/status` names the machine where tools run; the launcher names the Node it needs. For tools, SSH
+  and credentials: `web_fetch`, the browser, bubblewrap, `PI_DURABLE_SSH_KEYS`, the SSH connector, the bridge, an
+  outdated Claude Code and the `anthropic` login each say how to fix the problem. On the web: a refused pairing, a
+  revoked device, a restarting server and a disabled push each say why; `serve pair` prints the web app's address and
+  refuses while the web app is off; `serve devices --revoke` lists the paired names on a miss.
+- Terminal: `--name=value` options, `/model WORD` opens the picker filtered, `/tools ON` and `/effort HIGH` work in
+  any case, the first Ctrl+C says a second one quits, and a line starting with a path is sent to Pi.
 
 - Web app: no "TOOLS ON" bar over the header. The tools are on by default and held to protected folders
   (ADR 0025); their state and switch are in the menu, under Coding tools.

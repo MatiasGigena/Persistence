@@ -52,11 +52,14 @@
   --rise: 8px;
   --pop: 0.96;
   --shake: 3px;
-  font-synthesis: none;
-  font-variant-ligatures: none;
+  /* Bold and italic may be synthesized: many monospace fonts (Android's among them) have one face, and without it
+     **bold**, *em* and headings would read as plain text. */
+  font-synthesis: weight style;
 }
 
-*, *::before, *::after { box-sizing: border-box; }
+/* No ligatures: in this terminal face `--`, `->` and `!=` must read as typed, in code and in tool output alike. Every
+   `font` shorthand (body, .prose, the tool lines) resets an inherited value, so it is held on each element. */
+*, *::before, *::after { box-sizing: border-box; font-variant-ligatures: none !important; }
 
 html, body {
   margin: 0;
@@ -420,6 +423,9 @@ button.status-part:active { opacity: 0.6; }
 .prose h3, .prose h4 { font-size: 1rem; }
 .prose ul, .prose ol { padding-left: 1.4em; }
 .prose li + li { margin-top: 0.25em; }
+/* A task item's checkbox takes the bullet's place (markdown.ts marks the item). */
+.prose li.task { list-style: none; }
+.prose li.task > input:first-child, .prose li.task > p:first-child > input:first-child { margin: 0 0 0 -1.4em; vertical-align: -0.1em; }
 .prose a { color: var(--accent); text-underline-offset: 2px; }
 .prose blockquote { border-left: 3px solid var(--line); padding-left: 12px; color: var(--muted); }
 .prose code { font-size: 0.86em; background: var(--code); padding: 1px 5px; border-radius: 5px; }
@@ -641,6 +647,8 @@ dialog::backdrop { background: var(--scrim); }
 .sheet-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px var(--gutter); flex: none; }
 .sheet-heading { flex: 1; min-width: 0; }
 .sheet-title { font: 600 1.25rem/1.25 var(--serif); margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Focused by sheet.ts when a level is pushed, for screen readers: not a control, so no ring. */
+.sheet-title:focus-visible { outline: none; }
 .crumbs { display: flex; flex-wrap: wrap; gap: 0 4px; font-size: 0.8125rem; }
 .crumb {
   border: 0; background: none; padding: 4px 0; color: var(--accent); font-weight: 500;

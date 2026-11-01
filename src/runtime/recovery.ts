@@ -18,8 +18,10 @@ export async function resumeInstance({ harness, root, context }: Opened): Promis
   await root.waitForIdle(context);
 }
 
-// Agents work in background tasks that outlive the root's runs. Each agent's
-// anchor task lives as long as the agent; anything else is work still underway.
+/** Whether `task` is work still underway: each agent's anchor task lives as long as the agent, so it is not. */
+export const isWork = (task: { readonly record: { readonly kind: string } }): boolean => task.record.kind !== 'agents.anchor';
+
+// Agents work in background tasks that outlive the root's runs.
 export async function settleAgents(
   { harness, root, context }: Opened, { signal, intervalMs = 250 }: { signal?: AbortSignal; intervalMs?: number } = {},
 ): Promise<void> {
@@ -27,7 +29,7 @@ export async function settleAgents(
   for (;;) {
     await root.waitForIdle(context);
     const { tasks } = await harness.inspect(context);
-    if (tasks.every(task => task.record.kind === 'agents.anchor')) return;
+    if (!tasks.some(isWork)) return;
     if (signal?.aborted) return;
     await new Promise<void>(resolve => setTimeout(resolve, intervalMs));
   }

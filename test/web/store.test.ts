@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatItem, ServerMessage, SessionStatus, Welcome } from '../../src/protocol/messages.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
-import { Store, turnEnds } from '../../src/web/store.ts';
+import { freshAlerts, Store, turnEnds } from '../../src/web/store.ts';
 import type { ViewItem } from '../../src/web/store.ts';
 
 const WELCOME: Welcome = {
@@ -189,4 +189,19 @@ test('turnEnds splits a turn at a pending message, a steer mid-run included', ()
     reply('a2', 'second', false),
   ];
   assert.deepEqual([...turnEnds(items)], ['a1', 'a2']);
+});
+
+test('warnings and errors are read out once each, info notices and the history never', () => {
+  const seen = new Set<string>();
+  const history: ViewItem[] = [user('u1', 'hi'), { kind: 'notice', id: 'n0', text: 'old failure', level: 'error' }];
+  // The first load's notices are history: marked seen, not announced.
+  freshAlerts(history, seen);
+  const store = connected(history.filter(item => item.kind !== 'pending'));
+  store.notice('Not sent: offline', 'error');
+  store.notice('Tools are on.', 'info');
+  store.handle({ t: 'notice', text: 'Model retrying', level: 'warn' });
+  assert.deepEqual(freshAlerts(store.rootView(), seen), ['Error: Not sent: offline', 'Warning: Model retrying']);
+  assert.deepEqual(freshAlerts(store.rootView(), seen), [], 'each once');
+  store.notice('Not sent: offline', 'error');
+  assert.deepEqual(freshAlerts(store.rootView(), seen), ['Error: Not sent: offline'], 'the same text again is a new notice');
 });

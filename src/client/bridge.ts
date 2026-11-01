@@ -17,6 +17,17 @@ export interface BridgeIo {
 const readableError = (error: unknown): string => (error instanceof Error ? error.message : String(error))
   .replace(/[\p{Cc}\p{Cf}]/gu, ' ').slice(0, 1024);
 
+const errorCode = (error: unknown): unknown => error instanceof Error && 'code' in error ? error.code : undefined;
+const START = 'Start it with pi-durable serve (or systemctl --user start pi-durable); a server with another data directory needs --remote-data-dir.';
+
+/** The bridge's usual failure, no server for this data directory, said plainly; any other error as it is. */
+function serverError(error: unknown, socketPath: string): unknown {
+  const code = errorCode(error);
+  if (code === 'ENOENT') return `no pi-durable server is running here: ${socketPath} does not exist. ${START}`;
+  if (code === 'ECONNREFUSED') return `no pi-durable server is running here: nothing listens on ${socketPath} (a server that stopped left it). ${START}`;
+  return error;
+}
+
 /** Proxies raw bytes to an existing, owned socket. Only diagnostics go to stderr; returns a CLI exit code. */
 export async function bridge(socketPath: string, io: BridgeIo = {}): Promise<number> {
   const input = io.stdin ?? process.stdin, output = io.stdout ?? process.stdout, errors = io.stderr ?? process.stderr;
@@ -33,7 +44,7 @@ export async function bridge(socketPath: string, io: BridgeIo = {}): Promise<num
     report('Invalid bridge timeout'); return 1;
   }
   try { await checkSocket(socketPath); }
-  catch (error) { report(error); return 1; }
+  catch (error) { report(serverError(error, socketPath)); return 1; }
   if (io.signal?.aborted) return 130;
   return new Promise<number>(resolve => {
     const socket = createConnection({ path: socketPath });
@@ -78,7 +89,7 @@ export async function bridge(socketPath: string, io: BridgeIo = {}): Promise<num
     input.on('close', inputClosed);
     output.on('error', failed);
     output.on('close', outputClosed);
-    socket.on('error', failed);
+    socket.on('error', error => finish(1, serverError(error, socketPath)));
     socket.on('end', () => {
       deadline('stdout did not drain');
       // Do not close process.stdout. This callback follows every byte the socket already piped to it.

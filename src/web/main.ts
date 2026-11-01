@@ -2,7 +2,8 @@
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { imageUrl, toChatImage } from './attach.ts';
 import { ChatView, el, initViewer, play } from './chat-view.ts';
-import { errorText, guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, shortModel, statusParts } from './format.ts';
+import { announce } from './copy.ts';
+import { errorText, guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
@@ -12,15 +13,19 @@ import { memoryView } from './panels/memory.ts';
 import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
 import { syncPush } from './push.ts';
-import { Store } from './store.ts';
+import { freshAlerts, Store } from './store.ts';
 import type { Effect } from './store.ts';
 import { IMAGE_LIMITS, restoreImages } from '../protocol/images.ts';
+import { CloseCode } from '../protocol/messages.ts';
 import type { ChatImage, NoticeLevel } from '../protocol/messages.ts';
 
 const CLIENT = 'web';
+const RESTARTING = 'The server is restarting; reconnecting…';
 const DRAFT_KEY = 'pd.draft';
 /** sessionStorage: the value a reload was last made for, so a reload happens once per new value. */
 const RELOAD_KEY = 'pd.reloaded';
+/** sessionStorage: how many images a reload for new files dropped, said once the reloaded app is ready. */
+const LOST_KEY = 'pd.lost-images';
 /** How long the link may be reconnecting before the banner says so. */
 const RECONNECT_BANNER_MS = 2_000;
 /** How long after a send the button cannot become stop, so a double tap does not abort what it just sent. */
@@ -152,10 +157,14 @@ function gone(why: keyof typeof GONE): void {
   show('gone');
 }
 
-/** Reloads once for `value` (new assets, a new server boot, a protocol change); false when already done. */
-async function reloadOnce(value: string): Promise<boolean> {
+/**
+ * Reloads once for `value` (new assets, a new server boot, a protocol change); false when already done. `prepare` runs
+ * only when the reload goes ahead.
+ */
+async function reloadOnce(value: string, prepare: () => void = () => undefined): Promise<boolean> {
   if (load(session, RELOAD_KEY) === value) return false;
   save(session, RELOAD_KEY, value);
+  prepare();
   // Let a changed service worker take over first, and have the shell revalidated (its files are served stale while
   // they revalidate, ADR 0032), so the reload gets the new files.
   await navigator.serviceWorker?.getRegistration().then(r => r?.update()).catch(() => undefined);
@@ -206,24 +215,24 @@ function socket(events: SocketEvents): SocketHandle {
 
 // ------------------------------------------------------------------------------------------------ pairing
 
-const PAIR_ERRORS: Readonly<Record<number, string>> = {
-  400: 'That code is not in the right shape: 8 characters, like 7KQ4-M2XD.',
-  401: 'That code is wrong or has expired. Run pi-durable serve pair for a new one.',
-  409: 'A device with that name is already paired. Pick another name.',
-  429: 'Too many tries. Run pi-durable serve pair for a new code.',
-};
-
 let pairing = false;
+/** What the latest `pairScreen` asked for after pairing: the form's listener is added once, so it reads this. */
+let afterPairing = (): void => undefined;
 
-/** Shows the pairing screen; `onPaired` runs once this browser holds a device cookie. */
-function pairScreen(onPaired: () => void): void {
+/**
+ * Shows the pairing screen, saying `why` this device must pair (again) when that is known; `onPaired` runs once this
+ * browser holds a device cookie.
+ */
+function pairScreen(onPaired: () => void, why = ''): void {
   show('pair');
+  const error = byId('pair-error', HTMLParagraphElement);
+  error.textContent = why;
+  afterPairing = onPaired;
   if (pairing) return;
   pairing = true;
   const form = byId('pair-form', HTMLFormElement);
   const code = byId('pair-code', HTMLInputElement);
   const name = byId('pair-name', HTMLInputElement);
-  const error = byId('pair-error', HTMLParagraphElement);
   const button = byId('pair-submit', HTMLButtonElement);
   const label = button.textContent;
   if (!name.value) name.value = guessDeviceName(navigator.userAgent);
@@ -256,9 +265,10 @@ function pairScreen(onPaired: () => void): void {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: normalizeCode(code.value), name: name.value.trim() }),
     }).then(
-      response => {
-        if (response.ok) { code.value = ''; onPaired(); return; }
-        fail(PAIR_ERRORS[response.status] ?? `The server answered ${response.status}. Try again.`);
+      async response => {
+        if (response.ok) { code.value = ''; afterPairing(); return; }
+        const body: unknown = await response.json().catch(() => undefined);
+        fail(pairErrorText(response.status, typeof body === 'object' && body !== null && 'error' in body ? body.error : undefined));
       },
       () => { fail('Cannot reach the server. Check that Tailscale is connected.'); },
     ).finally(() => busy(false));
@@ -304,8 +314,16 @@ function start(): void {
   let wasReady = false;
   /** The first `ready` has been shown. Until then the chat is its skeleton (.is-loading) or not shown at all. */
   let loaded = false;
+  /** The reason of the server's `bye` since the last `ready`, shown if it ends the link for good. */
+  let byeReason = '';
   /** The link is ready: only then is store.status.busy current. */
   let linkReady = false;
+  /**
+   * Images the reload that started this page dropped (reloadForFiles), said at the first `ready`. Read at once: a page
+   * waiting to reload may reconnect meanwhile, and must not take the count meant for its successor.
+   */
+  let lostImages = Number(load(session, LOST_KEY)) || 0;
+  save(session, LOST_KEY, '');
 
   const link = new Link({
     connect: socket,
@@ -432,17 +450,21 @@ function start(): void {
     place(attachments, nodes);
     drawSend();
   };
+  /** The images being read, in the order they were added: each joins `attached` in that order. */
+  let readQueue: Promise<void> = Promise.resolve();
   const attach = (files: readonly File[]): void => {
     const room = IMAGE_LIMITS.perMessage - attached.length - reading;
     if (files.length > room) notice(`At most ${IMAGE_LIMITS.perMessage} images per message.`, 'warn');
-    for (const file of files.slice(0, Math.max(0, room))) {
-      reading++;
+    const batch = files.slice(0, Math.max(0, room));
+    if (!batch.length) return;
+    reading += batch.length;
+    drawAttachments();
+    readQueue = inOrder(batch, toChatImage, result => {
+      if (result.ok) attached = [...attached, result.value];
+      else notice(`Image not attached: ${errorText(result.error)}`, 'error');
+      reading--;
       drawAttachments();
-      toChatImage(file).then(
-        image => { attached = [...attached, image]; },
-        (error: unknown) => notice(`Image not attached: ${errorText(error)}`, 'error'),
-      ).finally(() => { reading--; drawAttachments(); });
-    }
+    }, readQueue);
   };
   attachButton.addEventListener('click', () => attachFile.click());
   attachFile.addEventListener('change', () => {
@@ -531,9 +553,15 @@ function start(): void {
     }));
   };
   let lastStatus = '';
+  /** Notices already read out, or history from the first load. */
+  const alerted = new Set<string>();
   store.subscribe(() => {
+    const items = store.rootView();
     // Until the link is ready, items come from a snapshot (a first load, a reconnect): history, drawn without entrances.
-    view.set(store.rootView(), linkReady);
+    view.set(items, linkReady);
+    // A failed send or a server warning only shows in the feed: read it out too. The first load's are history.
+    const alerts = freshAlerts(items, alerted);
+    if (loaded && alerts.length) announce(alerts.join(' '));
     const status = JSON.stringify(store.status ?? null);
     if (status !== lastStatus) { lastStatus = status; drawStatus(); }
   });
@@ -609,6 +637,8 @@ function start(): void {
     if (wasReady && state !== 'closed') reopen = [...new Set([...reopen, ...store.disconnect()])];
     wasReady = false;
     if (state !== 'closed' && !loaded) loading();
+    // A restart takes longer than a phone waking up: say so at once, so a dead-looking chat is explained.
+    else if (state === 'reconnecting' && link.droppedWith === CloseCode.restart) setBanner(RESTARTING, true);
     else if (state === 'reconnecting') {
       const { text, retry: canRetry } = LINK_TEXT.reconnecting;
       if (!bannerShown) bannerTimer = setTimeout(() => setBanner(text, canRetry), RECONNECT_BANNER_MS);
@@ -617,7 +647,11 @@ function start(): void {
     else if (state === 'offline') setBanner(LINK_TEXT.offline.text, LINK_TEXT.offline.retry);
     else if (state === 'closed') {
       const by = link.closedBy;
-      if (by === 'unauthorized' || by === 'unpaired') { sheet.close(); pairScreen(() => location.reload()); }
+      if (by === 'unauthorized' || by === 'unpaired') {
+        sheet.close();
+        // A revoked device is told so, rather than finding the pairing screen with no reason.
+        pairScreen(() => location.reload(), by === 'unauthorized' ? `${byeReason || 'This device is no longer paired.'} Pair it again with a new code.` : '');
+      }
       else if (by === 'forbidden') gone('forbidden');
       else if (by === 'version') void reloadOnce('version').then(done => { if (!done) gone('version'); });
     }
@@ -639,10 +673,17 @@ function start(): void {
         return;
       }
       case 'bye':
+        byeReason = effect.reason;
         return;
       case 'ready': {
+        byeReason = '';
         save(session, RELOAD_KEY, '');
         reveal();
+        if (lostImages) {
+          const one = lostImages === 1;
+          notice(`The app reloaded for an update, and ${one ? 'an image' : `${lostImages} images`} could not be kept; attach ${one ? 'it' : 'them'} again.`, 'warn');
+          lostImages = 0;
+        }
         for (const [id, { text, steer, images }] of outbox) deliver(id, text, steer, images);
         // Warms Chat settings' lists once the page is idle, so the sheet opens filled.
         prefetchSettings(link, store);
@@ -670,9 +711,11 @@ function start(): void {
   /** Reloads once for `value`, to run new app files. */
   async function reloadForFiles(value: string): Promise<void> {
     // Messages not yet admitted would be lost with the page: they go back into the draft.
-    // Their images cannot be kept: only the text survives a reload.
+    // Their images cannot be kept, nor those attached to the draft: only the text survives a reload, so the reloaded
+    // app says how many went.
     if (outbox.size) save(local, DRAFT_KEY, [...[...outbox.values()].map(sent => sent.text), input.value].filter(Boolean).join('\n\n'));
-    await reloadOnce(value);
+    const images = attached.length + [...outbox.values()].reduce((sum, sent) => sum + sent.images.length, 0);
+    await reloadOnce(value, () => save(session, LOST_KEY, images ? String(images) : ''));
   }
 
   // The service worker has a newer set of the app's files than this page runs on (sw.ts, `announce`).

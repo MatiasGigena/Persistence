@@ -134,6 +134,12 @@ const find = (agents: Readonly<Record<string, AgentRecord>>, name: string): Name
   return found && { name: found[0], ...found[1] };
 };
 
+/** The refusal for an unknown agent name, naming the agents there are, so a misspelt name is fixed in one step. */
+const noAgent = (agents: Readonly<Record<string, AgentRecord>>, name: string): string => {
+  const names = Object.keys(agents);
+  return `No agent named ${name}. ${names.length ? `The agents are ${names.join(', ')}.` : 'There are none.'}`;
+};
+
 /** Who the conversation is: Pi, a registered agent (any of a standing agent's sessions), or undefined for any other. */
 function whoIs(registry: Readonly<AgentsState> | undefined, conversationId: ConversationId): Caller | undefined {
   if (conversationId === ROOT_CONVERSATION_ID) return { name: PI, role: 'root', conversationId };
@@ -149,7 +155,9 @@ function target(registry: Readonly<AgentsState> | undefined, me: Caller, name: s
     if (me.role === 'sub') return { error: 'Sub agents cannot address Pi; message your main agent instead.' };
     return { name: PI, role: 'root', conversationId: ROOT_CONVERSATION_ID };
   }
-  return find(registry?.agents ?? {}, name) ?? { error: `No agent named ${name}.` };
+  // Only Pi gets the list: an agent that web content may steer has no use for names it cannot address.
+  return find(registry?.agents ?? {}, name)
+    ?? { error: me.role === 'root' ? noAgent(registry?.agents ?? {}, name) : `No agent named ${name}.` };
 }
 
 /** Latest committed assistant text of a conversation, read through a transaction. */
@@ -508,7 +516,7 @@ async function removeAgent(tx: Tx, registry: Draft<AgentsState>, name: string, b
   roster: Roster | undefined): Promise<DeleteResult> {
   const found = find(registry.agents, name);
   if (String(name).toLowerCase() === PI.toLowerCase()) return { error: 'Pi cannot be deleted.' };
-  if (!found) return { error: `No agent named ${name}.` };
+  if (!found) return { error: noAgent(registry.agents, name) };
   if (found.standing || (roster && rosterEntry(roster, found.name))) {
     return { error: `${found.name} is a standing agent; it can be deleted only after it leaves the roster.` };
   }
@@ -594,7 +602,7 @@ export async function agentTranscript(
   const gone = deletedAgent(registry, base);
   const agent = base.toLowerCase() === PI.toLowerCase()
     ? { name: PI, conversationId: ROOT_CONVERSATION_ID, standing: false, past: [] } : find(registry?.agents ?? {}, base) ?? gone;
-  if (!agent) throw new Error(`No agent named ${base}`);
+  if (!agent) throw new Error(noAgent(registry?.agents ?? {}, base));
   const sessions = [...agent.past ?? [], agent.conversationId];
   const index = number === undefined ? sessions.length : Number(number);
   const conversationId = sessions[index - 1];
@@ -880,6 +888,9 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       const content = `${preamble ? `${preamble}\n\n` : ''}[from ${caller.name}] ${task}`;
       return once(api, context, async (tx, registry) => {
         const existing = find(registry.agents, name);
+        if (existing?.standing && caller.role === 'root') {
+          return `${existing.name} is a standing agent: give it a new task with delegate, or steer its current one with send_message.`;
+        }
         if (existing) return `An agent named ${existing.name} already exists; use send_message.`;
         const anchor = await tx.createTask(Anchor, null, TASK_OPTIONS);
         const child = await tx.createConversation({ ownership: { kind: 'task', taskId: anchor } });
@@ -913,8 +924,8 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       const caller = whoIs(registry, api.conversationId);
       if (caller?.role !== 'root') return reply('Only Pi can delegate; use send_message.');
       const found = find(registry?.agents ?? {}, name);
-      if (!found) return reply(`No agent named ${name}.`);
-      if (!found.standing) return reply(`${found.name} is not a standing agent; use spawn_agent or send_message.`);
+      if (!found) return reply(noAgent(registry?.agents ?? {}, name));
+      if (!found.standing) return reply(`${found.name} is not a standing agent: give it the task with send_message, or spawn_agent a new agent under another name.`);
       const busy = `${found.name} is busy with its current task; send_message to steer it, or stop_agent first.`;
       const subsBusy = (names: readonly string[]) => `${found.name}'s current task is still running (its sub agent${names.length === 1
         ? ` ${names.join('')} is` : `s ${names.join(', ')} are`} busy); send_message to steer it, or stop_agent first.`;
@@ -930,7 +941,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       const content = `${preamble ? `${preamble}\n\n` : ''}[from ${PI}] ${task}`;
       return once(api, context, async (tx, draft) => {
         const agent = draft.agents[found.name];
-        if (!agent?.standing) return `${found.name} is not a standing agent; use spawn_agent or send_message.`;
+        if (!agent?.standing) return `${found.name} is not a standing agent: give it the task with send_message, or spawn_agent a new agent under another name.`;
         if (agent.conversationId !== found.conversationId) return busy;
         // An input still on its way counts as work: to the current session (such as a delegate earlier in this turn, or
         // a send_message), or to one of its subs.
@@ -1066,7 +1077,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       const caller = whoIs(registry, api.conversationId);
       const found = find(registry?.agents ?? {}, name);
       if (!caller || caller.role === 'sub') return reply('Sub agents cannot stop agents.');
-      if (!found) return reply(`No agent named ${name}.`);
+      if (!found) return reply(noAgent(registry?.agents ?? {}, name));
       if (caller.role === 'main' && found.parent !== caller.name) return reply(`${found.name} is not your sub agent.`);
       const subs = (await stopAgents(api, context, found.name)).slice(0, -1);
       const also = subs.length ? ` and its sub agents ${subs.join(', ')}` : '';

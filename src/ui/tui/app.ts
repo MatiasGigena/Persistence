@@ -57,7 +57,7 @@ export function commands(attached = false): SlashCommand[] {
 
 export const COMMANDS: readonly SlashCommand[] = [
   { name: 'help', description: 'Commands and keys' },
-  { name: 'model', description: 'Pick a model (ctrl+l), or set provider/id', argumentHint: '[provider/id]' },
+  { name: 'model', description: 'Pick a model (ctrl+l), or set provider/id', argumentHint: '[provider/id|filter]' },
   { name: 'effort', description: 'Reasoning effort: pick one, or name it', argumentHint: '[low|medium|high|xhigh|max]' },
   { name: 'tools', description: 'Coding tools for this launch: on or off', argumentHint: '[on|off]' },
   { name: 'agents', description: 'Agents and their conversations' },
@@ -125,11 +125,18 @@ const SHORT_ROWS = 20;
 
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
+/**
+ * Whether `line` is a slash command: a `/` and a word without another slash. A line that starts with a path
+ * (`/etc/hosts is empty, why?`) is a message for Pi.
+ */
+export const isCommand = (line: string): boolean => /^\/[^\s/]*(\s|$)/.test(line);
+
 /** A compact status block, for /status. */
 export function statusText(status: SessionStatus): string {
   const { memory, agents } = status;
   const lines = [
     `model ${status.model} · thinking ${status.thinkingLevel} · tools ${status.toolsEnabled ? 'on' : 'off'}`,
+    ...status.machine ? [`tools run on ${status.machine.label} in ${status.machine.cwd}`] : [],
     `work ${status.busy ? 'running' : 'idle'}${status.queued ? ` · ${status.queued} queued` : ''}`,
     memory ? `memory ${memory.messages} msgs · ${memory.unsummarized} unsummarized · view ${memory.viewLines} lines, ${memory.viewBytes} bytes`
       + ` · ${memory.active} summarizing · ${memory.failed} failed` : 'memory closed',
@@ -147,7 +154,7 @@ class Line implements Component {
   private readonly minWidth: number;
   constructor(text: () => string, minWidth = 0) { this.text = text; this.minWidth = minWidth; }
   invalidate(): void {}
-  render(width: number): string[] { return width < this.minWidth ? [] : [truncateToWidth(this.text(), width)]; }
+  render(width: number): string[] { return width < this.minWidth ? [] : [truncateToWidth(this.text(), width, '…')]; }
 }
 
 /** Text lines the editor shows at most on a terminal `rows` high: about 30% of it, borders included. */
@@ -222,7 +229,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   if (info.signal?.aborted) return;
   const terminal = info.terminal ?? new ProcessTerminal();
   const tui = new TuiAltScreen(terminal);
-  const chat = new ChatView(session.chat, theme, info.backlog === undefined ? {} : { backlog: info.backlog });
+  const chat = new ChatView(session.chat, theme, { history: '/mem', ...info.backlog === undefined ? {} : { backlog: info.backlog } });
   const { attached } = info;
   const footer = new Footer(() => {
     const status = session.status();
@@ -231,6 +238,8 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       ...status,
       ...attached ? { reconnecting: attached.state() === 'reconnecting' } : {},
       ...step ? { step } : {},
+      ...scroll.isFollowingEnd ? {} : { scrolled: true },
+      ...ctrlCHint ? { hint: attached ? 'ctrl+c again to detach' : 'ctrl+c again to quit' } : {},
     };
   }, theme);
   const editor = new ChatEditor(tui, theme.editor, { paddingX: 1 });
@@ -263,14 +272,17 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   const document = new Container();
   document.addChild(header);
   document.addChild(chat);
+  const scroll = new ScrollView(document, { follow: 'end', primary: true, overscroll: 'chain' });
   const layout = new VStack([
-    { component: new ScrollView(document, { follow: 'end', primary: true, overscroll: 'chain' }), basis: 0, grow: 1, shrink: 1, minSize: 1 },
+    { component: scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
     { component: footer, basis: 'auto', shrink: 0 },
     { component: editor, basis: 'auto', shrink: 1, minSize: 3 },
   ]);
 
   let running = true;
   let lastCtrlC = 0;
+  /** Set while a second Ctrl+C would exit; the footer says so. */
+  let ctrlCHint: NodeJS.Timeout | undefined;
   let confirming = false;
   let spinner: NodeJS.Timeout | undefined;
   const render = (): void => { if (running) tui.requestRender(); };
@@ -298,6 +310,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (!running) return;
     running = false;
     clearInterval(spinner);
+    clearTimeout(ctrlCHint);
     for (const unsubscribe of unsubscribes) unsubscribe();
     info.signal?.removeEventListener('abort', onAbort);
     process.off('exit', restore);
@@ -329,8 +342,21 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (!arg || arg === 'all') session.abort().catch((error: unknown) => show(`Interrupt failed: ${message(error)}`, 'error'));
     if (!arg) return;
     session.stopAgents(arg === 'all' ? undefined : arg).then(
-      names => show(names.length ? `Stopped ${names.join(', ')}.` : arg === 'all' ? 'No agents to stop.' : `No agent named ${arg}.`),
+      names => show(names.length ? `Stopped ${names.join(', ')}.` : arg === 'all' ? 'No agents to stop.' : unknownAgent(arg)),
       (error: unknown) => show(`Stop failed: ${message(error)}`, 'error'));
+  };
+
+  const unknownAgent = (name: string): string => {
+    const names = session.status().agents.map(agent => agent.name);
+    return `No agent named ${name}.${names.length ? ` Agents: ${names.join(', ')}.` : ''}`;
+  };
+  /** Typed `/stop` (not Esc) says so when Pi has nothing running, and points at working agents. */
+  const idleStop = (): void => {
+    const { busy, queued, agents } = session.status();
+    if (busy || queued) return;
+    const working = agents.filter(agent => agent.busy).length;
+    show(working ? `Pi is idle; ${working === 1 ? '1 agent is' : `${working} agents are`} working: /stop all stops them.`
+      : 'Nothing to stop: Pi is idle.');
   };
 
   const panel = (open: (tui: TUI, session: UiSession, panelTheme: typeof theme) => Promise<void>): void => {
@@ -343,16 +369,12 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       (error: unknown) => show(`Model not changed: ${message(error)}`, 'error'));
   };
   const model = (arg: string): void => {
-    if (!arg) {
-      openModelPanel(tui, session, theme).then(
-        choice => { if (choice) switchModel(choice.provider, choice.id); },
-        (error: unknown) => show(`Panel failed: ${message(error)}`, 'error'));
-      return;
-    }
-    // Ids may hold slashes (openrouter/vendor/model); providers do not.
+    // Ids may hold slashes (openrouter/vendor/model); providers do not. Anything else (`/model sonnet`) filters the picker.
     const slash = arg.indexOf('/');
-    if (slash <= 0 || slash === arg.length - 1) show('Usage: /model provider/id, or /model alone to pick one.', 'warn');
-    else switchModel(arg.slice(0, slash), arg.slice(slash + 1));
+    if (slash > 0 && slash < arg.length - 1) { switchModel(arg.slice(0, slash), arg.slice(slash + 1)); return; }
+    openModelPanel(tui, session, theme, arg).then(
+      choice => { if (choice) switchModel(choice.provider, choice.id); },
+      (error: unknown) => show(`Panel failed: ${message(error)}`, 'error'));
   };
   const setEffort = (level: string): void => {
     session.setThinkingLevel(level).then(
@@ -386,10 +408,10 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     const name = line.slice(1).split(/\s/, 1)[0] ?? '';
     const arg = line.slice(1 + name.length).trim();
     if (name === 'help') show(helpText(terminal.columns, attached !== undefined));
-    else if (name === 'stop') stop(arg);
+    else if (name === 'stop') { if (!arg) idleStop(); stop(arg); }
     else if (name === 'model') model(arg);
-    else if (name === 'effort' || name === 'thinking') effort(arg);
-    else if (name === 'tools') tools(arg);
+    else if (name === 'effort' || name === 'thinking') effort(arg.toLowerCase());
+    else if (name === 'tools') tools(arg.toLowerCase());
     else if (name === 'status') show(statusText(session.status()));
     else if (name === 'agents') panel(openAgentsPanel);
     else if (name === 'mem') panel(openMemoryPanel);
@@ -401,8 +423,8 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     const line = text.trim();
     if (!line) return;
     editor.addToHistory(line);
-    if (line.startsWith('/')) command(line);
-    else session.send(line).catch((error: unknown) => show(`Not sent: ${message(error)}`, 'error'));
+    if (isCommand(line)) command(line);
+    else session.send(line).catch((error: unknown) => show(`Not sent: ${message(error)} (↑ brings the message back)`, 'error'));
   };
   editor.onKey = data => {
     if (matchesKey(data, 'escape')) {
@@ -410,8 +432,14 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       stop();
     } else if (matchesKey(data, 'ctrl+c')) {
       const now = Date.now();
+      clearTimeout(ctrlCHint);
+      ctrlCHint = undefined;
       if (now - lastCtrlC < DOUBLE_CTRL_C) { lastCtrlC = 0; leave(); }
-      else { editor.setText(''); lastCtrlC = now; }
+      else {
+        editor.setText('');
+        lastCtrlC = now;
+        ctrlCHint = setTimeout(() => { ctrlCHint = undefined; render(); }, DOUBLE_CTRL_C).unref();
+      }
     } else if (matchesKey(data, 'ctrl+d')) {
       if (editor.getText()) return false;
       leave();

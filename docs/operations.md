@@ -400,7 +400,7 @@ currently refused; the connector supports coding/read kits and autoreview's fixe
 - Older per-project databases in subfolders of the data dir are left untouched and
   are not imported.
 - The CLI and host run with umask 077. New directories are 700 and new files 600.
-- `--status` and `--history` on a missing database print `No saved session yet.`
+- `--status` and `--history` on a missing database print `No saved chat yet.`
   and create nothing.
 
 ## Durability and recovery
@@ -611,7 +611,8 @@ the port, put another proxy in front of it, or use `tailscale funnel` for it.
 
 ### Pairing a phone
 
-1. On the VPS: `pi-durable serve pair`. It prints a one-time code, `XXXX-XXXX`, valid for 5 minutes.
+1. On the VPS: `pi-durable serve pair`. It prints a one-time code, `XXXX-XXXX`, valid for 5 minutes, and the web app's
+   address. While the web app is off it refuses and says why.
 2. On the phone, open `https://<vps>.<tailnet>.ts.net`. On an iPhone, first add it to the home screen (Share,
    Add to Home Screen) and pair from there: the home-screen app keeps its own cookies, apart from Safari's.
 3. Enter the code and a name for the device (1 to 40 characters, unique). Five wrong tries spend the code;
@@ -627,7 +628,8 @@ pi-durable serve devices                  # names, when paired, when last seen (
 pi-durable serve devices --revoke phone   # forget it and disconnect it now
 ```
 
-A revoked device sees the pairing screen and needs a new code. For a lost phone, also remove it from the tailnet
+A wrong name lists the paired ones (names match exactly, case included). A revoked device sees the pairing screen,
+saying it was revoked, and needs a new code. For a lost phone, also remove it from the tailnet
 in the admin console.
 
 ### Certificate names are public
@@ -697,6 +699,11 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | "Standing agent … cannot run: …", or "could not verify the credentials" | The roster's model for that agent is not in the catalog or its provider has no usable login. Sign in to that provider, or set another `model` for the agent in `settings.json`'s `agents`. Only that agent's tasks fail. |
 | A browser tool fails with "No usable sandbox" (Ubuntu 24.04) | AppArmor restricts unprivileged user namespaces, which Chromium's sandbox needs. Add an AppArmor profile for Playwright's Chromium binary (`~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome`) that allows `userns`, then `sudo apparmor_parser -r` it; or set `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`, which lifts the restriction for every program. Never run the host as root to get around it. |
 | A browser tool cannot create its profile, with `PI_DURABLE_CHROMIUM=/usr/bin/chromium` | That is a snap Chromium, which cannot write under dot-directories such as `~/.local/state`. Use Playwright's Chromium (unset the variable) or a non-snap build such as Google Chrome's `/opt/google/chrome/chrome`. |
+| "Chromium for the browser tools is not installed" | Run `npx --no-install playwright-core install chromium` in the install dir, as the host's user, or set `PI_DURABLE_CHROMIUM`. |
+| "PI_DURABLE_CHROMIUM names …, which does not exist" | Fix the path, or unset the variable to use Playwright's Chromium. |
+| "PI_DURABLE_SSH_KEYS: … is not in Pi's SSH agent: it has a passphrase" (or "there is no such file") | Pi's agent cannot ask for a passphrase: use a key without one, or fix the path. |
+| "no pi-durable server is running here" (over SSH) | Start the server on that machine (`systemctl --user start pi-durable`), or pass `--remote-data-dir` if it uses another data directory. |
+| SSH connect fails with a host-key, `Permission denied` or `command not found` hint | The connector never prompts: run `ssh HOST` once to accept the host key, set up key login, or name the remote binary with `--remote-bin`. |
 | `Node.js >=22.19.0 is required` | Install a newer Node, or set `PI_DURABLE_NODE` to one. |
 | An `ExperimentalWarning` about SQLite | Expected on Node 22. Harmless. |
 | You want to see what is pending | `pi-durable --status` prints the database, conversation ID, memory dir, scheduler state, and pending tasks and submissions. Each agent keeps one `agents.anchor` task, so the count is not zero while agents exist. |

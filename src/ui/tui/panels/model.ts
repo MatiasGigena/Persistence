@@ -10,14 +10,14 @@ import type { PanelTheme, Row } from './frame.ts';
 export const modelRef = (model: { readonly provider: string; readonly id: string }): string => `${model.provider}/${model.id}`;
 
 /**
- * Opens the picker over the chat. Resolves, once it has closed and the editor has focus again, with the available
- * model chosen with Enter, or undefined after Esc. Switching to it is the caller's job.
+ * Opens the picker over the chat, filtered by `filter` as if typed. Resolves, once it has closed and the editor has
+ * focus again, with the available model chosen with Enter, or undefined after Esc. Switching to it is the caller's job.
  */
-export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelTheme): Promise<ModelChoice | undefined> {
+export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelTheme, filter = ''): Promise<ModelChoice | undefined> {
   let models: readonly ModelChoice[] | undefined, failure: string | undefined, hint: string | undefined;
   let picked: ModelChoice | undefined;
   const list = new ListView({
-    title: 'Model', theme, root: true, typeToFilter: true, verb: 'select',
+    title: 'Model', theme, root: true, typeToFilter: true, filter, verb: 'select',
     rows: () => (models ? modelRows(models, session.status().model, theme) : []),
     detail: row => {
       const model = models?.find(m => modelRef(m) === row.key);
@@ -47,6 +47,9 @@ export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelT
   return picked;
 }
 
+/** Widest `provider/id` column. A longer one is not padded, so one long id does not push every row's name and note off. */
+const REF_COLUMN = 40;
+
 /**
  * One row per model: the current one first, then available, then unavailable (dim); `provider/id`, name and note.
  * Compact rows keep only the mark and `provider/id`.
@@ -54,7 +57,7 @@ export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelT
 export function modelRows(models: readonly ModelChoice[], current: string, theme: PanelTheme): Row[] {
   const rank = (m: ModelChoice): number => (modelRef(m) === current ? 0 : m.available ? 1 : 2);
   const sorted = [...models].sort((a, b) => rank(a) - rank(b));
-  const width = Math.max(0, ...sorted.map(m => clean(modelRef(m)).length));
+  const width = Math.max(0, ...sorted.map(m => clean(modelRef(m)).length).filter(w => w <= REF_COLUMN));
   return sorted.map(m => {
     const mark = modelRef(m) === current ? '✓' : ' ', ref = clean(modelRef(m)).padEnd(width);
     const tail = `${clean(m.name)}${m.note ? ` · ${clean(m.note)}` : ''}`;

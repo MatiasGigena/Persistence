@@ -227,7 +227,8 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   },
   'admin.pair': (id, r) => {
     const o = obj(r, 'result');
-    return { t: 'res', id, op: 'admin.pair', ok: true, result: { code: str(o, 'code'), expiresAt: int(o, 'expiresAt') } };
+    const result = withOptional({ code: str(o, 'code'), expiresAt: int(o, 'expiresAt') }, 'origin', optStr(o, 'origin'));
+    return { t: 'res', id, op: 'admin.pair', ok: true, result };
   },
   'admin.devices': (id, r) => ({ t: 'res', id, op: 'admin.devices', ok: true, result: { devices: list(obj(r, 'result'), 'devices', device) } }),
   'admin.revoke': id => ({ t: 'res', id, op: 'admin.revoke', ok: true, result: null }),

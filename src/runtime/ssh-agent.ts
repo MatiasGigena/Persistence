@@ -2,6 +2,7 @@
 // with PI_DURABLE_SSH_KEYS it sees this one, holding only those keys, so `git push` works while every key file stays
 // hidden from the tools.
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -72,8 +73,11 @@ export async function startSshAgent(keys: readonly string[], warn: (message: str
   }
   const addEnv = { ...env, SSH_AUTH_SOCK: socket, SSH_ASKPASS_REQUIRE: 'never' };
   for (const key of keys) {
+    const notAdded = `PI_DURABLE_SSH_KEYS: ${key} is not in Pi's SSH agent`;
+    if (!existsSync(key)) { warn(`${notAdded}: there is no such file.`); continue; }
     const why = await run('ssh-add', ['-q', '--', key], addEnv);
-    if (why) warn(`PI_DURABLE_SSH_KEYS: ${key} is not in Pi's SSH agent (${why}); a key with a passphrase cannot be added.`);
+    // ssh-add asks for a passphrase it cannot get ("Enter passphrase for …"); say so plainly, and only then.
+    if (why) warn(/passphrase/i.test(why) ? `${notAdded}: it has a passphrase, which nothing can ask for here. Use a key without one.` : `${notAdded} (${why}).`);
   }
   return { socket, close };
 }

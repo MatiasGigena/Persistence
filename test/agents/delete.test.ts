@@ -74,7 +74,8 @@ describe('delete_agent (offline)', { concurrency: false, timeout: 60_000 }, () =
       // Only Pi deletes; never Pi itself, an unknown name, or a standing agent.
       assert.equal(await execute('delete_agent', { name: 'S' }, lead), 'Only Pi can delete agents.');
       assert.equal(await execute('delete_agent', { name: 'pi' }), 'Pi cannot be deleted.');
-      assert.equal(await execute('delete_agent', { name: 'nobody' }), 'No agent named nobody.');
+      assert.equal(await execute('delete_agent', { name: 'nobody' }), 'No agent named nobody. The agents are Lead, S.');
+      await assert.rejects(agentTranscript(harness, 'Laed', context), { message: 'No agent named Laed. The agents are Lead, S.' });
       assert.deepEqual(await deleteAgent(harness, context, 'lead', { Lead: ROSTER.Coder! }),
         { error: 'Lead is a standing agent; it can be deleted only after it leaves the roster.' });
       assert.deepEqual((await listAgents(harness, context)).map((agent) => agent.name).sort(), ['Lead', 'S']);
@@ -86,8 +87,8 @@ describe('delete_agent (offline)', { concurrency: false, timeout: 60_000 }, () =
       assert.deepEqual(registry?.deleted, { S: [sub], Lead: [lead] });
       assert.match(await agentTranscript(harness, 'S', context), /^S was deleted; its chat is kept\n\n.*\|S: S idles\./s);
       assert.match(await agentTranscript(harness, 'Lead', context), /Lead was deleted/);
-      assert.equal(await execute('send_message', { to: 'Lead', text: 'x' }), 'No agent named Lead.');
-      assert.equal(await execute('delete_agent', { name: 'Lead' }), 'No agent named Lead.');
+      assert.equal(await execute('send_message', { to: 'Lead', text: 'x' }), 'No agent named Lead. There are none.');
+      assert.equal(await execute('delete_agent', { name: 'Lead' }), 'No agent named Lead. There are none.');
       const again = await (await root.submit({ type: 'input', content: 'again' }, context)).wait(context);
       assert.equal(again.status, 'done');
       await settle(instance);

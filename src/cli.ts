@@ -44,7 +44,7 @@ try {
       else if (config.command === 'backup' && !config.exists) throw new Error(`No saved chat to back up at ${config.databasePath}`);
       else if (config.command === 'backup' && await backupViaServer(config)) { /* done by the server */ }
       else if (config.inspectOnly && !config.exists) {
-        console.log(`No saved session yet.\nDatabase: ${config.databasePath}`);
+        console.log(`No saved chat yet.\nDatabase: ${config.databasePath}`);
       } else {
         const child = spawn('flock', ['--nonblock', '--conflict-exit-code', '75', '--no-fork', statePaths(config.databasePath).lock, process.execPath,
           fileURLToPath(new URL('./host/host.ts', import.meta.url)), JSON.stringify(config)], { stdio: 'inherit' });

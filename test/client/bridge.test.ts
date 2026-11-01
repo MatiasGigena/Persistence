@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import type { Socket } from 'node:net';
@@ -62,9 +63,25 @@ test('bridge refuses missing sockets and non-socket files, writing only stderr',
   await writeFile(path, 'not a socket');
   assert.equal(await bridge(path, { stdin: input, stdout: output.stream, stderr: errors.stream }), 1);
   assert.match(errors.text(), /not a socket/);
-  assert.equal(await bridge(join(dir, 'missing'), { stdin: input, stdout: output.stream, stderr: errors.stream }), 1);
-  assert.match(errors.text(), /ENOENT/);
+  const missing = capture();
+  assert.equal(await bridge(join(dir, 'missing'), { stdin: input, stdout: output.stream, stderr: missing.stream }), 1);
+  // The usual cause, said plainly: no server runs for this data directory.
+  assert.equal(missing.text(), `pi-durable bridge: no pi-durable server is running here: ${join(dir, 'missing')} does not exist. `
+    + 'Start it with pi-durable serve (or systemctl --user start pi-durable); a server with another data directory needs --remote-data-dir.\n');
   assert.equal(output.text(), '');
+});
+
+test('bridge names a stale socket left by a server that stopped', async t => {
+  const path = join(await directory(t), 'chat.sock');
+  // A killed server leaves its socket file behind, with nothing listening on it.
+  const child = spawn(process.execPath, ['-e', `require('node:net').createServer().listen(${JSON.stringify(path)}, () => console.log('up'))`]);
+  await once(child.stdout, 'data');
+  child.kill('SIGKILL');
+  await once(child, 'close');
+  const errors = capture();
+  assert.equal(await bridge(path, { stdin: new PassThrough(), stdout: capture().stream, stderr: errors.stream }), 1);
+  assert.equal(errors.text(), `pi-durable bridge: no pi-durable server is running here: nothing listens on ${path} (a server that stopped left it). `
+    + 'Start it with pi-durable serve (or systemctl --user start pi-durable); a server with another data directory needs --remote-data-dir.\n');
 });
 
 test('bridge signal/abort tears down the socket and restores listeners without closing stdio', async t => {
