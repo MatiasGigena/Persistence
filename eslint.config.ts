@@ -2,7 +2,8 @@ import tseslint from 'typescript-eslint';
 
 // `any` is banned everywhere, written or inferred: use precise types or `unknown` and narrow.
 export default tseslint.config(
-  { ignores: ['node_modules/'] },
+  // .agents/ holds vendored agent skills; docs/showcase/ is a separate React project with its own tsconfig.
+  { ignores: ['node_modules/', '.agents/', 'docs/showcase/'] },
   {
     files: ['**/*.ts'],
     extends: [tseslint.configs.base],
