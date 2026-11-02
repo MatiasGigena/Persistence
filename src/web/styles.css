@@ -757,10 +757,12 @@ dialog::backdrop { background: var(--scrim); }
 .rows-settings { border-top: 1px solid var(--line); }
 .rows-settings .row-aside { font-size: 1.125rem; }
 
-/* The confirm is a modal, not anchored to its trigger: it pops from its centre. */
+/* The confirm is a modal, not anchored to its trigger: it pops from its centre. It is opaque, a step lighter than the
+   sheet it usually lies over, with a hairline edge: a see-through card would let the sheet's text show through its
+   own, and on black, depth comes from a lighter surface rather than a shadow. */
 .confirm {
   width: min(calc(100% - 32px), 26rem); padding: 22px; border: 0; border-radius: 18px;
-  background: var(--chrome-heavy); box-shadow: var(--shadow);
+  background: var(--user); box-shadow: inset 0 0 0 1px var(--line), var(--shadow);
   transition: opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out);
 }
 .confirm.is-out { opacity: 0; transform: scale(var(--pop)); transition-duration: var(--t-fast); pointer-events: none; }
