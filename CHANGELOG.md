@@ -70,6 +70,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   10px), the notes under the switches 12px (were 11px).
 - Web app: in the sheet's rows (settings, agents, models) the detail line sits right under its label, and the pairing
   form's labels sit closer to their fields.
+- Web app: a tool call that ends while you watch turns its running dot into ✓ or ✗ with a small pop, instead of the
+  mark appearing in one frame.
 - Clearer messages and hints throughout. In the terminal: unknown agents, models, options and `--thinking` levels
   are listed or named; `--cwd`/`--database` mistakes are explained; `/stop` says when Pi is idle; a failed send says ↑
   brings it back; `/status` names the machine where tools run; the launcher names the Node it needs. For tools, SSH

@@ -400,6 +400,12 @@ function update(li: HTMLLIElement, item: ViewItem, was: ViewItem | undefined): v
     case 'tool': {
       li.dataset.status = item.status;
       setText(li, '.tool-mark', TOOL_MARK[item.status]);
+      // A call ending while it is watched: the running dot's cell takes its ✓ or ✗ with a small pop, one mark changing
+      // in place rather than a glyph appearing in a frame. Never on history or a resync, which arrive already ended.
+      if (was?.kind === 'tool' && was.status === 'running' && item.status !== 'running') {
+        const mark = li.querySelector('.tool-mark');
+        if (mark instanceof HTMLElement) play(mark, 'mark-pop');
+      }
       setText(li, '.tool-name', item.name);
       setText(li, '.tool-arg', toolSummary(item.name, item.args));
       setText(li, '.tool-state', `, ${TOOL_STATE[item.status]}`);

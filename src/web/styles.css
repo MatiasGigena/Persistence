@@ -503,6 +503,8 @@ button.status-part:active { opacity: 0.6; }
   animation: blink 1s ease-in-out infinite;
 }
 .item-tool[data-status="error"] .tool-mark, .item-tool[data-status="error"] .tool-name { color: var(--danger); }
+/* chat-view.ts plays it when a watched call ends: the mark scales up out of the dot's cell, as the copy check does. */
+.tool-mark.mark-pop { animation: icon-pop var(--t-fast) var(--ease-out) both; }
 .tool-name { flex: none; font-weight: 600; color: var(--ink); }
 .tool-arg { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 0.8125rem/1.4 var(--mono); color: var(--faint); }
 .tool-args, .tool-output, .tool-command {
@@ -805,7 +807,7 @@ dialog::backdrop { background: var(--scrim); }
   .pulse.is-busy::after { display: none; }
   .banner:not(.is-shown) { transform: none; }
   .round-send svg { transform: none; filter: none; }
-  .copy .icon-pop { animation-name: fade-in; }
+  .copy .icon-pop, .tool-mark.mark-pop { animation-name: fade-in; }
   /* A change of screen is a plain short crossfade (--rise and --pop are zero), the same length both ways. */
   :root[data-vt="screen"]::view-transition-new(root), .screen-entering { animation-duration: var(--t-fast); }
 }
