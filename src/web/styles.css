@@ -668,7 +668,8 @@ dialog::backdrop { background: var(--scrim); }
 .sheet-note { color: var(--muted); font-size: 0.9375rem; margin: 6px 0 12px; }
 .sheet-note.is-error { color: var(--danger); }
 .sheet-note.is-busy { display: flex; align-items: center; gap: 8px; }
-.sheet-actions { display: flex; align-items: center; gap: 12px; }
+/* The agent chat's bar (state and Stop) keeps a clear gap above the conversation's rule. */
+.sheet-actions { display: flex; align-items: center; gap: 12px; padding: 4px 0 12px; }
 .sheet-actions .sheet-note { flex: 1; margin: 0; }
 
 .search { width: 100%; min-height: 40px; padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }

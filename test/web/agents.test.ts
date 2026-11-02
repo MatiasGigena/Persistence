@@ -1,5 +1,5 @@
 // An agent's conversation in Chromium: its skeleton holds until the snapshot (an empty one included), gives way to an
-// error. Skipped where there is no Chromium.
+// error, and the Stop bar keeps clear of the conversation's rule. Skipped where there is no Chromium.
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -107,4 +107,14 @@ describe('an agent conversation loads under the loading rule', { skip }, () => {
     assert.equal(((await shown()) as { note: string }).note, 'No agent named Coder.');
     await page.close();
   });
+
+  for (const width of [320, 390, 1440]) {
+    test(`at ${width}px the Stop button keeps clear of the conversation's rule`, async () => {
+      await open(width);
+      const gap = await page.evaluate(`document.querySelector('.agent-chat').getBoundingClientRect().top
+        - document.querySelector('.sheet-actions .btn').getBoundingClientRect().bottom`);
+      assert.ok(Number(gap) >= 8, `only ${String(gap)}px between Stop and the rule`);
+      await page.close();
+    });
+  }
 });

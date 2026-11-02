@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the order they were picked.
 - Web app: an agent's conversation keeps its skeleton until its history arrives, instead of flashing "Nothing here
   yet." between the feed opening and its snapshot; a failed open still replaces it with the error.
+- Web app: the Stop button in an agent's conversation no longer sits on the rule below it.
 - `--plain` no longer drops lines typed ahead or pasted after the first.
 - The terminal footer no longer overflows a narrow screen while "reconnecting…" shows.
 - Web app: re-pairing after a revoke works without a reload; sheets opened while disconnected load once the link is
