@@ -515,9 +515,10 @@ button.status-part:active { opacity: 0.6; }
 .tool-output.is-error { color: var(--danger); }
 @keyframes blink { 50% { opacity: 0.3; } }
 
-/* An agent's report: a card with the lamp's edge. */
-.item-report { border-left: 3px solid var(--lamp); background: var(--surface); border-radius: 4px 12px 12px 4px; padding: 10px 14px 12px; }
-.report-from { font-weight: 600; font-size: 0.875rem; color: var(--accent); margin-bottom: 4px; }
+/* An agent's report: a card with the lamp's edge, padded the same on every side. The name and the report read as one
+   item: a tight line box under the name and 2px to the text, so the card's padding carries the air, not the gap. */
+.item-report { border-left: 3px solid var(--lamp); background: var(--surface); border-radius: 4px 12px 12px 4px; padding: 12px 14px; }
+.report-from { font-weight: 600; font-size: 0.875rem; line-height: 1.3; color: var(--accent); margin-bottom: 2px; }
 .item-report .prose { font-size: 1rem; }
 
 .item-notice { font-size: 0.8125rem; color: var(--faint); display: flex; gap: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
