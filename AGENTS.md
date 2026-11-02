@@ -24,7 +24,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
 - `docs/showcase/`: animated illustrations of the TUI and web app (a separate Vite + React project on the
   stageshow kit, outside `npm run check`); `demos/tui/` and `demos/web/` mirror `src/ui/tui/` and `src/web/`.
-- `.agents/skills/`: vendored agent skills (stageshow), ignored by lint.
+- `.agents/skills/`: agent skills installed locally (`npx skills add`), never committed and ignored by lint.
 - `tsconfig.json`, `eslint.config.ts`: the type and lint rules `npm run check` enforces.
 
 ## Verify

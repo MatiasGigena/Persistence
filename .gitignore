@@ -9,3 +9,8 @@ node_modules/
 .DS_Store
 coverage/
 auth.json
+
+# Agent skills installed locally with `npx skills add`; not part of the repo.
+.agents/
+.claude/skills/
+skills-lock.json
