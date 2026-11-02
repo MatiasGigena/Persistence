@@ -22,7 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`--`, `->`, `!=` read as typed); task-list items show their checkbox without a bullet; picked images attach in
   the order they were picked.
 - Web app: an agent's conversation keeps its skeleton until its history arrives, instead of flashing "Nothing here
-  yet." between the feed opening and its snapshot; a failed open still replaces it with the error.
+  yet." between the feed opening and its snapshot; a failed open, or a failed reopen after a reconnect, still
+  replaces it with the error.
 - Web app: the Stop button in an agent's conversation no longer sits on the rule below it.
 - `--plain` no longer drops lines typed ahead or pasted after the first.
 - The terminal footer no longer overflows a narrow screen while "reconnecting…" shows.

@@ -91,6 +91,8 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       view = new ChatView(list, scroller, { empty: 'Nothing here yet.' });
       /** Set when feed.open failed as the link was down; it is asked again once the link is back. */
       let retry = false;
+      /** Set while the store tracks this conversation, not ended (open, or detached by a reconnect). */
+      let tracked = false;
       const follow = (): void => {
         ctx.link.request('feed.open', { name }).then(
           ({ feed }) => {
@@ -110,6 +112,13 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       const draw = (): void => {
         if (retry && ctx.link.state === 'ready') { retry = false; follow(); }
         const found = ctx.store.agentByName(name);
+        // The store let go of it while the sheet is open: reopening it after a reconnect failed (main.ts forgets it).
+        // Ask again, so the conversation comes back or the skeleton gives way to that error rather than waiting on.
+        if (found) tracked = found.agent.ended === undefined;
+        else if (tracked && list.hidden) {
+          tracked = false;
+          if (ctx.link.state === 'ready') follow(); else retry = true;
+        }
         if (found) view?.set(found.agent.mirror.items);
         // A conversation kept from before a reconnect shows at once.
         if (list.hidden && (failed || found?.agent.loaded || found?.agent.ended !== undefined)) {

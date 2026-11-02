@@ -37,6 +37,11 @@ window.closeSheet = () => sheet.close();
 window.answer = feed => answer.resolve({ feed });
 window.fail = () => answer.reject(new Error('No agent named Coder.'));
 window.snapshot = (feed, items) => store.handle({ t: 'snapshot', feed, items });
+window.opens = 0;
+const request = link.request;
+link.request = op => { if (op === 'feed.open') window.opens++; return request(op); };
+// A drop before the snapshot, then main.ts's reopen after ready failing: it forgets the detached feed.
+window.dropAndLoseReopen = () => { store.disconnect(); store.forget('Coder'); };
 window.ready = true;
 </script></body></html>`;
 }
@@ -105,6 +110,28 @@ describe('an agent conversation loads under the loading rule', { skip }, () => {
     await page.evaluate('window.fail()');
     await page.waitForFunction(`!document.querySelector('.agent-chat .feed-skeleton')`);
     assert.equal(((await shown()) as { note: string }).note, 'No agent named Coder.');
+    await page.close();
+  });
+
+  test('a reopen that fails after a drop before the snapshot gives way to the error, never a skeleton left on', async () => {
+    await open(390);
+    await page.evaluate(`window.answer('f1')`);
+    await page.evaluate('window.dropAndLoseReopen()');
+    assert.equal(await page.evaluate('window.opens'), 2, 'the conversation is asked for again');
+    await page.evaluate('window.fail()');
+    await page.waitForFunction(`!document.querySelector('.agent-chat .feed-skeleton')`, undefined, { timeout: 2000 });
+    assert.equal(((await shown()) as { note: string }).note, 'No agent named Coder.');
+    await page.close();
+  });
+
+  test('a reopen that fails after a drop, then works when asked again, loads the conversation', async () => {
+    await open(1440);
+    await page.evaluate(`window.answer('f1')`);
+    await page.evaluate('window.dropAndLoseReopen()');
+    await page.evaluate(`window.answer('f2')`);
+    await page.evaluate(`window.snapshot('f2', [{ kind: 'user', id: 'u', text: 'task' }])`);
+    await page.waitForSelector('.feed-agent .item');
+    assert.deepEqual(await shown(), { skeleton: false, list: true, empty: false, note: 'Working' });
     await page.close();
   });
 
