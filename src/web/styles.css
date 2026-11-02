@@ -197,7 +197,7 @@ code, pre { font-family: var(--mono); }
 .screen-text code { font-size: 0.9em; background: var(--code); padding: 1px 5px; border-radius: 5px; color: var(--ink); }
 
 .field { display: block; margin-bottom: 16px; }
-.field-label { display: block; font-size: 0.875rem; font-weight: 600; margin-bottom: 6px; }
+.field-label { display: block; font-size: 0.875rem; font-weight: 600; line-height: 1.3; margin-bottom: 6px; }
 .input {
   width: 100%; min-height: var(--tap); padding: 10px 14px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
@@ -691,8 +691,10 @@ dialog::backdrop { background: var(--scrim); }
 .row-skeleton .row-text .skeleton-line + .skeleton-line { height: 0.65em; }
 .row-skeleton .row-aside { width: 2.5em; }
 .row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row-detail { font-size: 0.8125rem; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A row's label and its detail are one item, about 5px of ink apart: tight line boxes, the row's padding carrying the
+   air. */
+.row-label { line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-detail { font-size: 0.8125rem; line-height: 1.35; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-aside { flex: none; font-size: 0.8125rem; color: var(--faint); font-variant-numeric: tabular-nums; }
 .row-mark { flex: none; width: 10px; height: 10px; border-radius: 50%; }
 .mark-busy { background: var(--lamp); box-shadow: 0 0 0 4px var(--lamp-soft); }
