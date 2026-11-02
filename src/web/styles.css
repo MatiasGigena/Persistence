@@ -537,13 +537,15 @@ button.status-part:active { opacity: 0.6; }
   padding: 8px var(--gutter) max(10px, env(safe-area-inset-bottom));
   background: var(--bg);
 }
-/* "Latest" rises in when the reader leaves the bottom and drops away quicker when they return. It stays in the page
-   (main.ts sets .is-shown), so scrolling to and fro about the bottom turns it around mid-way. */
+/* "Latest" floats over the chat, so it takes the raised surface: on black, depth comes from a lighter surface, and a
+   near-black pill would sink into the text behind it. It rises in when the reader leaves the bottom and drops away
+   quicker when they return. It stays in the page (main.ts sets .is-shown), so scrolling to and fro about the bottom
+   turns it around mid-way. */
 .jump {
   position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 4px; min-height: 34px; padding: 0 14px 0 10px;
-  border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted);
-  font-size: 0.875rem; box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+  border: 1px solid var(--line); border-radius: 999px; background: var(--raised); color: var(--muted);
+  font-size: 0.875rem; box-shadow: 0 4px 16px rgb(0 0 0 / 0.5);
   user-select: none; -webkit-user-select: none;
   transition: transform var(--t-base) var(--ease-out), opacity var(--t-base) var(--ease-out), visibility 0s;
 }
