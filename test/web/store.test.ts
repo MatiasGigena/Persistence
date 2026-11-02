@@ -156,6 +156,26 @@ test('agent feeds: open, sync, end, and survive a reconnect by name', () => {
   assert.deepEqual(store.disconnect(), [], 'an ended feed is not reopened');
 });
 
+test('an agent feed is loaded only once its snapshot came, before or after the feed.open answer', () => {
+  const store = connected();
+  store.openAgent('f1', 'Scout');
+  assert.equal(store.agentByName('Scout')?.agent.loaded, false, 'opened, no snapshot yet: not known to be empty');
+  store.handle({ t: 'items', feed: 'f1', ops: [{ op: 'put', item: reply('y', 'ok', false) }] });
+  assert.equal(store.agentByName('Scout')?.agent.loaded, false, 'ops alone are not the conversation');
+  store.handle({ t: 'snapshot', feed: 'f1', items: [] });
+  assert.equal(store.agentByName('Scout')?.agent.loaded, true, 'an empty snapshot is a known empty conversation');
+  store.disconnect();
+  assert.equal(store.agentByName('Scout')?.agent.loaded, true, 'kept while reconnecting');
+  store.openAgent('f2', 'Scout');
+  assert.equal(store.agentByName('Scout')?.agent.loaded, true, 'reopened after a reconnect: shows at once');
+
+  // A snapshot that beats the feed.open answer is kept, and counts.
+  store.handle({ t: 'snapshot', feed: 'f3', items: [user('x', 'task')] });
+  store.openAgent('f3', 'Echo');
+  assert.equal(store.agentByName('Echo')?.agent.loaded, true);
+  assert.deepEqual(store.agentByName('Echo')?.agent.mirror.items.map(i => i.id), ['x']);
+});
+
 test('turnEnds marks the last finished assistant text before each user message and at the end', () => {
   const items: ViewItem[] = [
     user('u1', 'hi'), reply('a1', 'one', false), reply('a2', 'two', false),

@@ -79,8 +79,10 @@ export function agentChatView(ctx: PanelContext, name: string): View {
       const scroller = el('div', 'agent-chat');
       const list = el('ol', 'feed feed-agent');
       list.setAttribute('aria-label', `${name}'s conversation`);
-      // Until the feed opens, lines shaped as a conversation hold its place; it fades in over them.
-      let opening = true;
+      // Until the conversation is known (its snapshot, which follows the feed.open answer), lines shaped as one hold
+      // its place under the loading rule; it fades in over them. An empty list is not known to be empty before then.
+      /** Set when feed.open failed: the skeleton gives way to the error rather than waiting on. */
+      let failed = false;
       const skeleton = skeletonLines(4);
       skeleton.classList.add('feed-skeleton');
       list.hidden = true;
@@ -93,13 +95,12 @@ export function agentChatView(ctx: PanelContext, name: string): View {
         ctx.link.request('feed.open', { name }).then(
           ({ feed }) => {
             if (!open) { void ctx.link.request('feed.close', { feed }).catch(() => undefined); return; }
-            opening = false;
             ctx.store.openAgent(feed, name);
             draw();
           },
           (error: unknown) => {
             if (!open) return;
-            opening = false;
+            failed = true;
             draw();
             state.textContent = errorText(error);
             retry = error instanceof RequestError && error.code === 'lost';
@@ -111,7 +112,7 @@ export function agentChatView(ctx: PanelContext, name: string): View {
         const found = ctx.store.agentByName(name);
         if (found) view?.set(found.agent.mirror.items);
         // A conversation kept from before a reconnect shows at once.
-        if (list.hidden && !(opening && !found?.agent.mirror.items.length)) {
+        if (list.hidden && (failed || found?.agent.loaded || found?.agent.ended !== undefined)) {
           skeleton.remove();
           list.hidden = false;
           fadeIn(list);

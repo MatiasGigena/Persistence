@@ -66,6 +66,8 @@ export interface Mirror {
 export interface AgentFeed {
   readonly name: string;
   readonly mirror: Mirror;
+  /** A snapshot has come (now or before a reconnect): `mirror` is the conversation, not yet a placeholder. */
+  readonly loaded: boolean;
   readonly ended?: string;
 }
 
@@ -170,7 +172,7 @@ export class Store {
           this.root = mirror;
           this.settlePending();
           if (this.synced) for (const text of finished(before.items, mirror.items)) effects.push({ t: 'reply', text, from: 'Pi' });
-        } else if (agent) this.agents.set(msg.feed, { ...agent, mirror });
+        } else if (agent) this.agents.set(msg.feed, { ...agent, mirror, loaded: agent.loaded || msg.t === 'snapshot' });
         break;
       }
       case 'feed.end': {
@@ -254,7 +256,8 @@ export class Store {
   openAgent(feed: string, name: string): void {
     const last = this.agents.get(feed) ?? this.detached.get(name);
     this.detached.delete(name);
-    this.agents.set(feed, { name, mirror: this.orphans.get(feed) ?? last?.mirror ?? EMPTY });
+    const orphan = this.orphans.get(feed);
+    this.agents.set(feed, { name, mirror: orphan ?? last?.mirror ?? EMPTY, loaded: orphan !== undefined || (last?.loaded ?? false) });
     this.orphans.delete(feed);
     this.changed();
   }
