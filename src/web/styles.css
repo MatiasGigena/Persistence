@@ -721,7 +721,8 @@ dialog::backdrop { background: var(--scrim); }
 /* Chat settings, as Pi Cloud's sheet: labelled selects, then switch rows, then rows into Agents and Memory. */
 .controls { display: grid; gap: 14px; padding: 6px 0 4px; }
 .control { display: flex; flex-direction: column; gap: 6px; }
-.control-label { color: var(--faint); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+/* 11px is the floor for words on a phone: these labels and the switches' notes were 10px and 11px. */
+.control-label { color: var(--faint); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
 .control-select {
   width: 100%; min-height: 46px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-sm);
   background: var(--glass); color: var(--ink); font-size: 16px;
@@ -734,7 +735,7 @@ dialog::backdrop { background: var(--scrim); }
 .switch-row { display: flex; align-items: center; gap: 14px; }
 .switch-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
 .switch-text strong { font-size: 0.8125rem; }
-.switch-text small { color: var(--faint); font-size: 0.6875rem; line-height: 1.5; }
+.switch-text small { color: var(--faint); font-size: 0.75rem; line-height: 1.5; }
 .switch {
   position: relative; display: flex; align-items: center; flex: none; width: 44px; height: 28px; padding: 4px;
   border: 1px solid var(--edge); border-radius: 999px; background: var(--raised);

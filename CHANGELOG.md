@@ -66,6 +66,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Web app: the confirmations (turning on coding tools) are an opaque card a step lighter than the sheet, with a
   hairline edge, so the settings behind no longer show through their text.
 - Web app: an agent's report is padded evenly, its name sitting with its text rather than a line above it.
+- Web app: chat settings' smallest type is easier to read on a phone: the Model and Thinking labels are 11px (were
+  10px), the notes under the switches 12px (were 11px).
 - Clearer messages and hints throughout. In the terminal: unknown agents, models, options and `--thinking` levels
   are listed or named; `--cwd`/`--database` mistakes are explained; `/stop` says when Pi is idle; a failed send says ↑
   brings it back; `/status` names the machine where tools run; the launcher names the Node it needs. For tools, SSH
