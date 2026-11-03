@@ -191,8 +191,7 @@ const busyOf = async (source: DocumentReader, conversationId: ConversationId, co
 const sessionsOf = (agent: Pick<AgentRecord, 'conversationId' | 'past'>): ConversationId[] => [...agent.past ?? [], agent.conversationId];
 /** Whether any of an agent's conversations has a run: a past session can still run (input that reached it before). */
 async function agentBusy(source: DocumentReader, agent: Pick<AgentRecord, 'conversationId' | 'past'>, context: Context): Promise<boolean> {
-  for (const id of sessionsOf(agent).reverse()) if (await busyOf(source, id, context)) return true;
-  return false;
+  return (await Promise.all(sessionsOf(agent).map((id) => busyOf(source, id, context)))).includes(true);
 }
 
 const DELIVER_KIND = 'agents.deliver';
@@ -479,8 +478,10 @@ export async function stopAgents(source: AgentsStopper, context: Context = BACKG
   if (name !== undefined && !found) return [];
   const chosen = found ? agents.filter(([each, agent]) => agent.parent === found.name || each === found.name) : agents;
   const order = [...chosen.filter(([, agent]) => agent.role === 'sub'), ...chosen.filter(([, agent]) => agent.role === 'main')];
-  for (const [, agent] of order) {
-    for (const id of sessionsOf(agent)) await (await source.conversation(id, context))?.abort(context);
+  // Each group's agents stop together, every session at once; the subs are stopped before any main is.
+  const abort = async (id: ConversationId) => { await (await source.conversation(id, context))?.abort(context); };
+  for (const role of ['sub', 'main'] as const) {
+    await Promise.all(chosen.filter(([, agent]) => agent.role === role).flatMap(([, agent]) => sessionsOf(agent).map(abort)));
   }
   return order.map(([each]) => each);
 }
@@ -876,13 +877,14 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
     }),
     replay: 'safe',
     execute: async ({ name, task }, api, context) => {
-      const caller = await me(api, context);
+      const registry = await api.snapshot(AgentsDoc, context);
+      const caller = whoIs(registry, api.conversationId);
       if (!caller || caller.role === 'sub') return reply('Sub agents cannot spawn agents.');
       const role = caller.role === 'root' ? 'main' : 'sub';
       if (!isAgentName(name)) {
         return reply('Invalid name: use a letter, then up to 31 letters, digits, _ or -, and not "Pi".');
       }
-      const recorded = (await api.snapshot(AgentsDoc, context))?.calls?.[api.taskId];
+      const recorded = registry?.calls?.[api.taskId];
       const preamble = recorded === undefined && initialContext
         ? await initialContext({ name, role, parent: caller.name, task }, api, context) : undefined;
       const content = `${preamble ? `${preamble}\n\n` : ''}[from ${caller.name}] ${task}`;
@@ -930,11 +932,11 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       const subsBusy = (names: readonly string[]) => `${found.name}'s current task is still running (its sub agent${names.length === 1
         ? ` ${names.join('')} is` : `s ${names.join(', ')} are`} busy); send_message to steer it, or stop_agent first.`;
       // Busy: a run in any of its sessions, or in a sub of its current one (the task goes on while its main is idle).
-      if (await agentBusy(api, found, context)) return once(api, context, () => Promise.resolve(busy));
-      const running: string[] = [];
-      for (const [each, sub] of subsOf(registry?.agents ?? {}, found.name, found.conversationId)) {
-        if (await busyOf(api, sub.conversationId, context)) running.push(each);
-      }
+      const subs = subsOf(registry?.agents ?? {}, found.name, found.conversationId);
+      const [mainBusy, subsRunning] = await Promise.all([agentBusy(api, found, context),
+        Promise.all(subs.map(([, sub]) => busyOf(api, sub.conversationId, context)))]);
+      if (mainBusy) return once(api, context, () => Promise.resolve(busy));
+      const running = subs.filter((_, index) => subsRunning[index]).map(([each]) => each);
       if (running.length) return once(api, context, () => Promise.resolve(subsBusy(running)));
       const preamble = initialContext
         ? await initialContext({ name: found.name, role: 'main', parent: PI, task }, api, context) : undefined;
@@ -987,18 +989,18 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
           .map(([name, agent]) => ({ name, ...agent, role: `${agent.role}, parent ${agent.parent}${agent.standing ? ', standing' : ''}` })),
       ];
       if (!others.length) return reply('No other agents.');
-      const last = await api.commit(async (tx) => {
+      const [last, busy] = await Promise.all([api.commit(async (tx) => {
         const answers: Record<string, Answer | undefined> = {};
         for (const agent of others) answers[agent.name] = await latestAnswer(tx, agent);
         return answers;
-      }, context);
-      const lines = await Promise.all(others.map(async (agent) => {
-        const state = await agentBusy(api, agent, context) ? 'busy' : 'idle';
+      }, context), Promise.all(others.map((agent) => agentBusy(api, agent, context)))]);
+      const lines = others.map((agent, index) => {
+        const state = busy[index] ? 'busy' : 'idle';
         const answer = last[agent.name];
         const said = answer === undefined ? 'no message yet'
           : `last${answer.session === undefined ? '' : ` (session ${answer.session})`}: ${brief(answer.text)}`;
         return `- ${agent.name} (${agent.role}) ${state} — ${said}`;
-      }));
+      });
       return reply(lines.join('\n'));
     },
   });
@@ -1058,8 +1060,8 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       if (!caller) return reply('This conversation is not an agent.');
       const found = target(registry, caller, name);
       if ('error' in found) return reply(found.error);
-      const said = await api.commit((tx) => latestAnswer(tx, found), context);
-      const state = await agentBusy(api, found, context) ? 'busy' : 'idle';
+      const [said, busy] = await Promise.all([api.commit((tx) => latestAnswer(tx, found), context), agentBusy(api, found, context)]);
+      const state = busy ? 'busy' : 'idle';
       const from = said?.session === undefined ? '' : ` (session ${said.session}, an earlier task)`;
       return reply(`${found.name} is ${state}. ${said === undefined ? 'No message yet.' : `Last message${from}:\n${said.text}`}`);
     },
