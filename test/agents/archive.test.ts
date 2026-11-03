@@ -260,6 +260,30 @@ describe('archived agents (offline)', { concurrency: false, timeout: 60_000 }, (
     }
   });
 
+  test('an archived agent is not delete_agent\'s, nor named to Pi; the roster brings it back with its subs', async (t) => {
+    let model: ModelRef | undefined;
+    const instance = await open(await temporary(t), SPAWNING, (each) => { model = each; return {}; });
+    const { harness, context } = instance;
+    try {
+      await ask(instance, 'spawn Lead');
+      await ask(instance, 'spawn Other');
+      await archiveAgents(harness, context, { name: 'Lead' }, T0);
+      const deletedAt = new Date(T0 + ARCHIVE_TTL_MS).toISOString();
+      assert.equal(await execute(instance, 'delete_agent', { name: 'Lead' }), `Lead is archived; it is deleted at ${deletedAt}.`);
+      assert.deepEqual(Object.keys(await registryOf(instance)).sort(), ['Lead', 'Other', 'Sub']);
+      assert.equal(await execute(instance, 'send_message', { to: 'Nobody', text: 'Hi.' }), 'No agent named Nobody. The agents are Other.');
+      assert.ok(model);
+      await syncAgents(harness, context, { roster: { Lead: { model, thinkingLevel: 'off', tools: [] } } });
+      const registry = await registryOf(instance);
+      assert.equal(registry.Lead?.standing, true);
+      assert.equal(registry.Lead?.archivedAt, undefined);
+      assert.equal(registry.Sub?.archivedAt, undefined, 'its sub is no longer archived either');
+      assert.deepEqual(await purgeArchived(harness, context, T0 + ARCHIVE_TTL_MS), []);
+    } finally {
+      await instance.close();
+    }
+  });
+
   test('purge deletes agents archived for a day, subs with their main; zoom keeps their chat; the name is free', async (t) => {
     const instance = await open(await temporary(t));
     const { harness, context } = instance;
@@ -276,7 +300,7 @@ describe('archived agents (offline)', { concurrency: false, timeout: 60_000 }, (
       assert.deepEqual(await purgeArchived(harness, context, T0 + ARCHIVE_TTL_MS), [], 'a second sweep finds nothing');
       // As after delete_agent: zoom still reads the chat, and nothing else knows the name.
       assert.match(await agentTranscript(harness, 'Lead', context), /^Lead was deleted; its chat is kept\n/);
-      assert.match(await execute(instance, 'send_message', { to: 'Lead', text: 'Hi.' }), /^No agent named Lead\. The agents are Other\.$/);
+      assert.match(await execute(instance, 'send_message', { to: 'Lead', text: 'Hi.' }), /^No agent named Lead\. There are none\.$/);
       // The name is free again: a new Lead, with a new conversation and a new sub.
       await ask(instance, 'spawn Lead');
       assert.deepEqual(await visible(instance), ['Lead', 'Sub']);

@@ -296,7 +296,7 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 
 `welcome.machines: true` advertises immutable run/session routing and execution
 connectors. It is optional for protocol compatibility, but the remote CLI
-requires it **before sending any user message**; matching protocol 3 alone does
+requires it **before sending any user message**; matching the protocol alone does
 not replace this capability check. The machine messages, ops and optional fields
 are additive in shape, but `PROTOCOL` is bumped to 3 because routed admission now
 rejects busy-root user sends instead of queueing or steering them. This changes
@@ -469,8 +469,9 @@ Any other code, or a close without `bye`: reconnect.
 
 ## Versioning
 
-- `PROTOCOL` is 3. `hello` and `welcome` carry it, and the server refuses another (4000).
-  Version 3 changes routed `send` admission: a busy root rejects user sends, including steering requests,
+- `PROTOCOL` is 4. `hello` and `welcome` carry it, and the server refuses another (4000).
+  Version 4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034): an older client would show
+  them as active. Version 3 changes routed `send` admission: a busy root rejects user sends, including steering requests,
   instead of queueing/steering them. This semantic incompatibility requires updating clients and server together.
 - Additive changes keep the version: a new message type, op, error code, close code or optional field. Receivers
   therefore ignore what they do not know: a message with an unknown `t` is ignored, unknown fields are dropped by
@@ -481,8 +482,8 @@ Any other code, or a close without `bye`: reconnect.
 ## Example
 
 ```
-→ {"t":"hello","protocol":3,"client":"pi-durable-tui 0.1.0","visible":true}
-← {"t":"welcome","protocol":3,"server":"0.1.0","boot":"k3j","assets":"9f2","peer":"socket","cwd":"/home/me/projects","tools":{"remote":"confirm"},"machines":true}
+→ {"t":"hello","protocol":4,"client":"pi-durable-tui 0.1.0","visible":true}
+← {"t":"welcome","protocol":4,"server":"0.1.0","boot":"k3j","assets":"9f2","peer":"socket","cwd":"/home/me/projects","tools":{"remote":"confirm"},"machines":true}
 ← {"t":"status","status":{"model":"claude-cli/sonnet","thinkingLevel":"high","toolsEnabled":false,"busy":false,"queued":0,"memory":{"messages":12,"unsummarized":0,"active":0,"failed":0,"viewBytes":2048,"viewLines":3},"agents":[]}}
 ← {"t":"snapshot","feed":"root","items":[{"kind":"user","id":"e40","text":"hi"},{"kind":"assistant","id":"e41","text":"Hello!","streaming":false}]}
 ← {"t":"ready"}

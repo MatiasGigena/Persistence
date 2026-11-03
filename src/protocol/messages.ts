@@ -128,8 +128,8 @@ export interface Ops {
   readonly stopAgents: { readonly params: { readonly name?: string }; readonly result: { readonly names: readonly string[] } };
   /**
    * Archives one agent (and a main agent's sub agents), or every ad-hoc main agent with `adhoc: true` (ADR 0034): stops
-   * their work; they are deleted a day later unless restored. Names archived. `failed` with a readable refusal (a
-   * standing agent, an archived one); `not_found` for no such agent.
+   * their work; they are deleted a day later unless restored. Names archived; an agent already archived keeps its time.
+   * `failed` with a readable refusal (a standing agent); `not_found` for no such agent.
    */
   readonly 'agents.archive': { readonly params: ArchiveTarget; readonly result: { readonly names: readonly string[] } };
   /** Restores an archived agent (and a main agent's sub agents); stopped work stays stopped. Names restored. */

@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Archiving agents (ADR 0034): the `/agents` panel, the web app's Agents sheet and `pi-durable serve agents
+  --archive NAME | --archive-adhoc | --restore NAME` archive ad-hoc agents and restore them within the day. An
+  archived agent is stopped, hidden and unreachable; a day later it is deleted as `delete_agent` does, its chat kept
+  for `zoom`. New protocol ops `agents.archive` and `agents.restore`; `PROTOCOL` is 4, since `status.agents` now
+  lists archived agents too: update clients and server together.
+
 ### Changed
 
 - Remote tool calls start sooner: the machine executor makes and flushes its ledger folder once per launch instead

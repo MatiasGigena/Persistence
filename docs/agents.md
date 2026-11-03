@@ -250,7 +250,7 @@ agent:
 - can still be read with `zoom("Name")`.
 
 A standing agent is never archived: a roster entry that names an archived agent makes it standing and clears its
-`archivedAt` at the launch.
+`archivedAt`, and its subs', at the launch. Pi's `delete_agent` refuses an archived agent: the sweep deletes it.
 
 **The sweeper.** `openInstance()` runs `purgeArchived` at every work launch, after `syncAgents`, so a host closed for a
 day deletes overdue agents at its next launch, and then hourly (`sweepMs`) while it runs; the timer does not keep
@@ -272,7 +272,7 @@ What the model sees (descriptions abridged to their content):
 | `send_message` | `to`, `text` | `Sent to X.`; at once |
 | `last_message` | `name` | `X is busy or idle. Last message:\n<text>` (`Last message (session n, an earlier task):` when it is from a past session) or `X is busy or idle. No message yet.` |
 | `stop_agent` | `name` | `Stopped X.`, `Stopped X and its sub agents A, B.`; Pi stopping a sub also gets `Its main agent M is not told; message it if it should know.` |
-| `delete_agent` | `name` | `Deleted X. Its chat stays readable with zoom("X").` or `Deleted X and its sub agents A, B. Their chats stay readable with zoom("X").`; refusals: `Only Pi can delete agents.`, `Pi cannot be deleted.`, `X is a standing agent; ...`, `X is busy; stop_agent X first, then delete it.`, `A message to X is still on its way; ...` |
+| `delete_agent` | `name` | `Deleted X. Its chat stays readable with zoom("X").` or `Deleted X and its sub agents A, B. Their chats stay readable with zoom("X").`; refusals: `Only Pi can delete agents.`, `Pi cannot be deleted.`, `X is a standing agent; ...`, `X is busy; stop_agent X first, then delete it.`, `A message to X is still on its way; ...`, `X is archived; it is deleted at <ISO time>.` |
 
 Refusals are plain texts such as `No agent named X. The agents are A, B.` (or `There are none.`: an unknown name, in
 Pi's tools and in `zoom("X")`, lists the names there are, so a misspelt one is fixed in one step; other agents get

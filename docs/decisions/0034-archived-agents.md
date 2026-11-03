@@ -45,8 +45,8 @@ to clear the others away by hand, and have them gone for good a day later.
   ones with their deletion time and a restore action.
 - Web app: the same in the Agents sheet.
 - Protocol: new ops `agents.archive` (`{ name }` or `{ adhoc: true }` → `{ names }`) and `agents.restore`
-  (`{ name }` → `{ names }`), both peers; `SessionStatus.agents` entries gain an optional `archivedAt`. Additive:
-  `PROTOCOL` stays.
+  (`{ name }` → `{ names }`), both peers; `SessionStatus.agents` entries gain an optional `archivedAt`. The field is optional, but
+  `status.agents` now lists archived agents too, which an older client would show as active: `PROTOCOL` goes to 4.
 - Server CLI: `pi-durable serve agents` lists agents; `--archive NAME`, `--archive-adhoc` and `--restore NAME` call
   the ops over the socket.
 - Pi has no tool for it; its `delete_agent` deletes an idle ad-hoc agent at once, while archiving can be undone for a

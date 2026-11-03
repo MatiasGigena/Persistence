@@ -140,7 +140,8 @@ const find = (agents: Readonly<Record<string, AgentRecord>>, name: string): Name
 
 /** The refusal for an unknown agent name, naming the agents there are, so a misspelt name is fixed in one step. */
 const noAgent = (agents: Readonly<Record<string, AgentRecord>>, name: string): string => {
-  const names = Object.keys(agents);
+  // Archived agents are hidden everywhere else (ADR 0034), so not named here either.
+  const names = Object.keys(agents).filter((each) => archivedSince(agents, each) === undefined);
   return `No agent named ${name}. ${names.length ? `The agents are ${names.join(', ')}.` : 'There are none.'}`;
 };
 
@@ -453,8 +454,11 @@ async function ensureStanding(tx: Tx, registry: Draft<AgentsState>, roster: Rost
       if (record.role !== 'main') record.role = 'main';
       if (record.parent !== PI) record.parent = PI;
       if (record.session !== undefined) delete record.session;
-      // A standing agent is never archived (ADR 0034): an archived one the roster names comes back.
+      // A standing agent is never archived (ADR 0034): an archived one the roster names comes back, with its subs.
       if (record.archivedAt !== undefined) delete record.archivedAt;
+      for (const sub of Object.values(registry.agents)) {
+        if (sub.role === 'sub' && sub.parent === existing.name && sub.archivedAt !== undefined) delete sub.archivedAt;
+      }
       continue;
     }
     const anchor = await tx.createTask(Anchor, null, { ...TASK_OPTIONS, conversationId: ROOT_CONVERSATION_ID });
@@ -559,6 +563,9 @@ async function removeAgent(tx: Tx, registry: Draft<AgentsState>, name: string, b
   if (found.standing || (roster && rosterEntry(roster, found.name))) {
     return { error: `${found.name} is a standing agent; it can be deleted only after it leaves the roster.` };
   }
+  // The user archived it, so it is theirs to restore or let go: the sweep deletes it (ADR 0034).
+  const archived = archivedRefusal(registry.agents, found.name);
+  if (archived !== undefined) return { error: archived };
   const subs = found.role === 'main'
     ? Object.entries(registry.agents).filter(([, agent]) => agent.role === 'sub' && agent.parent === found.name).map(([each]) => each) : [];
   const chosen = [...subs, found.name];

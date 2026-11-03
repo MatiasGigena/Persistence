@@ -154,7 +154,7 @@ disabled. `bridge` proxies stdin/stdout to the existing, owner-checked mode 600
 Unix socket; diagnostics go only to stderr. It opens no database, model runtime,
 Harness, flock, TCP listener or SSH forwarding port. The remote login shell must
 not print banners to stdout for noninteractive commands. Use the same application
-version on both ends (protocol 3); routed busy-root sends now reject instead of
+version on both ends (protocol 4); routed busy-root sends now reject instead of
 queueing or steering, so update clients and server together. The client also
 refuses a server without machine-routing capability before sending a message.
 

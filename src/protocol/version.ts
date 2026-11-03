@@ -2,4 +2,4 @@
 // field) keep it; removing or renaming anything, or a new ChatItem kind or item op, bumps it.
 
 /** The protocol this build speaks; `hello` and `welcome` carry it, and both sides refuse another. */
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
