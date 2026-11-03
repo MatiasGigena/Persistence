@@ -229,7 +229,6 @@ tsconfig.json       strict TypeScript, run by Node's type stripping (no build)
 eslint.config.ts    lint rules: no any
 test/               offline tests, by area, with fixtures
 docs/               architecture, operations, models, memory, agents, decisions, licenses
-docs/showcase/      animated illustrations of the terminal and phone UI (separate Vite project)
 ```
 
 ## Docs
@@ -241,7 +240,6 @@ docs/showcase/      animated illustrations of the terminal and phone UI (separat
 - [docs/agents.md](docs/agents.md): agent roles, messaging, delivery and execution targets
 - [docs/protocol.md](docs/protocol.md): native socket, SSH and web protocol
 - [docs/decisions/](docs/decisions/): architecture decision records
-- [docs/showcase/](docs/showcase/): animated illustrations of the whole UI, built with the stageshow skill
 - [CONTRIBUTING.md](CONTRIBUTING.md): development, tests, rules
 - [AGENTS.md](AGENTS.md): instructions for coding agents
 - [CHANGELOG.md](CHANGELOG.md)
@@ -249,5 +247,5 @@ docs/showcase/      animated illustrations of the terminal and phone UI (separat
 ## Status
 
 Experimental and personal. It depends on an experimental SDK pinned at 1.3.0.
-No license yet; all rights reserved. Parts of `src/memory/` are adapted from
+Licensed under the [Apache License 2.0](LICENSE). Parts of `src/memory/` are adapted from
 [UniiChat](https://github.com/VictorTaelin/uniichat) under the Apache License 2.0; see [NOTICE](NOTICE).
