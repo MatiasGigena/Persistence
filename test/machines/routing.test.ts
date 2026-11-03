@@ -3,9 +3,9 @@ import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test, type TestContext } from 'node:test';
-import { Type } from '@earendil-works/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
+import { obj, str } from '@earendil-works/pi-schema';
 import { AgentDoc, defineExtension, defineTool, InboxDoc, LiveDoc, type JsonObject, type ToolExecutionResult } from '@earendil-works/pi-durable';
 import { AgentsDoc, type Roster, syncAgents } from '../../src/agents/index.ts';
 import { AgentRouteDoc, RoutingDoc, RunRouteDoc, SubmissionRouteDoc, type RoutingDispatcher } from '../../src/machines/routing.ts';
@@ -487,7 +487,7 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
       assert.ok(inbox);
       stopWatch = () => inbox.stop();
       const queued = Promise.withResolvers<void>();
-      inbox.start(async value => { if (value?.items.some(item => item.mode === 'steer')) queued.resolve(); });
+      inbox.start(async call => { if (call.kind === 'value' && call.value.items.some(item => item.mode === 'steer')) queued.resolve(); });
       const id = (await instance.harness.snapshot(AgentsDoc, instance.context))?.agents.Coder?.conversationId;
       assert.ok(id);
       const coder = await instance.harness.conversation(id, instance.context);
@@ -508,9 +508,9 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     let browsed = 0;
     let fetched = 0;
     const Browser = defineExtension({ name: 'test-browser', tools: [defineTool({ name: 'browser_goto', description: 'Test browser.',
-      parameters: Type.Object({ url: Type.String() }), execute: async () => { browsed++; return result('browsed'); } })] });
+      parameters: obj({ url: str() }), execute: async () => { browsed++; return result('browsed'); } })] });
     const WebFetch = defineExtension({ name: 'test-web-fetch', tools: [defineTool({ name: 'web_fetch', description: 'Test fetch.',
-      parameters: Type.Object({ url: Type.String() }), execute: async () => { fetched++; return result('fetched'); } })] });
+      parameters: obj({ url: str() }), execute: async () => { fetched++; return result('fetched'); } })] });
     const seen: Turn[] = [];
     const catalog = offlineModels(router({
       Pi: ({ user, last }) => !last && (user.endsWith('remote') || user.endsWith('server'))

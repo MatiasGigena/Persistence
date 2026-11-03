@@ -1,7 +1,7 @@
 # Persistence
 
 One Pi chat in your terminal that never ends. It runs on the experimental
-[`@earendil-works/pi-durable@1.3.0`](https://github.com/earendil-works/pi/tree/v1.3.0/packages/durable)
+[`@earendil-works/pi-durable@1.5.0`](https://github.com/earendil-works/pi/tree/v1.5.0/packages/durable)
 SDK, keeps its memory with Victor Taelin's
 [UniiChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)
 recipe, and lets Pi start agents that work in the background.
@@ -250,6 +250,6 @@ docs/               architecture, operations, models, memory, agents, decisions,
 
 ## Status
 
-Experimental and under active development. It depends on an experimental SDK pinned at 1.3.0.
+Experimental and under active development. It depends on an experimental SDK pinned at 1.5.0.
 Licensed under the [Apache License 2.0](LICENSE). Parts of `src/memory/` are adapted from
 [UniiChat](https://github.com/VictorTaelin/uniichat) under the Apache License 2.0; see [NOTICE](NOTICE).

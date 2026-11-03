@@ -1,22 +1,25 @@
-import { type Static, Type } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { Extension, ToolRegistration } from '@earendil-works/pi-durable';
+import { arr, obj, opt, type Schema, type Static, str, union } from '@earendil-works/pi-schema';
 
-const value = Type.String({ minLength: 1 });
-const parameters = Type.Object({
-  mode: Type.Union([Type.Literal('local'), Type.Literal('branch'), Type.Literal('commit')], {
+/** A string literal as TypeBox wrote it (`type` and `const`), so the tool's JSON Schema stays as it was. */
+const literal = <const V extends string>(value: V): Schema<V> => ({ type: 'string', const: value });
+
+const value = str({ minLength: 1 });
+const parameters = obj({
+  mode: union([literal('local'), literal('branch'), literal('commit')], {
     description: 'local includes staged, unstaged and untracked work; branch compares merge-base to HEAD; commit reviews one commit.',
   }),
-  repository: Type.Optional(Type.String({ minLength: 1, description: 'Repository directory on the pinned machine; absolute or relative to its working directory. Default: .' })),
-  base: Type.Optional(Type.String({ minLength: 1, description: 'Required for branch; optional pinned base for local.' })),
-  commit: Type.Optional(Type.String({ minLength: 1, description: 'Only for commit mode; default HEAD.' })),
-  prompt: Type.Optional(Type.String({ description: 'Task-specific context; does not expand the selected Git scope.' })),
-  promptFiles: Type.Optional(Type.Array(value, { description: 'Context files inside the reviewed repository.' })),
-  datasets: Type.Optional(Type.Array(value, { description: 'Repository-relative evidence files; include unchanged source when needed.' })),
-  engine: Type.Optional(Type.Union([Type.Literal('codex'), Type.Literal('pi')], {
+  repository: opt(str({ minLength: 1, description: 'Repository directory on the pinned machine; absolute or relative to its working directory. Default: .' })),
+  base: opt(str({ minLength: 1, description: 'Required for branch; optional pinned base for local.' })),
+  commit: opt(str({ minLength: 1, description: 'Only for commit mode; default HEAD.' })),
+  prompt: opt(str({ description: 'Task-specific context; does not expand the selected Git scope.' })),
+  promptFiles: opt(arr(value, { description: 'Context files inside the reviewed repository.' })),
+  datasets: opt(arr(value, { description: 'Repository-relative evidence files; include unchanged source when needed.' })),
+  engine: opt(union([literal('codex'), literal('pi')], {
     description: 'Default codex. Use pi only after diagnosing and reporting a concrete Codex availability failure, never to bypass isolation, safety, rate limits or findings.',
   })),
-}, { additionalProperties: false });
+});
 
 /** Quote one shell argument; no caller text is executable syntax or an extra helper option. */
 function quote(text: string): string {

@@ -103,7 +103,7 @@ export function imagesProblem(models: Pick<Models, 'getModel'>, { provider, mode
 export function catalogProblem(models: Pick<Models, 'getModel'>, { provider, modelId }: ModelRef): string | undefined {
   if (models.getModel(provider, modelId)) return undefined;
   return provider === CLAUDE_CLI ? `Unknown model claude-cli/${modelId}. Use opus, sonnet, haiku or fable.`
-    : `Unknown model ${provider}/${modelId} in pinned Pi 1.3.0 catalog`;
+    : `Unknown model ${provider}/${modelId} in pinned Pi 1.5.0 catalog`;
 }
 
 /** The short hint shown beside a provider's models. */

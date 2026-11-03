@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, test, type TestContext } from 'node:test';
-import { Type } from '@earendil-works/pi-ai';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { AgentDoc, type ConversationId, defineExtension, defineTool, type ModelRef, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
+import { obj, str } from '@earendil-works/pi-schema';
 import { AgentsDoc, DEFAULT_ROSTER, type Roster } from '../../src/agents/index.ts';
 import { openInstance, type Instance, type InstanceOptions } from '../../src/runtime/runtime.ts';
 import { call, router, say, type Turn } from '../fixtures/agents-instance.ts';
@@ -37,7 +37,7 @@ function catalog(seen: Turn[] = [], script: Parameters<typeof router>[0] = {}) {
 /** A stand-in for the browser kit: an extension of its own, with one tool. */
 const FakeBrowser = defineExtension({
   name: 'test-browser',
-  tools: [defineTool({ name: 'browser_goto', description: 'Test only.', parameters: Type.Object({ url: Type.String() }),
+  tools: [defineTool({ name: 'browser_goto', description: 'Test only.', parameters: obj({ url: str() }, { open: true }),
     execute: async () => ({ output: [{ type: 'text', text: 'ok' }] }) })],
 });
 const browserKit = { browser: { extension: FakeBrowser, tools: FakeBrowser.tools ?? [] } };

@@ -5,9 +5,9 @@ import { isIP, type LookupFunction } from 'node:net';
 import { basename } from 'node:path';
 import type { Readable } from 'node:stream';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
-import { Type } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { Extension, ToolRegistration } from '@earendil-works/pi-durable';
+import { obj, str } from '@earendil-works/pi-schema';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
@@ -531,7 +531,7 @@ export function createWebFetchExtension(options: WebFetchOptions = {}): WebFetch
     description: 'Fetch a public web page and return its readable content as Markdown (HTML via Readability and Turndown, '
       + 'PDFs as text, plain text as is), at most 50,000 characters. Refuses private, loopback and Tailscale addresses. '
       + 'Sends URLs to no third-party reader service; use the browser tools for JavaScript-rendered pages.',
-    parameters: Type.Object({ url: Type.String({ description: 'http or https URL to fetch' }) }),
+    parameters: obj({ url: str({ description: 'http or https URL to fetch' }) }, { open: true }),
     // Read-only: rerunning an interrupted fetch on recovery repeats a GET and changes nothing.
     replay: 'safe',
     execute: async ({ url }, _api, context) => {

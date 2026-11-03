@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Persistence is a terminal host for one never-ending Pi chat on
-`@earendil-works/pi-durable` 1.3.0. Pi's context is a UniiChat memory view, and Pi
+`@earendil-works/pi-durable` 1.5.0. Pi's context is a UniiChat memory view, and Pi
 can spawn background agents. The launcher is `bin/pi-durable`. The code is strict
 TypeScript that Node runs by type stripping: there is no build step.
 
@@ -15,7 +15,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and
   `web-fetch.ts` (`web_fetch`), `autoreview.ts` (the Reviewer's installed skill helper, fixed P0–P2, through guarded/routed execution), `show-image.ts`, and `codemode.ts` (scripts that call the coding tools, ADR 0033).
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
-- `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable events, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents, /mem, /model and /effort). The TUI never imports pi-durable.
+- `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable's conversation views, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents, /mem, /model and /effort). The TUI never imports pi-durable.
 - `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`.
 - `src/server/`: `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
 - `src/client/`: attached TUI and SSH connector: `attach.ts`, `remote-session.ts`, `unix-link.ts`; `config.ts` and `remote.ts` select the central server before local chat resolution, `ssh-link.ts` and `bridge.ts` carry the socket over SSH, `machine-executor.ts` runs guarded tools with a durable local ledger.

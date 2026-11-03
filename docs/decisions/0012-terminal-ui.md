@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-19. Amended by [0016](0016-server-mode.md) and [0018](0018-tui-attach.md): the terminal UI also attaches to a running server.
+Accepted, 2026-10-19. Amended by [0016](0016-server-mode.md) and [0018](0018-tui-attach.md): the terminal UI also attaches to a running server. Amended by [0035](0035-pi-1-5-0.md): the chat is built from Pi 1.5.0's conversation view, which replaced the event stream.
 
 ## Context
 

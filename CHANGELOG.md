@@ -178,6 +178,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking for rollbacks:** the Pi packages are pinned at 1.5.0 (ADR 0035). The first launch migrates
+  `chat.sqlite` to Durable SQLite schema 2, which 1.3.0 cannot open: back up first (`pi-durable backup`). The
+  terminal UI is built from Pi's conversation view instead of the removed `watchEvents()`, and the tools' schemas
+  come from `@earendil-works/pi-schema`, unchanged on the wire.
 - Remote tool calls start sooner: the machine executor makes and flushes its ledger folder once per launch instead
   of on every call. Guarded file operations and bash, machine routing, the claude-cli provider, the agent tools,
   and startup and shutdown run independent steps together instead of one after another.

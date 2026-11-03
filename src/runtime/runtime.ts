@@ -448,7 +448,7 @@ export async function openInstance({
       onReport,
       // pi-durable compacts agents, which have no view, so their contexts stay bounded (ADR 0015). Pi's own
       // compactions are declined by the uniichat extension: its view keeps Pi's context a constant size.
-      settings: { compaction: { enabled: true } },
+      settings: { compaction: { enabled: true }, restartLimit: Infinity },
     }, context);
     const root = await harness.root(context, configureAgent ? { agent } : undefined);
     if (routing && configureAgent) await routing.initialize(context);

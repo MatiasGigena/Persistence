@@ -112,7 +112,7 @@ async function executeNative(call: MachineCall, signal: AbortSignal, guarded: Pr
   }) };
   const api: ToolExecutionApi = {
     get taskId() { return unsupported(); }, get conversationId() { return unsupported(); },
-    get registry() { return unsupported(); }, callId: call.id, models, env,
+    get registry() { return unsupported(); }, callId: call.id, models, env, now: () => Date.now(),
     agent: () => Promise.resolve({ model: { provider: 'machine', modelId: 'machine-text' }, thinkingLevel: 'off',
       extensions: [], tools: [], callable: [], deferred: [], sections: [], cwd: call.target.cwd }),
     output: (chunk, skipped) => { output.push(chunk, skipped); },

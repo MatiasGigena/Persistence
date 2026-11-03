@@ -1,11 +1,11 @@
 import type { Context } from '@earendil-works/chord';
-import { Type } from '@earendil-works/pi-ai';
 import type { AssistantMessage, ImageContent, Message, TextContent, ToolCall, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 import { getCurrentSystemMessage, getCurrentSystemPrompt } from '@earendil-works/pi-ai/utils/transcript';
 import {
   CompactionTask, defineTool, GenerationTask, hook, ROOT_CONVERSATION_ID, section, ToolTask,
 } from '@earendil-works/pi-durable';
 import type { ConversationId, EntryRecord, Extension, HookApi, ToolRegistration } from '@earendil-works/pi-durable';
+import { int, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { reportSrc } from './memory.ts';
 import type { Memory, ReportInput } from './memory.ts';
 import { PROMPT } from './prompt.ts';
@@ -159,11 +159,11 @@ export function createUniiExtension({
   const zoom = defineTool({
     name: 'zoom',
     description: 'Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole (a long one comes in pages: page = 2, 3, ...). zoom("Name") gives an agent\'s whole chat, a long one in pages too.',
-    parameters: Type.Object({
-      id: Type.Union([Type.Integer({ minimum: 0 }), Type.String()], { description: 'First message id of the line, or an agent name' }),
-      n: Type.Optional(Type.Integer({ minimum: 1, description: 'Messages the line covers (a power of 2); default 1' })),
-      page: Type.Optional(Type.Integer({ minimum: 1, description: 'Page of a long message or chat, with n = 1' })),
-    }),
+    parameters: obj({
+      id: union([int({ minimum: 0 }), str()], { description: 'First message id of the line, or an agent name' }),
+      n: opt(int({ minimum: 1, description: 'Messages the line covers (a power of 2); default 1' })),
+      page: opt(int({ minimum: 1, description: 'Page of a long message or chat, with n = 1' })),
+    }, { open: true }),
     replay: 'safe',
     outputLimits: { maxBytes: 256 * 1024, maxLines: 100_000 },
     execute: async ({ id, n = 1, page = 1 }) => {
@@ -175,7 +175,7 @@ export function createUniiExtension({
   const date = defineTool({
     name: 'date',
     description: 'The date and time of message id.',
-    parameters: Type.Object({ id: Type.Integer({ minimum: 0 }) }),
+    parameters: obj({ id: int({ minimum: 0 }) }, { open: true }),
     replay: 'safe',
     execute: async ({ id }) => ({ output: [{ type: 'text', text: open().date(id) }] }),
   });

@@ -405,8 +405,10 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       await assert.rejects(answerText(instance.root, {
         ...ids, type: 'input', status: 'unanswered', reason: 'aborted', detail: 'test cancellation',
       }, instance.context), /not answered.*aborted.*test cancellation/i);
+      const entry = settled.entry;
+      assert.ok(entry !== undefined);
       await assert.rejects(answerText(instance.root, {
-        ...ids, type: 'input', status: 'placed', entry: settled.entry,
+        ...ids, type: 'input', status: 'placed', entry,
       }, instance.context), /not answered/i);
     } finally {
       await instance.close();

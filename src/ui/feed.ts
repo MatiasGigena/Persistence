@@ -1,10 +1,11 @@
-// One conversation as a ChatFeed: pi-durable's agent events folded into ChatItems.
-import type { Context } from '@earendil-works/chord';
+// One conversation as a ChatFeed: pi-durable's conversation view (entries, `pi.live`, `pi.inbox`, `pi.agent`) folded
+// into ChatItems.
+import type { Context, JsonRepresentation, WatchCall, WatchHandle } from '@earendil-works/chord';
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
-import { watchEvents } from '@earendil-works/pi-durable';
+import { AgentDoc, InboxDoc, LiveDoc } from '@earendil-works/pi-durable';
 import type {
-  AgentEvent, AgentEventStream, AgentState, ConversationId, EntryRecord, Harness, MessageChange, SnapshotEvent,
-  SubmissionRecord, ToolSlot,
+  AgentState, ConversationDocToken, ConversationId, ConversationView, EntryId, EntryRecord, Harness, JsonObject, LiveState,
+  RunFailure, ToolSlot,
 } from '@earendil-works/pi-durable';
 import { MESSAGE_KIND, REPORT_KIND } from '../agents/index.ts';
 import { isRecord } from '../host/config.ts';
@@ -19,11 +20,16 @@ type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 type LiveBlock = { kind: 'text' | 'thinking'; text: string } | { kind: 'tool'; id: string; name: string; args: unknown };
 type Streaming = { key: string; blocks: (LiveBlock | undefined)[] };
 
-/** What the status line reads from a conversation's events. */
+/** What the status line reads from a conversation's view. */
 export interface FeedState {
   readonly busy: boolean;
   readonly queued: number;
   readonly agent: AgentState;
+}
+
+/** What one view revision changed, for status refreshes: `settled` when an entry was appended, a tool call ended, or a run started or ended. */
+export interface FeedChange {
+  readonly settled: boolean;
 }
 
 const toolId = (callId: string): string => `tool:${callId}`;
@@ -48,25 +54,20 @@ function imagesOf(content: Message['content']): readonly ChatImage[] | undefined
 const withImages = <T extends object>(item: T, images: readonly ChatImage[] | undefined): T =>
   images === undefined ? item : { ...item, images };
 
-/** `value` with `delta` appended to the string at `path` (a streamed tool argument); anything else unchanged. */
-function appendAt(value: unknown, path: readonly (string | number)[], delta: string): unknown {
-  const [head, ...rest] = path;
-  if (head === undefined) return typeof value === 'string' ? value + delta : value;
-  if (Array.isArray(value) && typeof head === 'number') {
-    const list: unknown[] = value, copy = [...list];
-    copy[head] = appendAt(copy[head], rest, delta);
-    return copy;
-  }
-  return isRecord(value) ? { ...value, [head]: appendAt(value[head], rest, delta) } : value;
-}
-
 const compact = (args: unknown): string => JSON.stringify(args) ?? '';
 
-/** What failed, by pi-durable's task kind; other kinds show as they are. */
-const FAILED: Readonly<Record<string, string>> = { 'pi.generation': 'The reply' };
-
-/** Why a message went unanswered, by pi-durable's reason code; other codes show as they are. */
+/** Why a message went unanswered, by `pi.live.runFailure`'s reason; other reasons show as they are, with their detail. */
 const UNANSWERED: Readonly<Record<string, string>> = { no_model: 'the model is not available; pick another model' };
+
+/** Entries the window has that the chat does not show: compaction summaries sit in place now, after what they summarize. */
+const HIDDEN: ReadonlySet<string> = new Set(['pi.compaction']);
+
+/** Entries a feed's first view holds, enough for CAP items; the window keeps up to twice as many. */
+const WINDOW = { min: 2 * CAP };
+
+/** A built-in document of the view; the view holds each as stored, keyed by kind. */
+const docOf = <T extends JsonObject>(view: ConversationView, token: ConversationDocToken<T>): Readonly<T> | undefined =>
+  view.docs[token.definition.kind] as Readonly<T> | undefined;
 
 /** An agent input entry's sender and text: a report (`agents.report`) or a message (`agents.message`). */
 function reportOf(entry: EntryRecord): { from: string; text: string } | undefined {
@@ -83,22 +84,34 @@ export class ConversationFeed implements ChatFeed {
   private view: readonly ChatItem[] = [];
   private live = 0;
   private dirty = false;
+  /** The newest entry folded in: a later view appends only what is newer. */
+  private last: EntryId | undefined;
+  /** The current run's `first` entry, to tell a new run from the one before when both arrive in one update. */
+  private runFirst: EntryId | undefined;
+  /** Run failures and compaction failures shown (or there at attachment): each shows once. */
+  private readonly failures = new Set<string>();
   private closing: Promise<void> | undefined;
   private readonly listeners = new Set<() => void>();
-  private readonly stateListeners = new Set<(events: readonly AgentEvent[]) => void>();
+  private readonly stateListeners = new Set<(change: FeedChange) => void>();
   private current: FeedState = { busy: false, queued: 0, agent: {} };
-  private readonly stream: AgentEventStream;
+  private readonly watch: WatchHandle<ConversationView>;
 
-  private constructor(stream: AgentEventStream) {
-    this.stream = stream;
-    this.reset(stream.snapshot);
+  private constructor(watch: WatchHandle<ConversationView>) {
+    this.watch = watch;
+    // A failure the conversation already had when the feed attached is history the old view did not show either.
+    const live = docOf(watch.value, LiveDoc);
+    if (live?.runFailure) this.failures.add(runKey(live.runFailure));
+    if (live?.compactionFailure) this.failures.add(`compaction:${live.compactionFailure.taskId}`);
+    this.fold(watch.value);
     this.flush();
   }
 
-  /** Attach to `conversationId`'s events; the snapshot at attachment gives the history. */
+  /** Attach to `conversationId`'s view; its first window gives the history. */
   static async open(harness: Harness, conversationId: ConversationId, context: Context): Promise<ConversationFeed> {
-    const feed = new ConversationFeed(await watchEvents(harness, conversationId, context));
-    feed.stream.start(async (events) => { feed.apply(events); });
+    const conversation = await harness.conversation(conversationId, context);
+    if (!conversation) throw new Error(`No conversation ${conversationId}.`);
+    const feed = new ConversationFeed(await conversation.watch(context, WINDOW));
+    feed.watch.start(async (call: WatchCall<ConversationView>) => { if (call.kind === 'value') feed.apply(call.value); });
     return feed;
   }
 
@@ -111,8 +124,8 @@ export class ConversationFeed implements ChatFeed {
 
   state(): FeedState { return this.current; }
 
-  /** Called after each batch of events, with the batch; for status refreshes. */
-  onState(listener: (events: readonly AgentEvent[]) => void): () => void {
+  /** Called after each view revision, with what it changed; for status refreshes. */
+  onState(listener: (change: FeedChange) => void): () => void {
     this.stateListeners.add(listener);
     return () => { this.stateListeners.delete(listener); };
   }
@@ -120,19 +133,46 @@ export class ConversationFeed implements ChatFeed {
   close(): Promise<void> {
     this.listeners.clear();
     this.stateListeners.clear();
-    this.closing ??= this.stream.stop().then(() => undefined);
+    this.closing ??= this.watch.stop().then(() => undefined);
     return this.closing;
   }
 
-  /** Fold one batch (one commit) into the items, then notify. */
-  apply(events: readonly AgentEvent[]): void {
-    events.forEach((event, at) => {
-      // A message_start right before its message_end is a committed message that did not stream.
-      if (event.type === 'message_start' && events[at + 1]?.type === 'message_end') return;
-      this.event(event);
-    });
+  /** Fold one revision of the view (commits made while the last one was handled arrive folded) into the items, then notify. */
+  apply(view: ConversationView): void {
+    const change = this.fold(view);
     this.flush();
-    for (const listener of this.stateListeners) call(() => listener(events));
+    for (const listener of this.stateListeners) call(() => listener(change));
+  }
+
+  private fold(view: ConversationView): FeedChange {
+    const live = docOf(view, LiveDoc) ?? {};
+    const wasBusy = this.current.busy, busy = live.run !== undefined;
+    let settled = wasBusy !== busy;
+    // New entries first: a committed answer takes the ids its partial had.
+    for (const entry of view.entries) {
+      if (this.last !== undefined && entry.id <= this.last) continue;
+      this.last = entry.id;
+      settled = true;
+      if (!HIDDEN.has(entry.kind)) this.entry(entry);
+    }
+    // A run ended and the next started between two updates: the old partial ends before the new one streams.
+    const first = live.run?.first;
+    if (first !== undefined && this.runFirst !== undefined && first !== this.runFirst) this.endPartial();
+    if (first !== undefined || !busy) this.runFirst = first;
+    this.generation(live.generation);
+    for (const slot of live.tools ?? []) if (this.slot(slot)) settled = true;
+    if (live.runFailure) this.runFailure(live.runFailure);
+    const failed = live.compactionFailure;
+    if (failed && !this.failures.has(`compaction:${failed.taskId}`)) {
+      this.failures.add(`compaction:${failed.taskId}`);
+      this.push({ kind: 'notice', id: `compaction:${failed.taskId}`, text: `Compaction failed: ${failed.error}`, level: 'error' });
+    }
+    if (!busy) {
+      this.endPartial();
+      this.settleTools();
+    }
+    this.setState({ busy, queued: docOf(view, InboxDoc)?.items.length ?? 0, agent: docOf(view, AgentDoc) ?? {} });
+    return { settled };
   }
 
   private flush(): void {
@@ -148,59 +188,6 @@ export class ConversationFeed implements ChatFeed {
 
   private setState(change: Partial<FeedState>): void {
     this.current = { ...this.current, ...change };
-  }
-
-  private reset(snapshot: SnapshotEvent): void {
-    this.committed = [];
-    this.partial = undefined;
-    this.dirty = true;
-    // Enough entries for CAP items; older ones would be trimmed anyway.
-    for (const entry of snapshot.entries.slice(-2 * CAP)) this.entry(entry);
-    const { generation } = snapshot;
-    if (generation?.message) this.startPartial(generation.message);
-    if (generation?.retry) this.retry(generation.attempt, generation.retry.at, generation.retry.error);
-    for (const slot of snapshot.tools) this.slot(slot);
-    this.setState({ busy: snapshot.run !== undefined, queued: snapshot.inbox.length, agent: snapshot.agent });
-    if (!snapshot.run) this.settleTools();
-  }
-
-  private event(event: AgentEvent): void {
-    switch (event.type) {
-      case 'snapshot': return this.reset(event);
-      case 'message_start':
-        if (event.message.role === 'assistant') this.startPartial(event.message);
-        return;
-      case 'message_update': return this.update(event.changes);
-      case 'message_end': return this.entry(event.entry);
-      case 'tool_execution_start':
-        if (event.parentToolCallId === undefined) this.patchTool(event.toolCallId, event.toolName, { args: compact(event.args), status: 'running' });
-        return;
-      case 'tool_execution_update': {
-        const { output } = event;
-        if (event.parentToolCallId !== undefined || !output) return;
-        return this.patchTool(event.toolCallId, event.toolName, item => ({
-          output: 'set' in output ? output.set : item.output.slice(output.trimStart ?? 0) + (output.append ?? ''),
-        }));
-      }
-      case 'tool_execution_end':
-        // With an entry, the result's message_end follows and finishes the item.
-        if (event.parentToolCallId === undefined && !event.entry) {
-          this.patchTool(event.toolCallId, event.toolName, item => ({ status: 'error', output: item.output || '(no result)' }));
-        }
-        return;
-      case 'run_start': return this.setState({ busy: true });
-      case 'run_end':
-        this.setState({ busy: false });
-        this.endPartial();
-        return this.settleTools();
-      case 'inbox_update': return this.setState({ queued: event.items.length });
-      case 'agent_changed': return this.setState({ agent: event.agent });
-      case 'submission': return this.submission(event.record);
-      case 'auto_retry_start': return this.retry(event.attempt, event.at, event.errorMessage);
-      case 'task_failed':
-        return this.push({ kind: 'notice', id: `task:${event.taskId}`, text: `${FAILED[event.kind] ?? event.kind} failed: ${event.message}`, level: 'error' });
-      default: return;
-    }
   }
 
   private push(item: ChatItem): void {
@@ -259,27 +246,17 @@ export class ConversationFeed implements ChatFeed {
     return items;
   }
 
-  private startPartial(message: AssistantMessage): void {
-    this.partial = { key: `live${++this.live}`, blocks: message.content.map(liveBlock) };
-    this.dirty = true;
-  }
-
-  private update(changes: readonly MessageChange[]): void {
-    const partial = this.partial;
-    if (!partial) return;
-    for (const change of changes) {
-      if (change.type === 'message') { partial.blocks = change.message.content.map(liveBlock); continue; }
-      const at = change.contentIndex, block = partial.blocks[at];
-      switch (change.type) {
-        case 'text_delta': case 'thinking_delta':
-          if (block && block.kind !== 'tool') partial.blocks[at] = { ...block, text: block.text + change.delta };
-          break;
-        case 'toolcall_delta':
-          if (block?.kind === 'tool') partial.blocks[at] = { ...block, args: appendAt(block.args, change.path, change.delta) };
-          break;
-        default: partial.blocks[at] = liveBlock(change.block);
-      }
+  /** The in-flight answer (`pi.live.generation`): its streamed partial, and a retry's backoff. */
+  private generation(generation: LiveState['generation']): void {
+    if (generation?.retry) {
+      const { at, error } = generation.retry;
+      this.push({ kind: 'notice', id: `retry:${at}`, text: `Retrying (attempt ${generation.attempt}): ${error}`, level: 'warn' });
     }
+    const message = generation?.message;
+    if (!message) return;
+    const blocks = partialContent(message).map(liveBlock);
+    this.partial ??= { key: `live${++this.live}`, blocks };
+    this.partial.blocks = blocks;
     this.dirty = true;
   }
 
@@ -298,9 +275,20 @@ export class ConversationFeed implements ChatFeed {
     this.push({ ...item, ...(typeof change === 'function' ? change(item) : change) });
   }
 
-  private slot(slot: ToolSlot): void {
-    if (slot.status === 'done') return;
-    this.patchTool(slot.callId, slot.name, { output: slot.output ?? '', status: 'running' });
+  /**
+   * One call of the current tool round: running with its output so far, or done. Done with a result entry, that entry
+   * finishes the item; done without one (the tool task faulted or was orphaned), it fails. True when it ended here.
+   */
+  private slot(slot: ToolSlot): boolean {
+    if (slot.status !== 'done') {
+      this.patchTool(slot.callId, slot.name, { output: slot.output ?? '', status: 'running' });
+      return false;
+    }
+    if (slot.entry !== undefined) return false;
+    const item = this.committed.findLast((each): each is ToolItem => each.kind === 'tool' && each.id === toolId(slot.callId));
+    if (item?.status !== 'running') return false;
+    this.patchTool(slot.callId, slot.name, known => ({ status: 'error', output: known.output || '(no result)' }));
+    return true;
   }
 
   /** No run is going: a tool still running never got its result. */
@@ -312,19 +300,26 @@ export class ConversationFeed implements ChatFeed {
     });
   }
 
-  private retry(attempt: number, at: number, error: string): void {
-    this.push({ kind: 'notice', id: `retry:${at}`, text: `Retrying (attempt ${attempt}): ${error}`, level: 'warn' });
-  }
-
-  private submission(record: SubmissionRecord): void {
-    if (record.type !== 'input' || record.status !== 'unanswered') return;
-    // A model error already shows as the failed answer's notice, a faulted run as its task_failed notice.
-    if (record.reason === 'model_error' || record.reason === 'faulted') return;
-    const text = record.reason !== 'aborted' ? `Not answered: ${UNANSWERED[record.reason] ?? record.reason}.`
-      : record.entry === undefined ? 'Queued message withdrawn.' : 'Interrupted.';
-    this.push({ kind: 'notice', id: `submission:${record.id}`, text, level: record.reason === 'aborted' ? 'info' : 'warn' });
+  /** Why the newest run ended without an answer, once per run. */
+  private runFailure(failure: RunFailure): void {
+    const key = runKey(failure);
+    if (this.failures.has(key)) return;
+    this.failures.add(key);
+    // A model error already shows as the failed answer's notice.
+    if (failure.reason === 'model_error') return;
+    const { reason, detail } = failure;
+    const [text, level] = reason === 'aborted' ? ['Interrupted.', 'info' as const]
+      : reason === 'faulted' ? [`The reply failed: ${detail ?? 'unknown error'}`, 'error' as const]
+        : [`Not answered: ${UNANSWERED[reason] ?? (detail ? `${reason} (${detail})` : reason)}.`, 'warn' as const];
+    this.push({ kind: 'notice', id: key, text, level });
   }
 }
+
+const runKey = (failure: RunFailure): string => `run:${failure.taskId}`;
+
+/** The streamed partial's content blocks; the view holds the message as JSON. */
+const partialContent = (message: JsonRepresentation<AssistantMessage>): AssistantMessage['content'] =>
+  (message as AssistantMessage).content;
 
 /** Whether two items show the same: every field is a primitive, or an `images` list compared image by image. */
 function same(a: ChatItem, b: ChatItem): boolean {

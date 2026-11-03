@@ -9,10 +9,11 @@ import { describe, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Context } from '@earendil-works/chord';
-import { createModels, getSupportedThinkingLevels, Type } from '@earendil-works/pi-ai';
+import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import type { AssistantMessage, AssistantMessageEventStream, AuthCheck, AuthResult, Credential, Models, ThinkingLevel, Tool,
   ToolResultMessage, Usage, UserMessage } from '@earendil-works/pi-ai';
 import type { Conversation } from '@earendil-works/pi-durable';
+import { int, obj, str } from '@earendil-works/pi-schema';
 import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
 import { isRetryableAssistantError } from '@earendil-works/pi-ai/utils/retry';
 import { anthropicSubscriptionSource } from '../../src/providers/anthropic.ts';
@@ -138,8 +139,8 @@ const firstText = (message: AssistantMessage) => {
 };
 const noUsage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-const tools: Tool[] = [{ name: 'read', description: 'Read a file', parameters: Type.Object({ path: Type.String() }) },
-  { name: 'date', description: 'Date of a message', parameters: Type.Object({ id: Type.Integer() }) }];
+const tools: Tool[] = [{ name: 'read', description: 'Read a file', parameters: obj({ path: str() }, { open: true }) },
+  { name: 'date', description: 'Date of a message', parameters: obj({ id: int() }, { open: true }) }];
 
 describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
   test('streams text to a stop, in an isolated fresh call', async (t) => {

@@ -233,7 +233,7 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
         snapshot: harness.snapshot.bind(harness), snapshotAsOf: harness.snapshotAsOf.bind(harness),
         watchDoc: harness.watchDoc.bind(harness), commit: harness.commit.bind(harness),
         agent: unused, output: unused, retainedOutput: unused, diagnostic: unused, details: unused, memo: unused,
-        createTask: unused, getTask: unused, waitForTask: unused, conversation: unused, executeTool: unused,
+        createTask: unused, getTask: unused, waitForTask: unused, conversation: unused, executeTool: unused, now: Date.now,
       };
       const text = (result: ToolExecutionResult) => firstText(result.output);
       const execute = async (name: string, args: JsonObject, conversationId = api.conversationId) => {
