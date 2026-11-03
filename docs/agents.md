@@ -415,7 +415,7 @@ await syncAgents(harness, context, { childAgent, roster, kits });   // create mi
    tools become the five agent tools plus its kits' tools, and each kit's extension is selected. A sub of a standing
    agent takes its main agent's entry, then `subModel` and `subThinkingLevel` when given. The local kits (`coding`,
    `read`, `autoreview`) apply only while Pi's coding tools are on; `browser` and `web_fetch` stay offered, since they touch no local
-   files. Their calls refuse in remote-target sessions until remote network-kit support exists.
+   files. Their calls are refused in remote-target sessions.
    Its instructions are Pi's with Pi's coding-tools line (the one naming bash) replaced by its own: the kit tools it
    has now, the protected-folders note only while it has a local kit's tools, which of its local tools are off, and
    that it cannot change files or run commands when it lacks bash. So the Researcher is never told it has `bash`.
@@ -471,7 +471,7 @@ tools and autoreview's fixed helper command run on an immutable `{machineId, cwd
   and Pi may answer. Submit a new user task with an explicit destination to restart
   the workflow.
 - An offline or disabled connector leaves calls waiting for the same machine and
-  exact launch cwd, never another workstation or the VPS. Its own per-process
+  exact launch cwd, never another workstation or the server. Its own per-process
   coding/read grant is required in addition to the server gate; it starts off
   unless the remote launch explicitly uses `--allow-tools` or `/tools on`.
 - The workstation connector supports coding/read kits and autoreview's fixed helper command. A

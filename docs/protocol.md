@@ -1,4 +1,4 @@
-# Wire protocol v3
+# Wire protocol v4
 
 The protocol between `pi-durable serve` and its clients: the terminal UI over a Unix socket or SSH stdio bridge,
 and the web app over a WebSocket. It carries one `UiSession` ([src/ui/types.ts](../src/ui/types.ts)) across a link: the client
@@ -27,7 +27,7 @@ Every message is one JSON object with a string field `t`, its type. Text is UTF-
 
 | | Unix socket | WebSocket |
 |---|---|---|
-| Who | the attached TUI and the admin commands, on the VPS | the web app, through `tailscale serve` |
+| Who | the attached TUI and the admin commands, on the server host | the web app, through `tailscale serve` |
 | Where | `statePaths(db).socket`: `<db>.sock`, or `$XDG_RUNTIME_DIR/pi-durable-<hash>.sock` when that is over 107 bytes | `ws://127.0.0.1:<port>/ws` (the browser sees `wss://<PI_DURABLE_ORIGIN host>/ws`) |
 | Framing | NDJSON: one message per line, `\n`-terminated (JSON escapes newlines inside strings) | one message per text frame; a binary frame closes with 1003, a frame over 12 MiB (`3 × LIMITS.clientMessage` bytes, the most that many code units take in UTF-8) with 1009 |
 | Auth | the socket file is mode 600 in the user's own directory | see [Authentication](#authentication) |
@@ -53,7 +53,7 @@ flock, model runtime or generic external MCP endpoint; no SSH forwarding is used
 
 ```
 client                                         server
-  │ hello {protocol:3, client, visible}  ─────►  │  (within LIMITS.helloMs, or bye 4000)
+  │ hello {protocol:4, client, visible}  ─────►  │  (within LIMITS.helloMs, or bye 4000)
   │ ◄───── welcome {protocol, boot, assets, peer, cwd, tools, machines?, pushKey?, device?}
   │ ◄───── status {status}
   │ ◄───── snapshot {feed:"root", items}
@@ -108,8 +108,8 @@ The header is trusted only because nothing but `tailscale serve` reaches the loo
 for this allow-list: the server never uses it as an identity beyond naming the peer in notices (`who` is
 `<login>/<device>`). A refused `/api/*` request or upgrade has the body `{"error":"login" | "origin" | "unpaired"}`.
 
-A local user of the VPS can reach the loopback port and forge the login header, so the device cookie is what
-stops them; the checks hold only together. The VPS is assumed to have one user.
+A local user of the server host can reach the loopback port and forge the login header, so the device cookie is what
+stops them; the checks hold only together. The server host is assumed to have one user.
 
 | Endpoint | Checks | Answer |
 |---|---|---|
@@ -220,7 +220,7 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   the send is `failed` and nothing is admitted. With `requestId` (1 to 128 characters, unique per
   message: e.g. `<client>-<random>-<counter>`), the server submits with pi-durable's request id, so a repeat is
   admitted once. A client resends a `send` whose `res` a dropped link lost only with its `requestId`. An idle Pi
-  starts a run. Protocol 3's machine-routed admission rejects a busy-root user send (including `steer: true`)
+  starts a run. Machine-routed admission rejects a busy-root user send (including `steer: true`)
   rather than queueing or steering it; rejection is a `failed` response. The optional `steer` field remains
   parseable, but cannot override this policy. The web app may still request steering while Pi works, and receives
   the same rejection. A remote TUI always
@@ -297,10 +297,9 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 `welcome.machines: true` advertises immutable run/session routing and execution
 connectors. It is optional for protocol compatibility, but the remote CLI
 requires it **before sending any user message**; matching the protocol alone does
-not replace this capability check. The machine messages, ops and optional fields
-are additive in shape, but `PROTOCOL` is bumped to 3 because routed admission now
-rejects busy-root user sends instead of queueing or steering them. This changes
-existing `send` semantics; clients and server must be updated together.
+not replace this capability check. Routed admission rejects busy-root user sends
+rather than queueing or steering them, so clients and server must run the same
+version (see [Versioning](#versioning)).
 
 A `MachineTarget` is `{machineId, cwd, label}`. Each field is a nonempty string
 without control characters: `machineId` is at most 128 code units, starting with
@@ -469,10 +468,9 @@ Any other code, or a close without `bye`: reconnect.
 
 ## Versioning
 
-- `PROTOCOL` is 4. `hello` and `welcome` carry it, and the server refuses another (4000).
-  Version 4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034): an older client would show
-  them as active. Version 3 changes routed `send` admission: a busy root rejects user sends, including steering requests,
-  instead of queueing/steering them. This semantic incompatibility requires updating clients and server together.
+- `PROTOCOL` is 4. `hello` and `welcome` carry it, and the server refuses another (4000), so clients and server
+  are updated together. History: v3 made routed `send` admission reject user sends (steering included) while the root
+  is busy; v4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034).
 - Additive changes keep the version: a new message type, op, error code, close code or optional field. Receivers
   therefore ignore what they do not know: a message with an unknown `t` is ignored, unknown fields are dropped by
   the parser, an unknown op gets `unknown_op`, an unknown error code reads as `failed`.

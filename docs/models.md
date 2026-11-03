@@ -257,8 +257,8 @@ host's environment makes the CLI bill that key instead of your plan.
 | Requests bill your API account | `ANTHROPIC_API_KEY` is set in the host's environment. Unset it to use the plan. |
 | `No credentials for anthropic. Set ANTHROPIC_API_KEY …` | Export a Console API key (`sk-ant-api…`), or use `--model claude-cli/…`. Pi's `/login` for anthropic is the Pro/Max login, which is refused. |
 | `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key. A stored Pi `anthropic` login wins over the variable: remove it with Pi's `/logout`. |
-| A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run (signed out, for example). Pass `--model`, sign in again, or delete the file. |
-| `…/settings.json is not valid JSON` or `must be an object like {"model":…}` | Fix the file or delete it; `--model` still works meanwhile. |
+| A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run (signed out, for example). Pass `--model`, sign in again, or remove the `model` key from `settings.json`. Do not delete the file: it may also hold `thinkingLevel` and a custom `agents` roster. |
+| `…/settings.json is not valid JSON` or `must be an object like {"model":…}` | Fix the file; it may hold a custom `agents` roster, so delete it only if it has none. `--model` still works meanwhile. |
 | `claude-cli: API error 529: …` | Anthropic is overloaded; the Harness retries. |
 | `claude-cli: no output from claude for 600 s (timed out)` | The CLI stalled; the Harness retries. If it keeps happening, check the network and `claude` itself. |
 | "The model ended its turn without a reply." | The model answered with nothing to show (only thinking, for example). Ask it to continue or to report. |

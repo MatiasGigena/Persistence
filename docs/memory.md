@@ -72,7 +72,7 @@ The limit is `CAP = 30_000` characters (`src/memory/util.ts`).
 
 - `echo` text is **clipped**: the first 14,936 and the last 14,936 characters, around a marker
   `[… N characters clipped …]`, so the whole is at most 30,000 characters (upstream `Clip.ts` keeps 64 characters per
-  half for the marker). Records logged before this change may be up to about 40 characters over.
+  half for the marker). Records logged by older versions may be up to about 40 characters over.
 - Any other text longer than `CAP` is **split** into several consecutive records, never cut. Each part ends at the
   last newline before the limit when there is one. Splitting never breaks a surrogate pair.
 

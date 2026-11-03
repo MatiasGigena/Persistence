@@ -54,7 +54,7 @@ agents, and each agent is another conversation in the same database.
   `machine-executor.ts` runs native coding/read tools through `GuardedEnv` and a fsynced execution ledger.
   Its client config and ledger are hidden along with standard protected paths. Exit drains admitted calls
   before closing; a command with no timeout can delay exit. Remote-target network kits are unsupported and
-  refuse instead of executing on the VPS.
+  refuse instead of executing on the server.
 - **Host** (`src/host/`): creates the model runtime, registers the `claude-cli`
   provider, checks the model and credentials (refusing a subscription token on
   `anthropic`), opens the instance, resumes pending work, then runs the chosen mode:
@@ -76,7 +76,7 @@ host only through `src/ui/types.ts`.
 - **Protocol** (`src/protocol/`): the wire protocol of server mode ([protocol.md](protocol.md)): message
   types, parser, and the item diff and mirror that sync a `UiSession` across a link. Plain TypeScript for Node
   and the browser alike. The server (`src/server/`), the attaching client (`src/client/`) and the web app
-  (`src/web/`) are built on it ([plan](plans/server-and-web.md), ADRs 0016 to 0022).
+  (`src/web/`) are built on it (ADRs 0016 to 0022, [protocol.md](protocol.md)).
 - **Server** (`src/server/`, ADR 0016): `pi-durable serve` runs the host without a terminal, under the same
   flock (`serve.ts`, entered from `host.ts`). It opens the chat with the tools on (ADR 0025), listens on the Unix socket
   (`transport-unix.ts`) and, when configured, the web listener (`transport-ws.ts`), then serves one
@@ -274,7 +274,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/agents/index.ts` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
 | `src/machines/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |
 | `src/protocol/machines.ts` | Machine targets, registrations, tool calls/results/cancels and JSON narrowing shared by server and connector |
-| `src/protocol/messages.ts` | Wire protocol v3: every message, the op table (`Ops`), item ops, error and close codes, limits |
+| `src/protocol/messages.ts` | Wire protocol v4: every message, the op table (`Ops`), item ops, error and close codes, limits |
 | `src/protocol/parse.ts` | `parseClientMessage`, `parseServerMessage`: JSON checked field by field from `unknown` |
 | `src/protocol/diff.ts` | `diffItems` (item ops between what a peer has and the current items), `wireItem` and `clip` |
 | `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |

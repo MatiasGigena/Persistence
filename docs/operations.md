@@ -45,15 +45,14 @@ do not remove protections to make a review pass. Codex is first; `engine: "pi"` 
 fallback after diagnosis and reporting, never a workaround for isolation, safety, rate limits or findings. Pi's
 credentials may themselves be protected: that is a blocker, not permission to bypass the guard.
 
-Restart the host to pick up the new roster/tool. If `settings.json` has a custom `"agents"` roster, include
-`"autoreview"` in its reviewer's `tools`. The review kit is local: `/tools off` disables it, and SSH execution
-requires both server tools and the connector's own per-process grant. It uses the existing routed bash operation,
-so no protocol update or generic shell permission for Reviewer is needed.
+If `settings.json` has a custom `"agents"` roster, include `"autoreview"` in its reviewer's `tools`. The review kit is local: `/tools off` disables it, and SSH execution
+requires both server tools and the connector's own per-process grant. It runs through the routed bash operation,
+without giving the Reviewer a general shell.
 
 ## Install locally
 
 ```sh
-git clone git@github.com:MatiasGigena/Persistence.git ~/pi-durable-instance
+git clone https://github.com/MatiasGigena/Persistence.git ~/pi-durable-instance
 cd ~/pi-durable-instance
 npm ci --ignore-scripts
 npx --no-install playwright-core install chromium   # the browser tools' Chromium, into ~/.cache/ms-playwright/
@@ -100,8 +99,7 @@ cd /path/to/project
 ```
 
 Sign in separately on the VPS rather than copying your local OAuth tokens. If you
-are already signed into Pi there, the host reuses that login. As of 0.1.0 this
-setup has not been deployed to a VPS.
+are already signed into Pi there, the host reuses that login.
 
 To keep it running after SSH disconnects, use tmux:
 
@@ -118,8 +116,7 @@ tmux attach -t pi-durable
 
 This keeps the chat, models, memory and agents on one server, but runs coding
 tools on the workstation where you launched the TUI. It is the native chat
-protocol over SSH, not a generic external MCP integration. The following is a
-setup recipe; no live VPS deployment is implied.
+protocol over SSH, not a generic external MCP integration.
 
 ### Configure once
 
@@ -154,8 +151,8 @@ disabled. `bridge` proxies stdin/stdout to the existing, owner-checked mode 600
 Unix socket; diagnostics go only to stderr. It opens no database, model runtime,
 Harness, flock, TCP listener or SSH forwarding port. The remote login shell must
 not print banners to stdout for noninteractive commands. Use the same application
-version on both ends (protocol 4); routed busy-root sends now reject instead of
-queueing or steering, so update clients and server together. The client also
+version on both ends (the same `PROTOCOL`); routed sends to a busy root are rejected
+rather than queued or steered. The client also
 refuses a server without machine-routing capability before sending a message.
 
 ### Launch routing and permission
@@ -742,7 +739,7 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `… exists and is not a socket; move it away` | Something else sits at `<db>.sock`. Move it; the server replaces only a stale socket. |
 | `web devices unavailable: …/devices.json is damaged` | The server runs without web pairing. Fix the file, or delete it and pair the devices again. |
 | SSH host-key or authentication failure | Verify the host key and configure noninteractive SSH login outside the application; it never auto-trusts a host or falls back to a local chat. |
-| `This server lacks machine routing` | Update the server checkout and restart `pi-durable.service`; matching `PROTOCOL: 3` alone is insufficient; `welcome.machines: true` is also required. |
+| `This server lacks machine routing` | Update the server checkout and restart `pi-durable.service`; a matching `PROTOCOL` alone is insufficient; `welcome.machines: true` is also required. |
 | Remote flags/mode refused | Use the supported interactive SSH TUI, or `--local` intentionally for local inspection/one-shot modes. |
 | Tools wait for a machine | Reconnect that same workstation from the exact launch cwd and explicitly grant tools there; enabling another device cannot reroute it. |
 | `INDETERMINATE` | The execution ledger cannot establish whether a side effect finished. Inspect changes; never delete the intent merely to force replay. |
