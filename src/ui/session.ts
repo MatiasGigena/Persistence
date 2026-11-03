@@ -174,10 +174,10 @@ export async function createUiSession(
       return serially(async () => {
         const model = { provider, modelId: id };
         // Unrouted input is acknowledged when queued; a switch to a model without images before Pi reads it would
-        // have its images downgraded to a text note, so refuse the switch until queued images are consumed. The inbox
-        // is read while the credential check runs, which may take seconds.
-        const [, queued] = await Promise.all([chooser.check(model), imagesProblem(instance.models, model) ? queuedImages() : false]);
-        if (queued) {
+        // have its images downgraded to a text note, so refuse the switch until queued images are consumed.
+        // Credentials can take seconds; inspect the inbox afterwards, including input admitted by other callers.
+        await chooser.check(model);
+        if (imagesProblem(instance.models, model) && await queuedImages()) {
           throw new Error(`A queued message has images ${provider}/${id} cannot take; switch after Pi reads it, or stop Pi first.`);
         }
         await instance.setModel(model);

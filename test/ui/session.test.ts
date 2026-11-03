@@ -529,6 +529,36 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     assert.equal(session.status().model, `${provider}/blind`);
   });
 
+  test('a model switch rechecks images admitted while credentials are pending', async (t) => {
+    let releaseRun = (): void => {};
+    const runGate = new Promise<void>(resolve => { releaseRun = resolve; });
+    const { instance, session, provider } = await openSighted(t, async () => { await runGate; return fauxAssistantMessage('first'); });
+    t.after(() => releaseRun());
+    await session.send('one');
+    await until(() => session.status().busy, 'busy');
+    let releaseAuth = (): void => {};
+    const authGate = new Promise<void>(resolve => { releaseAuth = resolve; });
+    const checkAuth = instance.models.checkAuth.bind(instance.models);
+    let checking = false;
+    t.mock.method(instance.models, 'checkAuth', async (...args: Parameters<typeof checkAuth>) => {
+      checking = true;
+      await authGate;
+      return checkAuth(...args);
+    });
+    t.after(() => releaseAuth());
+    const switched = session.setModel(provider, 'blind');
+    const refused = assert.rejects(switched, /queued message has images/);
+    await until(() => checking, 'credentials pending');
+    // A different caller can admit input without going through this UI session's serial queue.
+    await instance.submit('look', 'img-auth-pending', undefined, false, [shot]);
+    await until(() => session.status().queued === 1, 'one queued');
+    releaseAuth();
+    await refused;
+    assert.equal(session.status().model, `${provider}/sees`);
+    releaseRun();
+    await idle(session);
+  });
+
   test('an inspection switches nothing and writes no settings', async (t) => {
     const { session, settingsPath } = await openRoutes(t, { inspect: true });
     await assert.rejects(session.setModel('faux', 'two'), /inspection cannot change/);

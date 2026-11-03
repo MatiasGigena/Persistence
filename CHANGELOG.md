@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Model switches check queued images after credential validation, including input admitted while credentials were pending.
+
 - Terminal: tool output drops hyperlinks and other escape sequences whole, and carriage returns overwrite as in a
   terminal (progress bars show their last state); the panels no longer show stray `[31m`. The panels fill the screen,
   so the chat no longer shows through around them. Whitespace-only items leave no blank lines in the agent chat view,
