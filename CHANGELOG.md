@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Remote tool calls start sooner: the machine executor makes and flushes its ledger folder once per launch instead
+  of on every call. Guarded file operations and bash, machine routing, the claude-cli provider, the agent tools,
+  and startup and shutdown run independent steps together instead of one after another.
+
 ### Fixed
 
 - Terminal: tool output drops hyperlinks and other escape sequences whole, and carriage returns overwrite as in a

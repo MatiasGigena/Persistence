@@ -154,6 +154,8 @@ export class MachineExecutor {
   private readonly runner: NonNullable<MachineExecutorOptions['execute']>;
   private enabled: boolean;
   private closed = false;
+  /** The ledger directory made and its path flushed: once per executor, not once per call. */
+  private ledgerReady: Promise<void> | undefined;
   private readonly live = new Map<string, { fingerprint: string; controller: AbortController; promise: Promise<MachineToolResult> }>();
 
   constructor(options: MachineExecutorOptions) {
@@ -197,18 +199,36 @@ export class MachineExecutor {
     await Promise.all([...this.live.values()].map(each => each.promise));
   }
 
+  private ensureLedger(): Promise<void> {
+    this.ledgerReady ??= ensureDirectory(this.ledgerDir).catch((error: unknown) => {
+      this.ledgerReady = undefined;
+      throw error;
+    });
+    return this.ledgerReady;
+  }
+
   private async run(call: MachineCall, digest: string, signal: AbortSignal): Promise<MachineToolResult> {
     const directory = join(this.ledgerDir, hash(call.id));
+    /** Whether this call made its entry; false when an earlier one did. */
+    const makeEntry = async (): Promise<boolean> => {
+      try { await mkdir(directory, { mode: 0o700 }); return true; }
+      catch (error) { if (hasCode(error, 'EEXIST')) return false; throw error; }
+    };
     try {
-      await ensureDirectory(this.ledgerDir);
-      try { await mkdir(directory, { mode: 0o700 }); }
+      await this.ensureLedger();
+      let created: boolean;
+      try { created = await makeEntry(); }
       catch (error) {
-        if (!hasCode(error, 'EEXIST')) throw error;
-        return await this.previous(directory, digest, call.id);
+        if (!hasCode(error, 'ENOENT')) throw error;
+        // The ledger was removed since this executor made it: make it again.
+        this.ledgerReady = undefined;
+        await this.ensureLedger();
+        created = await makeEntry();
       }
-      await syncDirectory(this.ledgerDir);
-      await writeSynced(join(directory, 'intent.json'), { version: 1, fingerprint: digest, call });
-      await syncDirectory(directory);
+      if (!created) return await this.previous(directory, digest, call.id);
+      // The entry's name and the intent inside it flush together; both are durable before the tool starts.
+      await Promise.all([syncDirectory(this.ledgerDir),
+        writeSynced(join(directory, 'intent.json'), { version: 1, fingerprint: digest, call }).then(() => syncDirectory(directory))]);
       // No tool (including an injected runner) can start before all of the above is durable.
       let result: MachineToolResult;
       try {
