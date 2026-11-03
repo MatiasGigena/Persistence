@@ -50,25 +50,25 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
   let unix: UnixListener | undefined, web: WebListener | undefined, session: UiSessionHandle | undefined, hub: Hub | undefined;
   const machines = new MachineBroker({ authorized: () => session?.status().toolsEnabled ?? false,
     notice: text => { log(text); session?.notify(text, 'info'); } });
+  const webWanted = settings.origin !== undefined && settings.allowLogins.length > 0;
+  // The web side's files load while the chat opens; each failure is logged below, in this order.
+  const loading = Promise.allSettled([Devices.open(paths.devices),
+    webWanted ? createPush(paths, settings, { log: line => log(`push: ${line}`) }) : undefined, assetsHash()]);
   // Preserve the host's protected-tools policy; each remote connector separately starts without local permission.
   const instance = await openInstance({ ...config, models, protection: protection(config), sshKeys: sshKeys(), onWarning: log, dispatcher: machines,
     onReport: report => log(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   const { error: consoleError, warn: consoleWarn } = console;
   try {
     if (signal.aborted) return;
-    const webWanted = settings.origin !== undefined && settings.allowLogins.length > 0;
-    let devices: Devices | undefined;
-    try { devices = await Devices.open(paths.devices); } catch (error) { log(`web devices unavailable: ${errorMessage(error)}`); }
-    let push: PushService | undefined;
-    if (webWanted) {
-      try { push = await createPush(paths, settings, { log: line => log(`push: ${line}`) }); } catch (error) {
-        log(`push notifications off: ${errorMessage(error)}`);
-      }
-    }
+    const [opened, pushed, hashed] = await loading;
+    const devices: Devices | undefined = opened.status === 'fulfilled' ? opened.value : undefined;
+    if (opened.status === 'rejected') log(`web devices unavailable: ${errorMessage(opened.reason)}`);
+    const push: PushService | undefined = pushed.status === 'fulfilled' ? pushed.value : undefined;
+    if (pushed.status === 'rejected') log(`push notifications off: ${errorMessage(pushed.reason)}`);
     // Until the listener is up (or for good, with the reason the log gives), a pairing code could not be used.
     let webOff: string | undefined = 'it is still starting';
-    let assets = 'none';
-    try { assets = await assetsHash(); } catch (error) { log(`web app files unreadable: ${errorMessage(error)}`); }
+    const assets = hashed.status === 'fulfilled' ? hashed.value : 'none';
+    if (hashed.status === 'rejected') log(`web app files unreadable: ${errorMessage(hashed.reason)}`);
     hub = new Hub({
       server: VERSION, boot: randomBytes(9).toString('base64url'), assets, cwd: config.cwd,
       tools: { remote: settings.remoteTools, ...settings.toolsIdleMinutes === undefined ? {} : { idleMinutes: settings.toolsIdleMinutes } },

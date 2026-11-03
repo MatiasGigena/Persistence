@@ -129,7 +129,7 @@ export async function prune(root: string, { now = Date.now(), keepMs = KEEP_MS }
     const time = stampTime(name);
     return time !== undefined && now - time > keepMs;
   });
-  for (const name of old) await rm(join(root, name), { recursive: true, force: true });
+  await Promise.all(old.map(name => rm(join(root, name), { recursive: true, force: true })));
   return old;
 }
 

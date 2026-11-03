@@ -93,8 +93,7 @@ export async function createPush(
   const allow = options.allowEndpoint ?? isPushServiceEndpoint;
   const subject = `mailto:${options.contact ?? `pi-durable@${settings.origin ? new URL(settings.origin).hostname : 'localhost'}`}`;
   await mkdir(paths.serveDir, { recursive: true, mode: 0o700 });
-  const vapid = await loadVapid(paths.vapid);
-  const subs = await loadSubscriptions(paths.push, allow, log);
+  const [vapid, subs] = await Promise.all([loadVapid(paths.vapid), loadSubscriptions(paths.push, allow, log)]);
   const save = (): void => {
     writeJson(paths.push, { subscriptions: Object.fromEntries([...subs.values()].map(({ endpoint, ...entry }) => [endpoint, entry])) });
   };
