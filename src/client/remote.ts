@@ -27,12 +27,11 @@ export async function remoteChat(options: Options, env: NodeJS.ProcessEnv = proc
   if (selected === undefined) return undefined;
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Remote chat needs a terminal (stdin and stdout); use --local for local noninteractive modes');
   // Validate the tools directory locally, never by resolving local chat state.
-  const cwd = await realpath(resolve(options.cwd ?? process.cwd()));
-  const id = await machineId(env, selected.saved);
-  const link = new ClientLink({ connect: sshConnector(selected.target), client: CLIENT, helloMs: 15_000, reconnectNormal: true });
   // Local launches and the stdio bridge must not load tool implementations or a model catalog.
-  const [{ MachineExecutor }, { sshKeys }, { startSshAgent }] = await Promise.all([import('./machine-executor.ts'),
-    import('../runtime/guard.ts'), import('../runtime/ssh-agent.ts')]);
+  const [cwd, id, [{ MachineExecutor }, { sshKeys }, { startSshAgent }]] = await Promise.all([
+    realpath(resolve(options.cwd ?? process.cwd())), machineId(env, selected.saved),
+    Promise.all([import('./machine-executor.ts'), import('../runtime/guard.ts'), import('../runtime/ssh-agent.ts')])]);
+  const link = new ClientLink({ connect: sshConnector(selected.target), client: CLIENT, helloMs: 15_000, reconnectNormal: true });
   const target: MachineTarget = { machineId: id, cwd, label: hostname() };
   let enabled = options.remoteAllowTools === true;
   // Pi's own SSH agent for the tools here (ADR 0030); its warnings wait for the TUI.
