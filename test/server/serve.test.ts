@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { parseArgs, resolveOptions } from '../../src/host/config.ts';
+import { parseArgs, resolveOptions, statePaths } from '../../src/host/config.ts';
 import type { ChatItem, ServerMessage } from '../../src/protocol/messages.ts';
 import { applyOps } from '../../src/protocol/mirror.ts';
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import { lineSplitter } from '../../src/server/transport-unix.ts';
+import { serve } from '../../src/server/serve.ts';
+import { Devices } from '../../src/server/auth.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 
 const exec = promisify(execFile);
@@ -136,4 +138,36 @@ test('the launcher runs serve under the flock, serves the admin commands, and st
   // Without a server, backup takes the flock and writes it itself.
   const { stdout: offline } = await exec(launcher, ['backup'], { env });
   assert.match(offline, /^Backup written: .*state\/backups\//m);
+});
+
+// Web initialization creates VAPID state; it must not run for a chat that never opened.
+test('a failed instance open does not start web initialization', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pd-serve-failed-open-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const databasePath = join(folder, 'invalid.sqlite');
+  await writeFile(databasePath, 'not a SQLite database');
+  const { models, model } = offlineModels();
+  const config = await resolveOptions(parseArgs(['serve', '--database', databasePath, '--cwd', folder,
+    '--model', `${model.provider}/${model.modelId}`]), {
+    PI_DURABLE_ORIGIN: 'http://localhost:4783', PI_DURABLE_ALLOW_LOGIN: 'me@example.com',
+  });
+  const devices = t.mock.method(Devices, 'open');
+  await assert.rejects(serve(config, { models, signal: new AbortController().signal, log: () => {} }));
+  assert.equal(devices.mock.callCount(), 0);
+  await assert.rejects(stat(statePaths(databasePath).vapid), { code: 'ENOENT' });
+});
+
+test('an already-aborted server does not start web initialization', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'pd-serve-aborted-open-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const databasePath = join(folder, 'chat.sqlite');
+  const { models, model } = offlineModels();
+  const config = await resolveOptions(parseArgs(['serve', '--database', databasePath, '--cwd', folder,
+    '--model', `${model.provider}/${model.modelId}`]), {
+    PI_DURABLE_ORIGIN: 'http://localhost:4783', PI_DURABLE_ALLOW_LOGIN: 'me@example.com',
+  });
+  const devices = t.mock.method(Devices, 'open');
+  await serve(config, { models, signal: AbortSignal.abort(), log: () => {} });
+  assert.equal(devices.mock.callCount(), 0);
+  await assert.rejects(stat(statePaths(databasePath).vapid), { code: 'ENOENT' });
 });

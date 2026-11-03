@@ -50,17 +50,19 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
   let unix: UnixListener | undefined, web: WebListener | undefined, session: UiSessionHandle | undefined, hub: Hub | undefined;
   const machines = new MachineBroker({ authorized: () => session?.status().toolsEnabled ?? false,
     notice: text => { log(text); session?.notify(text, 'info'); } });
-  const webWanted = settings.origin !== undefined && settings.allowLogins.length > 0;
-  // The web side's files load while the chat opens; each failure is logged below, in this order.
-  const loading = Promise.allSettled([Devices.open(paths.devices),
-    webWanted ? createPush(paths, settings, { log: line => log(`push: ${line}`) }) : undefined, assetsHash()]);
   // Preserve the host's protected-tools policy; each remote connector separately starts without local permission.
   const instance = await openInstance({ ...config, models, protection: protection(config), sshKeys: sshKeys(), onWarning: log, dispatcher: machines,
     onReport: report => log(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
   const { error: consoleError, warn: consoleWarn } = console;
   try {
     if (signal.aborted) return;
+    // Open the chat first: web initialization can create files (notably VAPID keys), and must not outlive
+    // a failed/aborted instance open. These loaders own no persistent handles and settle before cleanup.
+    const webWanted = settings.origin !== undefined && settings.allowLogins.length > 0;
+    const loading = Promise.allSettled([Devices.open(paths.devices),
+      webWanted ? createPush(paths, settings, { log: line => log(`push: ${line}`) }) : undefined, assetsHash()]);
     const [opened, pushed, hashed] = await loading;
+    if (signal.aborted) return;
     const devices: Devices | undefined = opened.status === 'fulfilled' ? opened.value : undefined;
     if (opened.status === 'rejected') log(`web devices unavailable: ${errorMessage(opened.reason)}`);
     const push: PushService | undefined = pushed.status === 'fulfilled' ? pushed.value : undefined;
