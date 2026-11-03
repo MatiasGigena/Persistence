@@ -7,6 +7,8 @@ SDK, keeps its memory with Victor Taelin's
 recipe, and lets Pi start agents that work in the background.
 `pi-durable` is this project's launcher, with its own terminal UI built on Pi's `pi-tui`.
 
+![Pi answering in the terminal UI and in the phone web app, after running git log through its bash tool](docs/screenshot.png)
+
 ## Quick start
 
 You need Linux, Bash, `flock` (util-linux), and Node.js 22.19 or newer.
