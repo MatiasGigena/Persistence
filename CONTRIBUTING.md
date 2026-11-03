@@ -1,13 +1,13 @@
 # Contributing
 
-Persistence is a personal, experimental project. These notes keep changes consistent.
+Persistence is an experimental project under active development. These notes keep changes consistent.
 
 ## Setup
 
 You need Linux, Bash, `flock`, and Node.js 22.19 or newer.
 
 ```sh
-git clone git@github.com:MatiasGigena/Persistence.git ~/pi-durable-instance
+git clone https://github.com/MatiasGigena/Persistence.git ~/pi-durable-instance
 cd ~/pi-durable-instance
 npm ci --ignore-scripts
 ```
@@ -36,10 +36,10 @@ fixtures otherwise compete with the launcher's short readiness deadlines. Launch
 fixtures isolate client preferences, so a saved remote default never reaches a real
 server during tests. Node 22 may print its expected experimental SQLite warning.
 
-A real Codex login and model smoke test once returned `durable-ready` and exited
-successfully. Repeat one by hand after changes to credentials or model handling.
+The tests never reach a real model. After changes to credentials or model handling, run a
+smoke test by hand with a real login, such as `pi-durable -p 'Reply with exactly: durable-ready'`.
 For `src/providers/`, also run `--model claude-cli/haiku -p 'Reply with exactly:
-claude-ready'`, and one prompt with `--allow-tools` that makes Pi read a file.
+claude-ready'`, and one prompt that makes Pi read a file.
 
 ## Test layout
 
@@ -50,6 +50,12 @@ test/memory/     log, tree, view, compactor, uniichat extension
 test/agents/     roles, messaging, delivery across close and SIGKILL
 test/providers/  claude-cli with a fake CLI, stub MCP server, subscription check
 test/protocol/   wire messages and parsers, item diff and mirror (randomized, seeded)
+test/tools/      browser and its egress proxy, web_fetch, autoreview, show_image, code mode
+test/ui/         chat items, the TUI and its panels
+test/server/     hub, auth, Unix socket and WebSocket transports, push, backups, static files
+test/client/     attach, remote session, SSH link and bridge, client config
+test/machines/   routing, the execution broker and the local executor
+test/web/        the web app's DOM-free modules: format, store, link, markdown, cache
 test/fixtures/   faux models, the fake claude CLI, child-process instances
 ```
 

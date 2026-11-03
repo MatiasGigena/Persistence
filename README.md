@@ -14,7 +14,7 @@ Install bubblewrap for bash (`sudo apt install bubblewrap`); browser tools also 
 Chromium (see [requirements](docs/operations.md#requirements)).
 
 ```sh
-git clone git@github.com:MatiasGigena/Persistence.git ~/pi-durable-instance
+git clone https://github.com/MatiasGigena/Persistence.git ~/pi-durable-instance
 cd ~/pi-durable-instance
 npm ci --ignore-scripts
 npm exec -- pi                 # in Pi: /login, then exit
@@ -85,7 +85,6 @@ refuses one-shot prompts, pipes, `--history`, `--status`, `--resume`, `--plain`,
 local model/auth/database flags, and unsupported servers; it never silently opens
 a local chat instead. Use `/model` on the central chat, or `--local` intentionally.
 See [Remote workstations over SSH](docs/operations.md#remote-workstations-over-ssh).
-These are installation instructions, not a claim that a VPS has been deployed.
 
 ### Attaching on the server
 
@@ -105,7 +104,7 @@ pi-durable --local    # never attach; with a server running this exits 75, as an
 Only interactive full-screen chat attaches. In local mode, `-p`, piped stdin, `--status`, `--history`, `--resume` and `--plain`
 open the chat locally, so with a server running they exit 75 with
 "A server runs this chat; run `pi-durable` to attach." Launch settings (`--no-tools`, `--model`, `--thinking`,
-`--cwd`, `--auth-file`) are refused when a server answers, since the server's apply.
+`--cwd`, `--auth-file`) are refused when a server answers, since the server's own settings apply.
 
 `--request-id` deduplicates a one-shot prompt, also after a restart. The same ID
 returns its original answer. Use a new ID for a new task, and never reuse an ID
@@ -140,7 +139,8 @@ The default is `openai-codex/gpt-6.1-sol` with your Pi login. For Claude:
 - `--model anthropic/claude-sonnet-5-5` uses an Anthropic Console API key in `ANTHROPIC_API_KEY`. The host
   refuses a Claude subscription login on this provider, as Anthropic's terms require.
 
-Personal use only. Routes, policy, isolation and limits: [docs/models.md](docs/models.md).
+The `claude-cli` route is for your own use on your own Claude plan; anything you host or run for other people
+needs an API key. Routes, policy, isolation and limits: [docs/models.md](docs/models.md).
 
 ## How memory works
 
@@ -219,12 +219,13 @@ src/host/           terminal chat, /commands, reply watcher; CLI options and pat
 src/runtime/        Harness, extensions, Pi's agent config; resume and agent settling
 src/memory/         UniiChat memory: log, tree, view, compactor, extension
 src/agents/         standing roster, hierarchy, sessions and messaging
-src/tools/          browser, web_fetch and autoreview kits
+src/tools/          browser, web_fetch and autoreview kits; show_image; code mode
 src/machines/       persistent target routing for runs and spawned agents
 src/client/         socket/SSH TUI, stdio bridge, local execution ledger
 src/protocol/       native chat and machine-execution messages
 src/server/         one writer, transports, execution broker, auth, backups, push
 src/web/            phone web app and service worker
+src/ui/             terminal UI: chat items from events, pi-tui panels
 src/providers/      claude-cli provider (official claude CLI) and the anthropic subscription check
 tsconfig.json       strict TypeScript, run by Node's type stripping (no build)
 eslint.config.ts    lint rules: no any
@@ -247,6 +248,6 @@ docs/               architecture, operations, models, memory, agents, decisions,
 
 ## Status
 
-Experimental and personal. It depends on an experimental SDK pinned at 1.3.0.
+Experimental and under active development. It depends on an experimental SDK pinned at 1.3.0.
 Licensed under the [Apache License 2.0](LICENSE). Parts of `src/memory/` are adapted from
 [UniiChat](https://github.com/VictorTaelin/uniichat) under the Apache License 2.0; see [NOTICE](NOTICE).
