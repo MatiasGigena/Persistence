@@ -425,8 +425,8 @@ function streamClaude(model: Model<Api>, context: TranscriptContext, options: Si
       dir = made;
       const systemFile = join(dir, 'system.md');
       const toolsFile = tools.length ? join(dir, 'tools.json') : undefined;
-      await writeFile(systemFile, [getCurrentSystemPrompt(messages), CONVENTION].filter(Boolean).join('\n\n'));
-      if (toolsFile) await writeFile(toolsFile, JSON.stringify(tools.map(({ name, description, parameters }) => ({ name, description, parameters }))));
+      await Promise.all([writeFile(systemFile, [getCurrentSystemPrompt(messages), CONVENTION].filter(Boolean).join('\n\n')),
+        toolsFile && writeFile(toolsFile, JSON.stringify(tools.map(({ name, description, parameters }) => ({ name, description, parameters }))))]);
       if (done) return;
       stream.push({ type: 'start', partial: output });
       const proc: Child = spawn(bin, claudeArgs(model, { systemFile, toolsFile, reasoning: options.reasoning }),
