@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## Unreleased
 
 ### Added
 
@@ -12,45 +12,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   archived agent is stopped, hidden and unreachable; a day later it is deleted as `delete_agent` does, its chat kept
   for `zoom`. New protocol ops `agents.archive` and `agents.restore`; `PROTOCOL` is 4, since `status.agents` now
   lists archived agents too: update clients and server together.
-
-### Changed
-
-- Remote tool calls start sooner: the machine executor makes and flushes its ledger folder once per launch instead
-  of on every call. Guarded file operations and bash, machine routing, the claude-cli provider, the agent tools,
-  and startup and shutdown run independent steps together instead of one after another.
-
-### Fixed
-
-- Server web files initialize only after the chat opens, skipping startup after failure or cancellation.
-
-- Model switches check queued images after credential validation, including input admitted while credentials were pending.
-
-- Terminal: tool output drops hyperlinks and other escape sequences whole, and carriage returns overwrite as in a
-  terminal (progress bars show their last state); the panels no longer show stray `[31m`. The panels fill the screen,
-  so the chat no longer shows through around them. Whitespace-only items leave no blank lines in the agent chat view,
-  and cut lines end in `…`. A long step or model is cut to fit the footer instead of dropped; one long provider/id no
-  longer pushes names and notes off the /model picker.
-- `--plain` prints one `you>` prompt after Pi's reply, not two; a new chat no longer opens with
-  `Resuming 3 pending task(s)…` for the standing agents' bookkeeping; agents' reports in `--plain` and `--history`
-  show as name and text, without the note meant for Pi.
-- A faulted reply shows one notice, `The reply failed: …`, instead of the task kind and `Not answered: faulted.`; a
-  missing model says so instead of `no_model`; `/effort` on a model that does not reason says it has no effort to
-  set; `--status` and `--history` on a missing chat say `No saved chat yet.`
-- Web app: bold and italic show with a monospace font that has one face; ligatures stay off in code and tool output
-  (`--`, `->`, `!=` read as typed); task-list items show their checkbox without a bullet; picked images attach in
-  the order they were picked.
-- Web app: an agent's conversation keeps its skeleton until its history arrives, instead of flashing "Nothing here
-  yet." between the feed opening and its snapshot; a failed open, or a failed reopen after a reconnect, still
-  replaces it with the error.
-- Web app: the Stop button in an agent's conversation no longer sits on the rule below it.
-- `--plain` no longer drops lines typed ahead or pasted after the first.
-- The terminal footer no longer overflows a narrow screen while "reconnecting…" shows.
-- Web app: re-pairing after a revoke works without a reload; sheets opened while disconnected load once the link is
-  back; opening the app during a server restart starts it from the cache instead of a 502 page; the pairing screen
-  says codes last 5 minutes, as they do.
-
-### Added
-
 - Terminal: a dim first line counts the history items the chat leaves out and points at /mem; the footer shows
   `↓ more below (pgdn)` while the chat is scrolled up; /effort opens on the current level.
 - Web app: warnings and errors are read out to screen readers; focus stays in the menu sheet when a level opens or
@@ -73,81 +34,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `show_image(path)`, with the coding tools: Pi shows the user an existing PNG, JPEG, GIF or WebP file (a browser
   screenshot, a picture on disk; at most 2.25 MiB) inline in the chat; tap to enlarge. It never creates images.
   Screenshots other tools return now show inside their fold. The terminal shows an `[image]` marker.
-
 - `delete_agent(name)`, Pi only: removes an idle, non-standing agent and its sub agents from the registry, so they
   leave `list_agents`, the agents panel and every status. Refused for standing agents and while busy or with a message
   on its way (`stop_agent` first). Chats are kept in the database and stay readable with `zoom("Name")`; the name is
   free again. The registry gains an optional `deleted` map; older registries read unchanged.
-
-### Changed
-
-- Web app: the confirmations (turning on coding tools) are an opaque card a step lighter than the sheet, with a
-  hairline edge, so the settings behind no longer show through their text.
-- Web app: an agent's report is padded evenly, its name sitting with its text rather than a line above it.
-- Web app: chat settings' smallest type is easier to read on a phone: the Model and Thinking labels are 11px (were
-  10px), the notes under the switches 12px (were 11px).
-- Web app: in the sheet's rows (settings, agents, models) the detail line sits right under its label, and the pairing
-  form's labels sit closer to their fields.
-- Web app: a tool call that ends while you watch turns its running dot into ✓ or ✗ with a small pop, instead of the
-  mark appearing in one frame.
-- Web app: the "Latest" button floats on a lighter surface, so it stands off the chat behind it.
-- Clearer messages and hints throughout. In the terminal: unknown agents, models, options and `--thinking` levels
-  are listed or named; `--cwd`/`--database` mistakes are explained; `/stop` says when Pi is idle; a failed send says ↑
-  brings it back; `/status` names the machine where tools run; the launcher names the Node it needs. For tools, SSH
-  and credentials: `web_fetch`, the browser, bubblewrap, `PI_DURABLE_SSH_KEYS`, the SSH connector, the bridge, an
-  outdated Claude Code and the `anthropic` login each say how to fix the problem. On the web: a refused pairing, a
-  revoked device, a restarting server and a disabled push each say why; `serve pair` prints the web app's address and
-  refuses while the web app is off; `serve devices --revoke` lists the paired names on a miss.
-- Terminal: `--name=value` options, `/model WORD` opens the picker filtered, `/tools ON` and `/effort HIGH` work in
-  any case, the first Ctrl+C says a second one quits, and a line starting with a path is sent to Pi.
-
-- Web app: no "TOOLS ON" bar over the header. The tools are on by default and held to protected folders
-  (ADR 0025); their state and switch are in the menu, under Coding tools.
-
-- Coding tools are on by default for `pi-durable serve` too, and no longer turn off after 30 idle minutes
-  (`PI_DURABLE_TOOLS_IDLE_MIN=N` brings that back). Instead, for every launch, protected folders: the chat's own
-  state and your credentials (`~/.ssh`, `~/.claude`, `~/.config/gh`, `~/.aws`, …) are hidden from the tools, and
-  system folders are read-only. read/write/edit check the real path; bash runs in bubblewrap, which is now
-  required for bash (`sudo apt install bubblewrap`). `PI_DURABLE_PROTECT` / `PI_DURABLE_UNPROTECT` adjust the list.
-  ADR 0025 made `welcome.tools.idleMinutes` optional in protocol 2; the remote-routing changes below now require
-  protocol 3. Older web pages reload, an older attached TUI asks for an update.
-
-- The existing right-hand web menu uses a rounded monochrome glass panel with a
-  labelled header, close button and viewport-bounded scrolling; all actions stay the same.
-
-- The web app matches Pi Cloud's dark monochrome palette, monospace type, glass
-  surfaces and rounded composer; installed-app and offline colours match too.
-
-- Web app and home-screen icons use Pi Cloud's block mark and Lucide controls.
-
-- Coding tools are on by default for a local launch; `--no-tools` turns them off (`--allow-tools` is kept as a
-  no-op locally, and is an explicit grant for SSH connectors). ADR 0009 amended; ADR 0025 extends the guarded
-  default to `serve`.
-
-### Fixed
-
-- `claude-cli`: a call to one of Pi's tools by its bare name (`spawn_agent` instead of `mcp__pi__spawn_agent`) runs
-  as Pi's tool; it failed with "Claude called spawn_agent, which is not one of Pi's tools" (and, before that fix,
-  ended the turn in silence).
-
-- Web app: after the phone slept, it could stay on "Reconnecting…" for good: an attempt started around the sleep
-  (the `/api/me` check or the WebSocket) could hang without failing, and coming back to the app did nothing while
-  one was in flight. Attempts now give up after 10 s; coming back to the front pings a link that looks open
-  (dropping it within 5 s if dead) or starts a fresh attempt at once, and the banner waits 2 s before showing.
-- `claude-cli`: Opus's thinking streams as a summary (`--thinking-display summarized`); before, it arrived empty,
-  so a long think left the chat silent for minutes.
-- `claude-cli`: a request whose CLI prints nothing for 10 minutes fails as timed out, and the Harness retries it,
-  instead of waiting forever. A turn that only calls tools Pi does not have is an error, not an empty answer.
-- The chat shows "The model ended its turn without a reply." when an answer has nothing to show, and says when a
-  reply was cut off at the output limit, instead of ending the turn in silence.
-
-### Added
-
 - Reviewer always uses the installed `/autoreview` skill for code reviews, with a dedicated `autoreview` tool fixed
   at P0–P2. It keeps read/browser access without general shell or editing tools. The helper runs through the
   existing guarded local or pinned workstation execution path; `/tools off` disables it. Requires the skill and
   standalone Codex on the execution machine; failures remain incomplete, not manual clean verdicts (ADR 0029).
-
 - Native SSH workstation chat (ADR 0028): `connect USER@VPS --remote-bin
   /home/USER/pi-durable-instance/bin/pi-durable` saves a machine identity and SSH destination separately from
   chat state. Interactive launches use that central chat; `--remote` overrides it once and `--local` preserves
@@ -167,8 +61,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in shape: `welcome.machines`, `send.target`, `machine.register`, `machine.set`, `machine.list`, `machine.call`,
   `machine.cancel` and `machine.result`. The remote CLI also checks the capability before sending. A local fsynced intent/result ledger joins duplicate executions; crash-unknown outcomes
   return `INDETERMINATE`, not an automatic rerun. This is not exactly-once arbitrary bash. Graceful connector
-  close drains admitted calls; an unbounded command may delay exit. No VPS deployment is implied.
-
+  close drains admitted calls; an unbounded command may delay exit.
 - Standing agents (ADR 0027): Coder (programming, coding tools), Reviewer (reviewing and debugging: read tool and a
   browser) and Researcher (web research: `web_fetch`) exist in every chat, each with its own model and effort.
   `settings.json`'s `"agents"` replaces the built-in roster. A work launch warns when a standing agent's model is not
@@ -184,7 +77,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agents without coding tools may message only Pi and their own subs.
 - Browser profiles (`chat.unii/browser/`) hold sites' login cookies and are left out of backups.
 - `/model` and `/effort` keep the other keys of `settings.json` (such as `agents`) when they write it.
-
 - Web app: a reasoning effort chip beside the model's chip (and "Reasoning effort" in the menu) opens the levels
   the current model takes; tapping one sets it.
 - `/effort` picks the reasoning effort (thinking level) for Pi and its agents from the levels the current model
@@ -193,8 +85,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `thinking.set`.
 - The terminal UI footer shows the running tool call next to the spinner while Pi works (for example
   `⠋ working · bash npm test`), so a long turn is never silent. It is cut to 60 columns, or 24 on a phone.
-
-- Server mode (phase 2, ADRs 0016 and 0022 accepted): `pi-durable serve [--cwd D] [--port N]` runs the chat
+- Server mode (ADRs 0016 and 0022): `pi-durable serve [--cwd D] [--port N]` runs the chat
   headless under its flock, with guarded coding tools on unless `--no-tools`, on a mode 600 Unix socket (NDJSON) and, when configured,
   the web listener. One session is fanned out to every client (`src/server/hub.ts`, `connection.ts`): item
   diffs at most every 50 ms and only while a peer's buffer is under 256 KiB, status at most 4 times a second,
@@ -211,8 +102,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `~/.config/pi-durable/env`) and a daily `pi-durable-backup.timer`. See "Server mode" and "Backups" in
   `docs/operations.md`.
 - `UiSession.send` takes an optional `requestId` (pi-durable's submission dedup), which the server passes on.
-
-- The terminal UI attaches to a running server (phase 3, ADR 0018 accepted): an interactive `pi-durable`
+- The terminal UI attaches to a running server (ADR 0018): an interactive `pi-durable`
   probes the chat's socket and, when `serve` answers, runs the TUI on it with no flock or model runtime of its
   own; `/exit`, Ctrl+D and Ctrl+C twice detach ("Detached; the server keeps working."), the footer shows
   `reconnecting…` while the server restarts, and a message sent across a reconnect arrives once (its
@@ -220,27 +110,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   busy because a server holds it says "A server runs this chat; run `pi-durable` to attach." New:
   `src/client/` (`attach.ts`, `remote-session.ts`, `unix-link.ts`) and `test/fixtures/fake-server.ts`, an
   in-memory server written from `docs/protocol.md` for client tests.
-- The web listener of server mode (phase 4, server half; ADR 0019's access and ADR 0020's server half
-  accepted): `src/server/transport-ws.ts` serves HTTP on 127.0.0.1 only, behind `tailscale serve`, with
+- The web listener of server mode (ADR 0019's access and ADR 0020's server half): `src/server/transport-ws.ts` serves HTTP on 127.0.0.1 only, behind `tailscale serve`, with
   `/api/me`, `/api/pair` and the `/ws` WebSocket (`ws` 8.22.0); `src/server/auth.ts` checks the Tailscale login
   allow-list, the Origin and the paired device's `pd_device` cookie (only its sha256 is kept, in
   `serve/devices.json`), and issues one-time pairing codes (5 minutes, 5 tries); `src/server/static.ts` serves
   the web app with TypeScript type-stripped at request time, `marked` 18.0.11 from `node_modules`, ETags, and a
   strict CSP. `ws`, `marked` and `@types/ws` are now pinned directly. See "Web access over Tailscale" in
   `docs/operations.md`.
-- Web Push for server mode, on `node:crypto` (phase 6, ADR 0021 accepted): `src/server/push.ts` keeps a VAPID
+- Web Push for server mode, on `node:crypto` (ADR 0021): `src/server/push.ts` keeps a VAPID
   key pair in `serve/vapid.json` and the subscriptions in `serve/push.json` (both mode 600), encrypts with
   aes128gcm (RFC 8291, checked against its Appendix A vector), posts only to the known push services, drops a
   subscription on 404 or 410, and retries a 429 or 5xx once. The payload is `{title, body, tag}`; see
   "Push notifications" in `docs/operations.md`.
-- The wire protocol for server mode (phase 0 of `docs/plans/server-and-web.md`):
+- The wire protocol for server mode:
   `src/protocol/` (messages, parser, item diff and mirror, shared by Node and the
-  browser) and its spec, `docs/protocol.md`. ADRs 0016 to 0022, proposed.
+  browser) and its spec, `docs/protocol.md`. ADRs 0016 to 0022.
 - The command line of server mode: `serve [--cwd D] [--port N]`, `serve pair`,
   `serve devices [--revoke NAME]`, `backup [--out DIR]`, `--local` and `--attach`,
   and the `PI_DURABLE_ORIGIN`, `PI_DURABLE_ALLOW_LOGIN`, `PI_DURABLE_PORT`,
   `PI_DURABLE_REMOTE_TOOLS`, `PI_DURABLE_TOOLS_IDLE_MIN` and `PI_DURABLE_PUSH_PREVIEW`
-  variables are parsed and checked; the commands say which phase implements them.
+  variables are parsed and checked.
   `serve` accepts `--no-tools`; its guarded tools default on (ADR 0025).
 - The terminal UI's `/mem` loads asynchronously ("Loading…") and reloads while open
   when the memory changes; host warnings reach the chat through the session
@@ -289,6 +178,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Remote tool calls start sooner: the machine executor makes and flushes its ledger folder once per launch instead
+  of on every call. Guarded file operations and bash, machine routing, the claude-cli provider, the agent tools,
+  and startup and shutdown run independent steps together instead of one after another.
+- Web app: the confirmations (turning on coding tools) are an opaque card a step lighter than the sheet, with a
+  hairline edge, so the settings behind no longer show through their text.
+- Web app: an agent's report is padded evenly, its name sitting with its text rather than a line above it.
+- Web app: chat settings' smallest type is easier to read on a phone: the Model and Thinking labels are 11px (were
+  10px), the notes under the switches 12px (were 11px).
+- Web app: in the sheet's rows (settings, agents, models) the detail line sits right under its label, and the pairing
+  form's labels sit closer to their fields.
+- Web app: a tool call that ends while you watch turns its running dot into ✓ or ✗ with a small pop, instead of the
+  mark appearing in one frame.
+- Web app: the "Latest" button floats on a lighter surface, so it stands off the chat behind it.
+- Clearer messages and hints throughout. In the terminal: unknown agents, models, options and `--thinking` levels
+  are listed or named; `--cwd`/`--database` mistakes are explained; `/stop` says when Pi is idle; a failed send says ↑
+  brings it back; `/status` names the machine where tools run; the launcher names the Node it needs. For tools, SSH
+  and credentials: `web_fetch`, the browser, bubblewrap, `PI_DURABLE_SSH_KEYS`, the SSH connector, the bridge, an
+  outdated Claude Code and the `anthropic` login each say how to fix the problem. On the web: a refused pairing, a
+  revoked device, a restarting server and a disabled push each say why; `serve pair` prints the web app's address and
+  refuses while the web app is off; `serve devices --revoke` lists the paired names on a miss.
+- Terminal: `--name=value` options, `/model WORD` opens the picker filtered, `/tools ON` and `/effort HIGH` work in
+  any case, the first Ctrl+C says a second one quits, and a line starting with a path is sent to Pi.
+- Web app: no "TOOLS ON" bar over the header. The tools are on by default and held to protected folders
+  (ADR 0025); their state and switch are in the menu, under Coding tools.
+- Coding tools are on by default for `pi-durable serve` too, and no longer turn off after 30 idle minutes
+  (`PI_DURABLE_TOOLS_IDLE_MIN=N` brings that back). Instead, for every launch, protected folders: the chat's own
+  state and your credentials (`~/.ssh`, `~/.claude`, `~/.config/gh`, `~/.aws`, …) are hidden from the tools, and
+  system folders are read-only. read/write/edit check the real path; bash runs in bubblewrap, which is now
+  required for bash (`sudo apt install bubblewrap`). `PI_DURABLE_PROTECT` / `PI_DURABLE_UNPROTECT` adjust the list.
+  ADR 0025 made `welcome.tools.idleMinutes` optional in protocol 2; the remote-routing changes required
+  protocol 3. Older web pages reload, an older attached TUI asks for an update.
+- The existing right-hand web menu uses a rounded monochrome glass panel with a
+  labelled header, close button and viewport-bounded scrolling; all actions stay the same.
+- The web app takes the dark monochrome palette, monospace type, glass surfaces and rounded composer of Pi Cloud
+  (a since-retired project); installed-app and offline colours match too.
+- Web app and home-screen icons use Pi Cloud's (since retired) block mark and Lucide controls.
+- Coding tools are on by default for a local launch; `--no-tools` turns them off (`--allow-tools` is kept as a
+  no-op locally, and is an explicit grant for SSH connectors). ADR 0009 amended; ADR 0025 extends the guarded
+  default to `serve`.
 - A launch whose first word is `serve` or `backup` runs that command; send such a
   prompt with `-p` or after `--`.
 - Memory aligned with UniiChat's published source (Apache-2.0, superseding the
@@ -316,7 +244,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `zoom(id, 1)` pages at 30,000 characters, so a logged message is one page;
     a bad zoom names the tree's roots. A split text's parts are written in one
     fsynced write, and text is made well-formed before it is logged.
-
 - Agents are compacted by pi-durable near their model's context window, so a
   long-lived agent no longer grows past it; Pi still declines pi-durable's
   compaction and keeps its view. See ADR 0015.
@@ -342,7 +269,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   host-wide stop; `stop_agent` uses it.
 - Pi's instructions about the coding tools follow `/tools` and name it, with
   `--allow-tools`, as the only ways to turn them on. ADR 0009 is amended: tools
-  can be switched in session but still start off on every launch.
+  can be switched in session but still start off on every launch (ADR 0025 later made them
+  start on).
 - The `anthropic` provider is refused when its credential is a Claude
   subscription token (a Pi "Claude Pro/Max" login, `ANTHROPIC_OAUTH_TOKEN`, or an
   `sk-ant-oat…` key); it works with an Anthropic Console API key.
@@ -370,6 +298,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Server web files initialize only after the chat opens, skipping startup after failure or cancellation.
+- Model switches check queued images after credential validation, including input admitted while credentials were pending.
+- Terminal: tool output drops hyperlinks and other escape sequences whole, and carriage returns overwrite as in a
+  terminal (progress bars show their last state); the panels no longer show stray `[31m`. The panels fill the screen,
+  so the chat no longer shows through around them. Whitespace-only items leave no blank lines in the agent chat view,
+  and cut lines end in `…`. A long step or model is cut to fit the footer instead of dropped; one long provider/id no
+  longer pushes names and notes off the /model picker.
+- `--plain` prints one `you>` prompt after Pi's reply, not two; a new chat no longer opens with
+  `Resuming 3 pending task(s)…` for the standing agents' bookkeeping; agents' reports in `--plain` and `--history`
+  show as name and text, without the note meant for Pi.
+- A faulted reply shows one notice, `The reply failed: …`, instead of the task kind and `Not answered: faulted.`; a
+  missing model says so instead of `no_model`; `/effort` on a model that does not reason says it has no effort to
+  set; `--status` and `--history` on a missing chat say `No saved chat yet.`
+- Web app: bold and italic show with a monospace font that has one face; ligatures stay off in code and tool output
+  (`--`, `->`, `!=` read as typed); task-list items show their checkbox without a bullet; picked images attach in
+  the order they were picked.
+- Web app: an agent's conversation keeps its skeleton until its history arrives, instead of flashing "Nothing here
+  yet." between the feed opening and its snapshot; a failed open, or a failed reopen after a reconnect, still
+  replaces it with the error.
+- Web app: the Stop button in an agent's conversation no longer sits on the rule below it.
+- `--plain` no longer drops lines typed ahead or pasted after the first.
+- The terminal footer no longer overflows a narrow screen while "reconnecting…" shows.
+- Web app: re-pairing after a revoke works without a reload; sheets opened while disconnected load once the link is
+  back; opening the app during a server restart starts it from the cache instead of a 502 page; the pairing screen
+  says codes last 5 minutes, as they do.
+- `claude-cli`: a call to one of Pi's tools by its bare name (`spawn_agent` instead of `mcp__pi__spawn_agent`) runs
+  as Pi's tool; it failed with "Claude called spawn_agent, which is not one of Pi's tools" (and, before that fix,
+  ended the turn in silence).
+- Web app: after the phone slept, it could stay on "Reconnecting…" for good: an attempt started around the sleep
+  (the `/api/me` check or the WebSocket) could hang without failing, and coming back to the app did nothing while
+  one was in flight. Attempts now give up after 10 s; coming back to the front pings a link that looks open
+  (dropping it within 5 s if dead) or starts a fresh attempt at once, and the banner waits 2 s before showing.
+- `claude-cli`: Opus's thinking streams as a summary (`--thinking-display summarized`); before, it arrived empty,
+  so a long think left the chat silent for minutes.
+- `claude-cli`: a request whose CLI prints nothing for 10 minutes fails as timed out, and the Harness retries it,
+  instead of waiting forever. A turn that only calls tools Pi does not have is an error, not an empty answer.
+- The chat shows "The model ended its turn without a reply." when an answer has nothing to show, and says when a
+  reply was cut off at the output limit, instead of ending the turn in silence.
 - A run that failed or was stopped is no longer sent again raw with the next
   message. Before, its messages were carried into every later run until one ended
   with a final answer, so a run that overflowed the context window failed every
@@ -377,7 +343,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   view and date. Now the next run starts at its own message, and the failed run's
   messages are in the view.
 
-## [0.1.0] - 2026-10-19
+## 0.1.0 - 2026-10-19
 
 ### Added
 
@@ -407,6 +373,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Source reorganized into `src/host/`, `src/runtime/`, `src/memory/` (was
   `src/unii/`), and `src/agents/` (was `src/agents.mjs`); tests grouped by area
   under `test/`; syntax check moved to `scripts/check.mjs`.
-
-[Unreleased]: https://github.com/MatiasGigena/Persistence/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/MatiasGigena/Persistence/releases/tag/v0.1.0
