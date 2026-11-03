@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-19. Amends [0012](0012-terminal-ui.md) and [0014](0014-phone-layout.md).
+Accepted, 2026-10-19. Amends [0012](0012-terminal-ui.md) and [0014](0014-phone-layout.md). Extended by [0028](0028-remote-machines-over-ssh.md).
 
 ## Context
 

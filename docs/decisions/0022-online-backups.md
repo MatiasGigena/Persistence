@@ -8,7 +8,7 @@ Accepted, 2026-10-19.
 
 Backups today mean stopping the host and copying `chat.sqlite*` and `chat.unii/`
 ([operations.md](../operations.md#backups)). A server runs for weeks, so stopping it daily is not an option. The
-owner wants a daily backup on the VPS, kept 14 days. Only the writer may touch the database
+user wants a daily backup on the VPS, kept 14 days. Only the writer may touch the database
 ([0008](0008-one-writer.md)), and the memory must not be ahead of the database it belongs to.
 
 ## Decision

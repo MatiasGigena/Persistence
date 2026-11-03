@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted, 2026-10-20. Amends [0009](0009-tools-opt-in.md) and the tools half of [0019](0019-private-access.md).
+Accepted, 2026-10-20. Supersedes [0009](0009-tools-opt-in.md) and the tools half of [0019](0019-private-access.md).
+Amended by [0030](0030-pi-ssh-agent.md); extended by [0028](0028-remote-machines-over-ssh.md).
 
 ## Context
 

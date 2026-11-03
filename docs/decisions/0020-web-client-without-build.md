@@ -2,7 +2,8 @@
 
 ## Status
 
-Server half accepted, 2026-10-19 (phase 4: `src/server/static.ts`); the web app's half proposed. Extends [0011](0011-typescript-without-build.md).
+Accepted, 2026-10-19 (`src/server/static.ts`, `src/web/`). Extends [0011](0011-typescript-without-build.md). Amended by
+[0032](0032-web-shell-stale-while-revalidate.md).
 
 ## Context
 

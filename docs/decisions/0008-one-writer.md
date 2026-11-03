@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-19
+Accepted, 2026-10-19. Amended by [0016](0016-server-mode.md): with `serve`, the server is the one writer.
 
 ## Context
 

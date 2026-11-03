@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, 2026-10-19.
+Accepted, 2026-10-19; implemented in `src/protocol/`.
 
 ## Context
 

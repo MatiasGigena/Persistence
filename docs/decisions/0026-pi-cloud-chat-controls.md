@@ -3,12 +3,13 @@
 ## Status
 
 Accepted, 2026-10-20, at the user's request. Amends [0023](0023-pi-cloud-web-style.md).
+Pi Cloud, a private project, has since been retired; the controls stay.
 
 ## Context
 
 0023 kept the web app's own menu (Agents, Memory, Model, Coding tools, Settings, Stop all) behind a "⋯" button,
 with model and effort chips in the header, and a separate stop button. The user asked for the right-hand menu to
-be Pi Cloud's (`MatiasGigena/Pi-Cloud` at `ff6f72c`) with the unneeded parts removed, for Pi Cloud's copy actions,
+be Pi Cloud's (a retired private project) with the unneeded parts removed, for Pi Cloud's copy actions,
 and for its send flow: while Pi works, a typed message steers it and the same button stops it when the box is empty.
 
 ## Decision

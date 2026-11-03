@@ -3,7 +3,8 @@
 ## Status
 
 Accepted, 2026-10-20, at the user's request. Amends [0003](0003-memory-only-for-pi.md) (agents' tools) and the
-"Settings and tools on each launch" rules of [agents.md](../agents.md).
+"Settings and tools on each launch" rules of [agents.md](../agents.md). Extended by [0028](0028-remote-machines-over-ssh.md) and
+[0029](0029-reviewer-autoreview-p2.md); amended by [0034](0034-archived-agents.md).
 
 ## Context
 
@@ -111,7 +112,7 @@ general rules.
 
 ### The browser (Reviewer)
 
-Ported from Pi Cloud's `resources/extensions/browser` (at `ff6f72c`) to a pi-durable extension, `src/tools/browser.ts`:
+Ported from the browser extension of Pi Cloud (a retired private project) to a pi-durable extension, `src/tools/browser.ts`:
 the same eight tools, a headless Chromium with a persistent profile per agent in the chat's state directory (hidden
 from the coding tools), one queue serializing operations, a 60 s timeout per operation, HTTP(S) only, sensitive
 headers redacted. Always on for agents with the kit: there is no `/browser on`. `PI_DURABLE_CHROMIUM` may name the

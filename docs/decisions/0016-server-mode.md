@@ -7,7 +7,7 @@ Accepted, 2026-10-19. Amends [0008](0008-one-writer.md) and [0012](0012-terminal
 ## Context
 
 The host runs in tmux on a VPS, and is reached from a phone over SSH or mosh. It stops when tmux or the machine
-does, and only one terminal can show the chat at a time. The owner wants the chat to run around the clock, to be
+does, and only one terminal can show the chat at a time. The user wants the chat to run around the clock, to be
 reached from a phone's browser and a laptop, and still from a shell on the VPS. The one-writer rule
 ([0008](0008-one-writer.md)) allows one process per database, and the UI already reaches the host only through the
 `UiSession` contract ([0012](0012-terminal-ui.md)).
@@ -35,7 +35,7 @@ reached from a phone's browser and a laptop, and still from a shell on the VPS. 
 
 - The one-writer rule holds: the server is the writer. Clients write nothing; they ask the server.
 - While a server runs, one-shot launches (`-p`, `--status`, `--history`, `--resume`) still need the flock and exit
-  with 75, until they too go over the socket (plan phase 7).
+  with 75,, until they too go over the socket.
 - "No daemon and no listener" now holds only without `serve`. With it there is a listener, never on a public
   address (AGENTS.md invariant).
 - The terminal UI can run remote: `memoryView` and `zoom` became async and `onNotice` was added to the contract.

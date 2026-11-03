@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-19
+Accepted, 2026-10-19. Amended by [0018](0018-tui-attach.md).
 
 ## Context
 

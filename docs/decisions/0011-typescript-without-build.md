@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-19
+Accepted, 2026-10-19. Extended by [0020](0020-web-client-without-build.md) to the web client.
 
 ## Context
 

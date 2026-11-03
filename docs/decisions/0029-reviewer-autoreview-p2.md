@@ -2,13 +2,13 @@
 
 ## Status
 
-Accepted at the user's request. Extends [0027](0027-standing-agents.md) and
+Accepted, 2026-10-22, at the user's request. Extends [0027](0027-standing-agents.md) and
 [0028](0028-remote-machines-over-ssh.md). Existing persisted names and protocol remain unchanged; the new extension,
 tool and kit name `autoreview` are additive and frozen.
 
 ## Context
 
-The user wants every Reviewer's code review to use their `/autoreview` skill, always through P2. The host does not
+The user wants every Reviewer's code review to use the installed `/autoreview` skill, always through P2. The host does not
 autoload ordinary Pi skills. Reviewer currently has read/browser tools, with no way to invoke the skill's helper.
 Granting the coding kit would also grant arbitrary commands and file edits; the user chose a dedicated tool instead.
 
@@ -34,7 +34,7 @@ Granting the coding kit would also grant arbitrary commands and file edits; the 
 - Preserve the canonical helper's Git capture, isolation, authentication controls, validation, output and exit codes.
   No automatic rerun after interruption (`replay: 'unsafe'`), no manual clean substitute for a missing, failed,
   filtered or incomplete review, and no protection bypass for credentials. The skill and its prerequisites must be
-  installed on each execution machine; this change neither installs them nor deploys/restarts a host.
+  installed on each execution machine; see [operations.md](../operations.md#autoreview).
 
 ## Consequences
 

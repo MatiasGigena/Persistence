@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted, 2026-10-19
+Accepted, 2026-10-19. Amended by [0019](0019-private-access.md); superseded by [0025](0025-protected-folders.md): coding tools are on by default, held to
+protected folders.
 
 ## Context
 

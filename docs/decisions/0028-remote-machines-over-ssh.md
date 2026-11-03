@@ -4,7 +4,6 @@
 
 Accepted, 2026-10-21. Extends [0018](0018-tui-attach.md),
 [0025](0025-protected-folders.md) and [0027](0027-standing-agents.md).
-These are implementation and setup instructions, not a record of a VPS deployment.
 
 ## Context
 

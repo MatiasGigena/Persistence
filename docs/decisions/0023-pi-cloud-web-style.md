@@ -3,10 +3,11 @@
 ## Status
 
 Accepted, 2026-10-20, at the user's request. The menu part is amended by [0026](0026-pi-cloud-chat-controls.md).
+Pi Cloud, a private project, has since been retired; the style stays.
 
 ## Decision
 
-Use `MatiasGigena/Pi-Cloud` at `ff6f72c` as the visual reference for the web app:
+Use Pi Cloud (a retired private project) as the visual reference for the web app:
 black monochrome surfaces, monospace type, glass chrome, rounded controls, the Pi
 block mark and inline Lucide 1.49.0 icons (licence included in `index.html`). The
 installed app and offline page use the same dark colours regardless of OS theme.

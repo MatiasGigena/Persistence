@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-19
+Accepted, 2026-10-19. Amended by [0024](0024-saved-effort.md): the reasoning effort is saved too.
 
 ## Context
 

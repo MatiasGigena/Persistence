@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-19
+Accepted, 2026-10-19. Amended by [0016](0016-server-mode.md) and [0018](0018-tui-attach.md): the terminal UI also attaches to a running server.
 
 ## Context
 

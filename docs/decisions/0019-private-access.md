@@ -2,12 +2,13 @@
 
 ## Status
 
-Access accepted, 2026-10-19 (phase 4: `src/server/auth.ts`, `src/server/transport-ws.ts`); the tools policy proposed. Amends [0009](0009-tools-opt-in.md).
+Accepted, 2026-10-19 (`src/server/auth.ts`, `src/server/transport-ws.ts`). Amends [0009](0009-tools-opt-in.md). The tools
+policy is superseded by [0025](0025-protected-folders.md).
 
 ## Context
 
 The server ([0016](0016-server-mode.md)) is reached from a phone. Whoever reaches it can run Pi, read the whole
-chat, and, with coding tools on, run commands as the owner on the VPS. The owner's phone is on a tailnet with the
+chat, and, with coding tools on, run commands as the user on the VPS. The user's phone is on a tailnet with the
 VPS; `tailscale serve` gives HTTPS on the tailnet and tells the backend who the tailnet user is. Coding tools are
 opt-in per launch ([0009](0009-tools-opt-in.md)), but a server's launch lasts for weeks, and its user is not at a
 terminal to pass `--allow-tools`.

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted, 2026-10-19
+Accepted, 2026-10-19. Amended by [0027](0027-standing-agents.md) (agents without the coding kit message only Pi and their own
+sub agents) and [0034](0034-archived-agents.md) (agents are deleted: archived ones after a day, and with Pi's `delete_agent`).
 
 ## Context
 

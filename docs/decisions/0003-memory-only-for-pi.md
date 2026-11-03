@@ -3,7 +3,7 @@
 ## Status
 
 Accepted, 2026-10-19. Amended by [0015](0015-agent-compaction.md): pi-durable now compacts agents, which bounds a
-long agent conversation.
+long agent conversation. Amended by [0027](0027-standing-agents.md): standing agents choose their own tools.
 
 ## Context
 
