@@ -1,10 +1,11 @@
 import { type Context, copyJson, type Draft } from '@earendil-works/chord';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { type ImageContent, type Message, type TextContent, type ThinkingContent, type ToolCall, Type } from '@earendil-works/pi-ai';
+import { type ImageContent, type Message, type TextContent, type ThinkingContent, type ToolCall } from '@earendil-works/pi-ai';
 import {
   AgentDoc, AssistantEntry, configure, defineDoc, defineTask, defineTool,
   hook, LiveDoc, ROOT_CONVERSATION_ID, section, ToolTask,
 } from '@earendil-works/pi-durable';
+import { obj, str } from '@earendil-works/pi-schema';
 import type {
   AgentChange, ConversationId, Cursor, DocumentReader, EntryId, EntryRecord, Extension, NextTaskState,
   Session, TaskId, TaskOptions, ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx,
@@ -122,6 +123,8 @@ export const AgentsDoc = defineDoc<AgentsState>({
   version: 1,
   scope: 'session',
   initial: () => ({ agents: {}, calls: {} }),
+  // Every tool call writes a delta (`calls` keeps the newest KEEP_CALLS): a base now and then keeps a reopen short.
+  checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 const text = (content: string | readonly Block[] | undefined) => typeof content === 'string' ? content
@@ -1034,10 +1037,10 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       + 'Pi spawns main agents; main agents spawn sub agents. Returns at once: never wait or poll for it. '
       + 'Its final reply arrives later as a message starting with [Name]. It sees Pi\'s view and the user\'s instructions, '
       + 'but knows what you want only from its task, so say all it needs.',
-    parameters: Type.Object({
-      name: Type.String({ description: 'Unique short name: a letter, then letters, digits, _ or -, at most 32 characters.' }),
-      task: Type.String({ description: 'What the agent should do.' }),
-    }),
+    parameters: obj({
+      name: str({ description: 'Unique short name: a letter, then letters, digits, _ or -, at most 32 characters.' }),
+      task: str({ description: 'What the agent should do.' }),
+    }, { open: true }),
     replay: 'safe',
     execute: async ({ name, task }, api, context) => {
       const registry = await api.snapshot(AgentsDoc, context);
@@ -1080,10 +1083,10 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       + 'your view; its earlier sessions stay readable with zoom("Name#n"). Refused while the agent or a sub agent of its task is busy: steer or '
       + 'question the work in progress with send_message instead. Returns at once: never wait or poll for it. Its final '
       + 'reply arrives later as a message starting with [Name]. It knows what you want only from its task, so say all it needs.',
-    parameters: Type.Object({
-      agent: Type.String({ description: 'A standing agent\'s name.' }),
-      task: Type.String({ description: 'The new task, complete in itself.' }),
-    }),
+    parameters: obj({
+      agent: str({ description: 'A standing agent\'s name.' }),
+      task: str({ description: 'The new task, complete in itself.' }),
+    }, { open: true }),
     replay: 'safe',
     execute: async ({ agent: name, task }, api, context) => {
       const registry = await api.snapshot(AgentsDoc, context);
@@ -1145,7 +1148,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
   const listAgentsTool = defineTool({
     name: 'list_agents',
     description: 'List all other agents: name, role (main/sub), parent, busy or idle, and a one-line last message.',
-    parameters: Type.Object({}),
+    parameters: obj({}, { open: true }),
     replay: 'safe',
     execute: async (_args, api, context) => {
       const registry = await api.snapshot(AgentsDoc, context);
@@ -1178,10 +1181,10 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
     description: 'Send `text` to another agent by name. Main agents may also send to "Pi", the session agent; sub agents may not. '
       + 'An agent without coding tools may send only to Pi and its own sub agents, and its subs only to it and each other. '
       + 'A busy agent sees it between its tool calls; an idle one starts working on it. Returns at once: never wait for a reply.',
-    parameters: Type.Object({
-      to: Type.String({ description: 'Agent name, or "Pi" (main agents only).' }),
-      text: Type.String(),
-    }),
+    parameters: obj({
+      to: str({ description: 'Agent name, or "Pi" (main agents only).' }),
+      text: str(),
+    }, { open: true }),
     replay: 'safe',
     execute: async ({ to, text: message }, api, context) => {
       const caller = await me(api, context);
@@ -1222,7 +1225,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
   const lastMessage = defineTool({
     name: 'last_message',
     description: 'Get an agent\'s latest reply and whether it is busy. Main agents may also ask for "Pi"; sub agents may not.',
-    parameters: Type.Object({ name: Type.String() }),
+    parameters: obj({ name: str() }, { open: true }),
     replay: 'safe',
     execute: async ({ name }, api, context) => {
       const registry = await api.snapshot(AgentsDoc, context);
@@ -1243,7 +1246,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
     name: 'stop_agent',
     description: 'Stop an agent\'s current work and drop its queued messages; stopping a main agent also stops its sub agents. '
       + 'Stopped agents stay and can be messaged again. Pi may stop any agent; a main agent only its own sub agents.',
-    parameters: Type.Object({ name: Type.String() }),
+    parameters: obj({ name: str() }, { open: true }),
     // A rerun after a crash could stop newer work.
     replay: 'unsafe',
     execute: async ({ name }, api, context) => {
@@ -1267,7 +1270,7 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
     description: 'Delete an agent you no longer need, with its sub agents, so it leaves list_agents and takes no more work. '
       + 'Pi only. Refused for standing agents, and while the agent or one of its sub agents is busy or has a message on its way: '
       + 'stop_agent it first. Its chat stays readable with zoom("Name"), and the name is free again.',
-    parameters: Type.Object({ name: Type.String() }),
+    parameters: obj({ name: str() }, { open: true }),
     replay: 'safe',
     execute: async ({ name }, api, context) => {
       const caller = await me(api, context);

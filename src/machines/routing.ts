@@ -19,25 +19,25 @@ type RouteState = { target?: Target };
 
 /** Constant-size server namespace; historical routes never accumulate in this shared document. */
 export const RoutingDoc = defineDoc<{ namespace: string }>({
-  kind: 'machines.routing', version: 1, scope: 'session',
+  kind: 'machines.routing', version: 1, scope: 'session', checkpointWhen: () => false,
   initial: () => ({ namespace: randomUUID() }),
 });
 
 /** Immutable request bindings, independently addressable without loading the chat's submission history. */
 export const SubmissionRouteDoc = defineDocFamily<RouteState, null>({
   kind: 'machines.submission-route', version: 1, family: true,
-  scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({}),
+  scope: 'conversation', history: 'latest', fork: 'initial', checkpointWhen: () => false, initial: () => ({}),
 });
 
 /** The root generation task identified by LiveDoc.run.taskId owns its immutable route. */
 export const RunRouteDoc = defineDoc<RouteState>({
-  kind: 'machines.run-route', version: 1, scope: 'task', initial: () => ({}),
+  kind: 'machines.run-route', version: 1, scope: 'task', checkpointWhen: () => false, initial: () => ({}),
 });
 
 /** Separate from AgentDoc: syncAgents replaces configuration, but must never replace a machine pin. */
 export const AgentRouteDoc = defineDoc<RouteState>({
   kind: 'machines.agent-route', version: 1,
-  scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({}),
+  scope: 'conversation', history: 'latest', fork: 'initial', checkpointWhen: () => false, initial: () => ({}),
 });
 
 const detached = ({ machineId, cwd, label }: MachineTarget): Target => ({ machineId, cwd, label });

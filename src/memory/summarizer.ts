@@ -33,7 +33,7 @@ export type PiAiSummarizerOptions = {
   sessionId?: string;
 };
 
-// Cheapest sensible model per provider in the pinned pi-ai 1.3.0 catalog: gpt-6-luna is $0.10/$0.50 per M tokens
+// Cheapest sensible model per provider in the pinned pi-ai 1.5.0 catalog: gpt-6-luna is $0.10/$0.50 per M tokens
 // (cache read $0.01), against $2/$10 for the host's default gpt-6.1-sol, with the same 272k window and reasoning.
 // Claude Haiku 5.5 is the same price on the API; through claude-cli it spends the least of the plan's limits.
 export const CHEAP_MODELS: Readonly<Record<string, string>> = { 'openai-codex': 'gpt-6-luna', openai: 'gpt-6-luna', 'claude-cli': 'haiku', anthropic: 'claude-haiku-5-5' };

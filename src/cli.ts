@@ -24,7 +24,7 @@ process.umask(0o077);
 try {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) { console.log(HELP); }
-  else if (options.version) { console.log(`pi-durable ${VERSION} (SDK 1.3.0)`); }
+  else if (options.version) { console.log(`pi-durable ${VERSION} (SDK 1.5.0)`); }
   else {
     const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
     if (major < 22 || (major === 22 && minor < 19)) throw new Error('Node.js >=22.19.0 is required');

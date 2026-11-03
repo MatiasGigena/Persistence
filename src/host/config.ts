@@ -11,7 +11,7 @@ import { atomicWrite } from '../memory/util.ts';
 export const VERSION = '0.1.0';
 export const DEFAULT_MODEL = 'openai-codex/gpt-6.1-sol';
 export const DEFAULT_PORT = 7433;
-export const HELP = `pi-durable — personal terminal host for Pi Durable 1.3.0
+export const HELP = `pi-durable — terminal host for Pi Durable 1.5.0
 
 Usage: pi-durable [options] [prompt]
        pi-durable serve [--cwd DIR] [--port N]   Run the chat as a server

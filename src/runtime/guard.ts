@@ -10,8 +10,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { Context } from '@earendil-works/chord';
 import { err, ExecutionError, FileError } from '@earendil-works/pi-durable/env';
-import type { BinaryReader, DirReader, ExecutionError as ExecError, FileWatcher, Result,
-  ShellExecOptions, ShellExecResult, TextLineReader, WatchChange, WatchTarget } from '@earendil-works/pi-durable/env';
+import type { BinaryReader, DirReader, ExecutionError as ExecError, FileChange, FileWatcher, Result,
+  ShellExecOptions, ShellExecResult, TextLineReader, WatchTarget } from '@earendil-works/pi-durable/env';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 
 /** What the tools may not touch: `hidden` neither read nor written, `readOnly` read only. Absolute paths. */
@@ -223,7 +223,7 @@ export class GuardedEnv extends NodeExecutionEnv {
   override openDirReader(path: string, context: Context): Promise<Result<DirReader, FileError>> {
     return this.guard(path, 'read', () => super.openDirReader(path, context));
   }
-  override async watch(targets: readonly WatchTarget[], onChange: (change: WatchChange) => void, context: Context): Promise<Result<FileWatcher, FileError>> {
+  override async watch(targets: readonly WatchTarget[], onChange: (change: FileChange) => void, context: Context): Promise<Result<FileWatcher, FileError>> {
     const refused = (await Promise.all(targets.map(({ path }) => this.refusal(path, 'read')))).find(each => each !== undefined);
     if (refused) return err(refused);
     return super.watch(targets, onChange, context);

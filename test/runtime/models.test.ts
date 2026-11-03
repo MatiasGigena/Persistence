@@ -84,7 +84,7 @@ describe('model chooser', { timeout: 30_000 }, () => {
     const { models } = await catalog(t, { loggedIn: false });
     const chooser = modelChooser(models, { authFile: '/x/auth.json' });
     await assert.rejects(chooser.check({ provider: 'claude-cli', modelId: 'gpt' }), /Unknown model claude-cli\/gpt\. Use opus, sonnet, haiku or fable\./);
-    await assert.rejects(chooser.check({ provider: 'nobody', modelId: 'x' }), /Unknown model nobody\/x in pinned Pi 1\.3\.0 catalog/);
+    await assert.rejects(chooser.check({ provider: 'nobody', modelId: 'x' }), /Unknown model nobody\/x in pinned Pi 1\.5\.0 catalog/);
     await assert.rejects(chooser.check({ provider: 'claude-cli', modelId: 'haiku' }), /No Claude Code login for claude-cli/);
     await assert.rejects(chooser.check({ provider: 'openai-codex', modelId: 'gpt-6.1-sol' }), /No credentials for openai-codex\..*Auth file: \/x\/auth\.json/);
     // Pi's /login for anthropic is the Claude Pro/Max login the host refuses: point at an API key or claude-cli instead.

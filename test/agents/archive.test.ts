@@ -113,7 +113,7 @@ async function execute(instance: AgentsInstance, name: string, args: JsonObject,
     }, at),
     conversation: harness.conversation.bind(harness),
     agent: unused, output: unused, retainedOutput: unused, diagnostic: unused, details: unused, memo: unused,
-    createTask: unused, getTask: unused, waitForTask: unused, executeTool: unused,
+    createTask: unused, getTask: unused, waitForTask: unused, executeTool: unused, now: Date.now,
   };
   const block = (await tool.execute(args, api, context)).output?.[0];
   assert.ok(block?.type === 'text');

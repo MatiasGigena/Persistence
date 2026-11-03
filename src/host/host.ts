@@ -2,11 +2,10 @@ import { createInterface } from 'node:readline/promises';
 import { resolve } from 'node:path';
 import { format } from 'node:util';
 import type { Interface } from 'node:readline/promises';
-import type { AttachedReplicatedState } from '@earendil-works/chord';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { cleanupSessionResources } from '@earendil-works/pi-ai';
 import type { Message, Models } from '@earendil-works/pi-ai';
-import type { ConversationView, EntryRecord } from '@earendil-works/pi-durable';
+import type { ConversationView, ConversationWatch, EntryRecord } from '@earendil-works/pi-durable';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
 import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
@@ -28,7 +27,7 @@ process.umask(0o077);
 const config = parseConfig(process.argv[2]);
 let instance: Instance | undefined;
 let reader: Interface | undefined;
-let watcher: AttachedReplicatedState<ConversationView> | undefined;
+let watcher: ConversationWatch | undefined;
 let stopping = false;
 // A send in progress: its reply prints mid-wait, and the chat loop prompts once the send returns.
 let sending = false;
@@ -104,9 +103,10 @@ async function printAgents(): Promise<void> {
 
 // In chat, every committed reply of Pi is printed as it lands, including runs
 // started by agents' reports, which no submission here waits for.
-async function watchReplies(): Promise<AttachedReplicatedState<ConversationView>> {
+async function watchReplies(): Promise<ConversationWatch> {
   const { root, context } = opened();
-  const view = await root.viewState(context);
+  // The view's entries are a window (the newest, then appends): each one not seen yet is new.
+  const view = await root.watch(context);
   const seen = new Set(view.value.entries.map(entry => entry.id));
   const show = (value: ConversationView): void => {
     for (const entry of value.entries) {
@@ -120,7 +120,10 @@ async function watchReplies(): Promise<AttachedReplicatedState<ConversationView>
       if (!sending) reader?.prompt(true);
     }
   };
-  view.subscribe(show);
+  view.start(call => {
+    if (call.kind === 'value') show(call.value);
+    return Promise.resolve();
+  });
   return view;
 }
 
@@ -265,7 +268,7 @@ async function main(): Promise<void> {
 try { await main(); }
 catch (error) { if (!stopping) { console.error(`pi-durable: ${errorMessage(error)}`); process.exitCode = 1; } }
 finally {
-  watcher?.dispose();
+  await watcher?.stop();
   reader?.close();
   try { await close(); } catch (error) { console.error(`Closing failed: ${errorMessage(error)}`); process.exitCode = 1; }
   try { cleanupSessionResources(); }

@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { TestContext } from 'node:test';
-import { Type } from '@earendil-works/pi-ai';
 import type { SimpleStreamOptions, Tool, TranscriptContext } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
+import { obj } from '@earendil-works/pi-schema';
 import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel, openMemory, PROMPT } from '../../src/memory/index.ts';
 import type { AppendInput, CompactionMessage, Memory, SummarizeOptions, Summarizer } from '../../src/memory/index.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
@@ -333,7 +333,7 @@ describe('unii memory', { concurrency: false }, () => {
       return `S${options.node.name} ${'s'.repeat(490)}`;
     };
     const m = openMemory(temp(t), { summarize, ...quiet });
-    const tools: Tool[] = [{ name: 'zoom', description: 'z', parameters: Type.Object({}) }];
+    const tools: Tool[] = [{ name: 'zoom', description: 'z', parameters: obj({}, { open: true }) }];
     m.setCompactionPrompt({ system: `${PROMPT}\n\nINSTRUCTIONS`, tools });
     m.append({ kind: 'user', text: 'first short' });
     m.append({ kind: 'echo', text: `OUTPUT ${'o'.repeat(700)}` });
@@ -397,7 +397,7 @@ describe('unii memory', { concurrency: false }, () => {
       () => ({ ...fauxAssistantMessage('', { stopReason: 'error', errorMessage: 'refused' }), rawStopReason: 'refusal' }),
     ]);
     const summarize = createPiAiSummarizer({ models, model, maxTokens: 300 });
-    const tools: Tool[] = [{ name: 'zoom', description: 'z', parameters: Type.Object({}) }];
+    const tools: Tool[] = [{ name: 'zoom', description: 'z', parameters: obj({}, { open: true }) }];
     const text = await summarize('SYSTEM', [{ role: 'user', content: 'task' }, { role: 'assistant', content: 'long line' }, { role: 'user', content: 'Too long' }], { tools });
     assert.equal(text, 'a line');
     assert.equal(seen?.options?.toolChoice, 'none');

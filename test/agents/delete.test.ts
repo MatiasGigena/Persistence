@@ -43,7 +43,7 @@ function executor(instance: AgentsInstance, models: ToolExecutionApi['models']) 
       snapshot: harness.snapshot.bind(harness), snapshotAsOf: harness.snapshotAsOf.bind(harness),
       watchDoc: harness.watchDoc.bind(harness), commit: harness.commit.bind(harness),
       agent: unused, output: unused, retainedOutput: unused, diagnostic: unused, details: unused, memo: unused,
-      createTask: unused, getTask: unused, waitForTask: unused, conversation: unused, executeTool: unused,
+      createTask: unused, getTask: unused, waitForTask: unused, conversation: unused, executeTool: unused, now: Date.now,
     };
     const block = (await tool.execute(args, api, context)).output?.[0];
     assert.ok(block?.type === 'text');

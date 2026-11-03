@@ -1,6 +1,6 @@
-import { Type } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { Extension, ToolRegistration } from '@earendil-works/pi-durable';
+import { obj, str } from '@earendil-works/pi-schema';
 import { getOrThrow } from '@earendil-works/pi-durable/env';
 import { IMAGE_LIMITS, sniffImage } from '../protocol/images.ts';
 
@@ -24,8 +24,7 @@ export function createShowImageExtension(): ShowImageExtension {
     description: 'Show the user an existing image file (PNG, JPEG, GIF or WebP, at most '
       + `${mib(IMAGE_LIMITS.fileBytes)}) in the chat; you see it too. For screenshots or pictures already on disk; it `
       + 'cannot create or change images.',
-    parameters: Type.Object({ path: Type.String({ minLength: 1, description: 'The image file; absolute or relative to the working directory.' }) },
-      { additionalProperties: false }),
+    parameters: obj({ path: str({ minLength: 1, description: 'The image file; absolute or relative to the working directory.' }) }),
     executionMode: 'sequential',
     async execute({ path }, api, context) {
       const env = api.env;

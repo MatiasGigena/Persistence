@@ -1,6 +1,6 @@
 // The host's state as the UI sees it (src/ui/types.ts): Pi's chat, status, memory view, and agents.
 import { InboxDoc } from '@earendil-works/pi-durable';
-import type { AgentEvent, AgentState, ModelRef } from '@earendil-works/pi-durable';
+import type { AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { archiveAgents, listAgents, restoreAgent, stopAgents } from '../agents/index.ts';
 import { errorMessage, isThinkingLevel, updateSettings } from '../host/config.ts';
@@ -31,8 +31,6 @@ export interface UiSessionOptions {
 }
 
 const CODING_TOOLS: ReadonlySet<string> = new Set((CodingTools.tools ?? []).map(tool => tool.name));
-// Events after which the memory log or the agent registry may have changed.
-const REFRESHING: ReadonlySet<AgentEvent['type']> = new Set(['message_end', 'tool_execution_end', 'run_start', 'run_end']);
 
 /**
  * Open the UI's view of `instance`: a live feed of Pi's conversation, its status, and the memory view. Agents' feeds
@@ -132,9 +130,10 @@ export async function createUiSession(
     await reading;
   }
 
-  chat.onState(events => {
+  chat.onState(({ settled }) => {
     refresh();
-    if (events.some(event => REFRESHING.has(event.type))) refreshAgents();
+    // An entry, a finished tool call, or a run's start or end may have changed the memory log or the agent registry.
+    if (settled) refreshAgents();
   });
   const timer = setInterval(() => { refresh(); refreshAgents(); }, refreshMs);
   timer.unref();

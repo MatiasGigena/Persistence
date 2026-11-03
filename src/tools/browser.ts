@@ -5,9 +5,9 @@ import { connect, isIP, type LookupFunction } from 'node:net';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import type { Context, JsonValue } from '@earendil-works/chord';
-import { Type } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { ConversationId, Extension, ToolExecutionResult, ToolRegistration } from '@earendil-works/pi-durable';
+import { arr, bool, num, obj, opt, type Schema, str, union } from '@earendil-works/pi-schema';
 import {
   type BrowserContext, chromium, type ConsoleMessage, type Page, type Request, type Route, type WebSocketRoute,
 } from 'playwright-core';
@@ -39,6 +39,8 @@ export const BROWSER_EXTENSION = 'browser';
 export const MAX_BUFFER = 1000;
 export const OPERATION_TIMEOUT_MS = 60_000;
 const EVAL_LIMIT = 50_000;
+/** A string literal as TypeBox wrote it (`type` and `const`), so the tool's JSON Schema stays as it was. */
+const literal = <const V extends string>(value: V): Schema<V> => ({ type: 'string', const: value });
 const MAX_FULL_PAGE_PIXELS = 8_000_000;
 const MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024;
 
@@ -635,13 +637,13 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       + 'is local-only. To debug a web app (failed requests, auth, JS errors, a form or '
       + 'a blank screen), drive the live app with browser_goto, browser_eval, browser_console and browser_network instead '
       + 'of asking the user to copy from devtools; after a frontend change, exercise it with browser_click and browser_fill.',
-    parameters: Type.Object({
-      url: Type.String({ description: 'URL to navigate to' }),
-      waitUntil: Type.Optional(Type.Union([
-        Type.Literal('load'), Type.Literal('domcontentloaded'), Type.Literal('networkidle'), Type.Literal('commit'),
+    parameters: obj({
+      url: str({ description: 'URL to navigate to' }),
+      waitUntil: opt(union([
+        literal('load'), literal('domcontentloaded'), literal('networkidle'), literal('commit'),
       ])),
-      timeoutMs: Type.Optional(Type.Number()),
-    }),
+      timeoutMs: opt(num()),
+    }, { open: true }),
     executionMode: 'sequential',
     execute: ({ url, waitUntil, timeoutMs: navigationTimeout }, api, context) => run(api.conversationId, context, async (browser) => {
       const target = httpUrl(url);
@@ -681,7 +683,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       + 'JSON-serializable: for DOM nodes return properties such as .outerHTML, .textContent or .value. Use it to read '
       + 'runtime state (storage, cookies, JWTs, component state, computed styles) or to fire a fetch with custom headers. '
       + 'Its result is stored in the chat unredacted: do not return secrets you do not need.',
-    parameters: Type.Object({ expression: Type.String({ description: 'Expression or function source' }) }),
+    parameters: obj({ expression: str({ description: 'Expression or function source' }) }, { open: true }),
     executionMode: 'sequential',
     execute: ({ expression }, api, context) => run(api.conversationId, context, async (browser) => {
       const page = await ensurePage(browser);
@@ -702,11 +704,11 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     description: 'Drain buffered console and pageerror entries, oldest first. With clear=true (default) the ENTIRE buffer is '
       + 'wiped after the read, not just the entries returned, so the next call sees fresh activity; clear=false peeks. '
       + 'Reach for it whenever a page seems broken without an obvious network cause.',
-    parameters: Type.Object({
-      limit: Type.Optional(Type.Number({ description: 'Max entries (default 100)' })),
-      filter: Type.Optional(Type.String({ description: 'Only entries whose text or location contains this substring' })),
-      clear: Type.Optional(Type.Boolean({ description: 'Clear the entire buffer after the read. Default true.' })),
-    }),
+    parameters: obj({
+      limit: opt(num({ description: 'Max entries (default 100)' })),
+      filter: opt(str({ description: 'Only entries whose text or location contains this substring' })),
+      clear: opt(bool({ description: 'Clear the entire buffer after the read. Default true.' })),
+    }, { open: true }),
     executionMode: 'sequential',
     execute: ({ limit, filter, clear }, api, context) => run(api.conversationId, context, (browser) => {
       const buffer = browser.console;
@@ -728,16 +730,16 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       + 'urlFilter or status; use it for 401, 403 and CORS issues. With clear=true (default) the ENTIRE buffer is wiped '
       + 'after the read; clear=false peeks. A fetch whose body is never consumed often shows as ERR net::ERR_ABORTED even '
       + 'though the page saw a response: consume the body for a clean row.',
-    parameters: Type.Object({
-      limit: Type.Optional(Type.Number()),
-      urlFilter: Type.Optional(Type.String({ description: 'Substring filter on URL' })),
-      status: Type.Optional(Type.Number({ description: 'Exact HTTP status to match' })),
-      verbose: Type.Optional(Type.Boolean({ description: 'Show the curated request and response headers on each row.' })),
-      includeHeaders: Type.Optional(Type.Array(Type.String(), {
+    parameters: obj({
+      limit: opt(num()),
+      urlFilter: opt(str({ description: 'Substring filter on URL' })),
+      status: opt(num({ description: 'Exact HTTP status to match' })),
+      verbose: opt(bool({ description: 'Show the curated request and response headers on each row.' })),
+      includeHeaders: opt(arr(str(), {
         description: 'Extra header names (case-insensitive) to show besides the curated set. Implies verbose=true.',
       })),
-      clear: Type.Optional(Type.Boolean({ description: 'Clear the entire buffer after the read. Default true.' })),
-    }),
+      clear: opt(bool({ description: 'Clear the entire buffer after the read. Default true.' })),
+    }, { open: true }),
     executionMode: 'sequential',
     execute: ({ limit, urlFilter, status, verbose, includeHeaders, clear }, api, context) => run(api.conversationId, context, (browser) => {
       let entries = browser.network.slice();
@@ -762,7 +764,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
   const fill = defineTool({
     name: 'browser_fill',
     description: 'Type a value into the input matching the selector; dispatches input and change events, unlike assigning .value.',
-    parameters: Type.Object({ selector: Type.String(), value: Type.String() }),
+    parameters: obj({ selector: str(), value: str() }, { open: true }),
     executionMode: 'sequential',
     execute: ({ selector, value }, api, context) => run(api.conversationId, context, async (browser) => {
       await (await ensurePage(browser)).fill(selector, value);
@@ -775,7 +777,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     description: 'Click the element matching the selector, as a user would (form submits, SPA navigation). CSS selectors and '
       + 'Playwright text= and role= selectors work. CSS attribute selectors match HTML attributes, not DOM properties: '
       + '`button[type=submit]` does NOT match `<button>Submit</button>`; prefer `text=Submit` or `role=button[name=Submit]`.',
-    parameters: Type.Object({ selector: Type.String() }),
+    parameters: obj({ selector: str() }, { open: true }),
     executionMode: 'sequential',
     execute: ({ selector }, api, context) => run(api.conversationId, context, async (browser) => {
       await (await ensurePage(browser)).click(selector);
@@ -787,7 +789,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     name: 'browser_screenshot',
     description: 'Capture a PNG of the current page and return it as an image, for when DOM and state inspection are not '
       + 'enough. fullPage captures the whole scrollable page, up to 8 megapixels.',
-    parameters: Type.Object({ fullPage: Type.Optional(Type.Boolean()) }),
+    parameters: obj({ fullPage: opt(bool()) }, { open: true }),
     executionMode: 'sequential',
     execute: ({ fullPage }, api, context) => run(api.conversationId, context, async (browser) => {
       const page = await ensurePage(browser);
@@ -812,7 +814,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
   const close = defineTool({
     name: 'browser_close',
     description: 'Close your browser. The next browser_* call relaunches it with the same profile.',
-    parameters: Type.Object({}),
+    parameters: obj({}, { open: true }),
     executionMode: 'sequential',
     execute: (_args, api, context) => run(api.conversationId, context, async (browser) => {
       await teardown(browser);
