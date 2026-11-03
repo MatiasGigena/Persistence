@@ -38,6 +38,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0032](0032-web-shell-stale-while-revalidate.md) | The web app starts from whole cached versions of its files, revalidated in the background |
 | [0033](0033-code-mode.md) | Code mode: one script coordinates several tool calls, each with its own protections |
 | [0034](0034-archived-agents.md) | Archive ad-hoc agents; archived agents are deleted after a day (amends 0027) |
+| [0035](0035-pi-1-5-0.md) | Pi 1.5.0: conversation views instead of events, pi-schema tools, a one-way chat migration (amends 0012) |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".
