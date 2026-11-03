@@ -93,12 +93,15 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
     }
     const run = (await source.snapshot(LiveDoc, conversationId, context))?.run;
     if (!run) throw new Error('Root has no active routed run; execution is blocked.');
-    let chosen: Target | undefined;
-    for (const id of run.inputs) {
+    // Every input's route is read at once; they are checked in order below.
+    const routes = await Promise.all(run.inputs.map(async (id) => {
       const submission = await source.submission(id, context);
       const requestId = (await submission?.status(context))?.requestId;
-      const route = requestId === undefined ? undefined
+      return requestId === undefined ? undefined
         : await source.snapshot(SubmissionRouteDoc, conversationId, requestKey(requestId), context);
+    }));
+    let chosen: Target | undefined;
+    for (const route of routes) {
       // New reports are explicitly bound when scheduled. Never infer an unmapped legacy report's
       // destination from its sender's current session, a neighboring host input, or the previous run.
       if (!route?.target) throw new Error('Root inputs have no pinned machine destination; execution is blocked.');
@@ -129,8 +132,8 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
       // making unsafe local bash/write/edit replay-safe would permit duplicate host effects.
       async execute(args: JsonObject, api, context) {
         if (!allowTools()) throw new Error('Coding tools are off for this launch.');
-        const target = await resolve(api.conversationId, context);
-        const namespace = (await api.snapshot(RoutingDoc, context))?.namespace;
+        const [target, routing] = await Promise.all([resolve(api.conversationId, context), api.snapshot(RoutingDoc, context)]);
+        const namespace = routing?.namespace;
         if (!namespace) throw new Error('Machine execution namespace is missing.');
         const candidate = { target, executionId: `${namespace}:${api.taskId}`, name: tool.name, args };
         // Immutable intent is committed before any dispatch, including when hooks were skipped on replay.
