@@ -492,12 +492,9 @@ export async function openInstance({
       exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
         checks.abort();
+        // The harness first, so no tool still runs; then the rest, which share nothing, together.
         try { await harness.close(context); } finally {
-          try { await Browser.close(); } finally {
-            try { await codemode.close(); } finally {
-              try { await sshAgent?.close(); } finally { await memory?.close(); }
-            }
-          }
+          await closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
         }
       },
     };
@@ -506,16 +503,19 @@ export async function openInstance({
       if (opened) await opened.close(context);
       else if (storage) await storage.close(context);
       else if (database) await database.close();
-      await Browser.close();
-      await codemode.close();
-      await sshAgent?.close();
-      await memory?.close();
+      await closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
     } catch {
       // Preserve the opening failure, including when an API already closed
       // its owned database while handling that same failure.
     }
     throw error;
   }
+}
+
+/** Run every close at once; all of them run even when one fails, and the first failure is thrown once all settled. */
+async function closeAll(closes: readonly (() => Promise<void> | undefined)[]): Promise<void> {
+  const failed = (await Promise.allSettled(closes.map(async close => close()))).find(each => each.status === 'rejected');
+  if (failed) throw failed.reason;
 }
 
 /** All stored entries, including history hidden by resets or compactions. */
