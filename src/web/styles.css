@@ -1,5 +1,5 @@
-/* Pi Cloud's monochrome, monospace theme. Colour is reserved for status and errors.
-   Existing app structure and viewport/keyboard handling are unchanged. */
+/* A monochrome, monospace theme, after Pi Cloud, a retired earlier project (ADR 0023).
+   Colour is reserved for status and errors. */
 
 :root {
   color-scheme: dark;
@@ -412,7 +412,7 @@ button.status-part:active { opacity: 0.6; }
 .viewer-close { position: fixed; top: calc(8px + env(safe-area-inset-top)); right: 8px; margin: 0; color: var(--ink); background: rgb(0 0 0 / 45%); }
 .meta { font-size: 0.75rem; color: var(--faint); margin-top: 4px; }
 
-/* Chat shares Pi Cloud's monospace reading face. */
+/* Chat uses the monospace reading face. */
 .prose { font: 14px/1.65 var(--mono); overflow-wrap: anywhere; }
 .prose > :first-child { margin-top: 0; }
 .prose > :last-child { margin-bottom: 0; }
@@ -445,7 +445,7 @@ button.status-part:active { opacity: 0.6; }
   animation: blink 1.4s ease-in-out 0.6s infinite;
 }
 
-/* Copy buttons, as Pi Cloud's: quiet icons, a check once copied. A changed icon pops in (copy.ts adds .icon-pop). */
+/* Copy buttons: quiet icons, a check once copied. A changed icon pops in (copy.ts adds .icon-pop). */
 .copy {
   display: grid; place-items: center; flex: none; width: var(--tap); height: var(--tap);
   border: 0; border-radius: var(--r-xs); background: transparent; color: var(--faint);
@@ -732,7 +732,7 @@ dialog::backdrop { background: var(--scrim); }
 .rows > .skeleton-slow { padding: 0 var(--gutter); }
 .controls > .skeleton-slow { margin: 0; }
 
-/* Chat settings, as Pi Cloud's sheet: labelled selects, then switch rows, then rows into Agents and Memory. */
+/* Chat settings sheet: labelled selects, then switch rows, then rows into Agents and Memory. */
 .controls { display: grid; gap: 14px; padding: 6px 0 4px; }
 .control { display: flex; flex-direction: column; gap: 6px; }
 /* 11px is the floor for words on a phone: these labels and the switches' notes were 10px and 11px. */

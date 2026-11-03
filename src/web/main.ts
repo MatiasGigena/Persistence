@@ -366,7 +366,7 @@ function start(): void {
       },
     );
   };
-  /** Pi is working: a message steers it, and the button stops it while the box is empty (as in Pi Cloud). */
+  /** Pi is working: a message steers it, and the button stops it while the box is empty. */
   const busy = (): boolean => store.status?.busy ?? false;
   /** An abort is in flight: the stop button is disabled until it settles or Pi goes idle, so it is sent once. */
   let stopping = false;
@@ -491,7 +491,7 @@ function start(): void {
   // -------------------------------------------------------------- composer
 
   /**
-   * One button, as Pi Cloud's: send, steer while Pi works, and stop while Pi works and the box is empty. Stop never
+   * One button: send, steer while Pi works, and stop while Pi works and the box is empty. Stop never
    * shows while a send is unadmitted or just after one, and status.busy counts only while the link is ready (it is
    * stale otherwise); in those cases the button is a disabled send.
    */

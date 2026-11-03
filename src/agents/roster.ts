@@ -38,7 +38,10 @@ export const DEFAULT_ROSTER: Roster = {
   Researcher: { model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, thinkingLevel: 'high', tools: ['web_fetch'] },
 };
 
-/** The review kit's policy applies to every session and its subs, even with custom roster instructions. */
+/**
+ * The review kit's policy applies to every session and its subs, even with custom roster instructions. The skill is
+ * installed separately (docs/operations.md#autoreview); without it the tool reports the review incomplete.
+ */
 export const AUTOREVIEW_POLICY = 'For every code review, read the installed /autoreview skill at '
   + '~/.pi/agent/skills/autoreview/SKILL.md (or under PI_CODING_AGENT_DIR when configured), then call the autoreview tool. '
   + 'Always review P0–P2 (--max-priority P2), never only P0 or P1. Choose the Git target explicitly and supply relevant '

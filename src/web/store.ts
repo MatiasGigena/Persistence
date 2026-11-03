@@ -21,7 +21,7 @@ export interface PendingItem {
 export type ViewItem = ChatItem | PendingItem;
 
 /**
- * The assistant messages that end a turn, as Pi Cloud marks them: in each stretch between the user's messages (a
+ * The assistant messages that end a turn: in each stretch between the user's messages (a
  * pending one too, so a steer sent mid-run splits the turn), the last one with text that is not streaming. Each gets
  * the turn's actions (copy). An assistant message with no text (tool calls only, or cut off by a stop) leaves the
  * end where it was; a streaming one clears it until it finishes.

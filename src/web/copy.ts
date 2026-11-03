@@ -1,7 +1,7 @@
-// Copy buttons, as Pi Cloud's: an icon that turns into a check once the text is on the clipboard, or into an alert
+// Copy buttons: an icon that turns into a check once the text is on the clipboard, or into an alert
 // when the browser refuses (then the text can still be selected by hand). `text` is read at tap time, so a button
 // on a streaming item copies what it shows by then. Each result is also read out through the page's #live region,
-// as Pi Cloud's role="status" region does, since the icon change alone says nothing to a screen reader.
+// a role="status" region, since the icon change alone says nothing to a screen reader.
 
 const SVG = 'http://www.w3.org/2000/svg';
 /** Lucide 1.49.0 paths (licence in index.html). */

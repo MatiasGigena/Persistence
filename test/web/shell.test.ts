@@ -65,7 +65,7 @@ test('index.html preloads every module the app loads at startup, after the impor
   assert.ok(firstPreload < head.indexOf('type="module"'));
 });
 
-test('the installed app and offline page share the Pi Cloud dark theme', async () => {
+test('the installed app and offline page share the dark theme', async () => {
   const css = await readFile(join(WEB, 'styles.css'), 'utf8');
   assert.match(css, /color-scheme: dark;/);
   assert.match(css, /--bg: #000000;/);

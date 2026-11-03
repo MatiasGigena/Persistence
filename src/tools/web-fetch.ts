@@ -14,9 +14,10 @@ import TurndownService from 'turndown';
 
 /**
  * `web_fetch(url)`: a page as readable Markdown (Readability, Turndown), a PDF as text (unpdf), at most 50,000
- * characters. Ported from Pi Cloud's `resources/extensions/web-fetch` without its TUI renderers (ADR 0027).
+ * characters. Adapted from the web-fetch extension of Pi Cloud,
+ * a retired earlier project, without its TUI renderers (ADR 0027).
  *
- * Unlike Pi Cloud's, it reaches public addresses only: it resolves the host, refuses when any address is loopback,
+ * It reaches public addresses only: it resolves the host, refuses when any address is loopback,
  * private, link-local, CGNAT (Tailscale), unique-local or otherwise not public, and connects to the checked address
  * itself (a pinned `lookup`, the URL's host still in SNI and Host), so a second resolution cannot rebind it. Redirects
  * are followed by hand, at most 5, each checked the same way.

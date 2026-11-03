@@ -26,7 +26,10 @@ function quote(text: string): string {
 
 type Input = Static<typeof parameters>;
 
-/** Only the installed skill helper is executable; Git scope and context are the entire caller-controlled surface. */
+/**
+ * Only the installed skill helper is executable; Git scope and context are the entire caller-controlled surface. The
+ * skill and its pinned Codex CLI are installed separately on each execution machine: see docs/operations.md#autoreview.
+ */
 function command(args: Input): string {
   if (!['local', 'branch', 'commit'].includes(args.mode)) throw new Error('Choose local, branch or commit mode.');
   if (args.mode === 'branch' && !args.base) throw new Error('Branch reviews require an explicit base.');
@@ -58,7 +61,7 @@ export type AutoreviewExtension = Extension & { readonly tools: readonly ToolReg
 export function createAutoreviewExtension(bash: ToolRegistration): AutoreviewExtension {
   const tool = defineTool({
     name: 'autoreview',
-    description: 'Run our installed /autoreview skill with a fixed P0–P2 threshold. Codex first, with the standalone CLI. '
+    description: 'Run the installed /autoreview skill with a fixed P0–P2 threshold. Codex first, with the standalone CLI. '
       + 'Preserves helper isolation, Git capture, validation and exit status. Exit 1 can mean findings, not reviewer unavailability. '
       + 'A failed/incomplete/filtered review is not clean. No general shell, edits, raw flags or isolation overrides.',
     parameters,

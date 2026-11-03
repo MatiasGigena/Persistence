@@ -1,4 +1,4 @@
-// Chat settings, as Pi Cloud's sheet behind the header's sliders button: the model and reasoning effort as two
+// Chat settings, the sheet behind the header's sliders button: the model and reasoning effort as two
 // selects, switches for the coding tools and this device's notifications, and rows into Agents and Memory. A model
 // or effort applies to Pi and its agents from the next request and is saved as the default; the tools are for this
 // server run only, and turning them on asks first.
@@ -96,7 +96,7 @@ export function prefetchSettings(link: Link, store: Store): void {
   });
 }
 
-/** A labelled select, as Pi Cloud's controls; a skeleton holds its place until its list is known. */
+/** A labelled select; a skeleton holds its place until its list is known. */
 interface Field {
   readonly wrap: HTMLLabelElement;
   readonly select: HTMLSelectElement;

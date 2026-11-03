@@ -14,7 +14,8 @@ import {
 import { addressKind, type Lookup, type LookupAddress, lookupAll } from './web-fetch.ts';
 
 /**
- * Browser tools: a headless Chromium per agent, ported from Pi Cloud's `resources/extensions/browser` (ADR 0027).
+ * Browser tools: a headless Chromium per agent, adapted from the browser extension of Pi Cloud,
+ * a retired earlier project (ADR 0027).
  *
  * Each browser is keyed by `keyOf(conversationId)`: the host maps every session of an agent (a standing agent gets a new
  * conversation per task) to the agent's name, so the agent keeps one Chromium and one persistent profile,
@@ -22,7 +23,7 @@ import { addressKind, type Lookup, type LookupAddress, lookupAll } from './web-f
  * has one queue: Playwright's Page is not safe for concurrent use, so a `goto` and an `eval` fired in one round must not
  * interleave, and two sessions of one agent running at once (rare) take turns on the same page. Each operation, queue wait included,
  * has 60 s; a timeout or an abort closes that browser, and the next call relaunches it. Navigation is HTTP(S) only.
- * Unlike Pi Cloud there is no `/browser on` gate and no manual control from the web UI.
+ * There is no `/browser on` gate and no manual control from the web UI.
  *
  * Egress: every request the page makes (navigations, subresources, fetch and XHR, each redirect hop, WebSockets) is
  * checked in Node before Chromium may send it (`egressCheck`, enforced by the routes and a per-browser egress proxy). Loopback and private addresses are allowed, since the
