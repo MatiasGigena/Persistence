@@ -555,9 +555,8 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
   async function ensurePage(browser: Browser): Promise<Page> {
     if (browser.page && !browser.page.isClosed()) return browser.page;
     if (!browser.context) {
-      await mkdir(browser.profileDir, { recursive: true, mode: 0o700 });
       const generation = browser.generation;
-      const { server, username, password } = await proxyFor(browser);
+      const [, { server, username, password }] = await Promise.all([mkdir(browser.profileDir, { recursive: true, mode: 0o700 }), proxyFor(browser)]);
       const launched = await launch(browser.profileDir, {
         headless: true, chromiumSandbox: true, serviceWorkers: 'block', viewport: { width: 1280, height: 800 },
         proxy: { server, username, password }, args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
@@ -565,8 +564,8 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       }).catch((error: unknown) => { throw launchError(error, options.executablePath); });
       try {
         // Before any page loads: the gates must see the first request.
-        await launched.route('**/*', (route) => guardRequest(browser, route));
-        await launched.routeWebSocket(() => true, (socket) => guardSocket(browser, socket));
+        await Promise.all([launched.route('**/*', (route) => guardRequest(browser, route)),
+          launched.routeWebSocket(() => true, (socket) => guardSocket(browser, socket))]);
       } catch (error) {
         await launched.close().catch(() => undefined);
         throw error;
