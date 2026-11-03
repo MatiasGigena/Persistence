@@ -47,11 +47,13 @@ const isSet = (name: string): boolean => name.startsWith(`${CACHE}/`);
 
 /** The newest complete set, read from CacheStorage (another version of this worker may have written one). */
 async function newest(): Promise<Shell | undefined> {
-  for (const name of (await caches.keys()).filter(isSet).sort((a, b) => stamp(b) - stamp(a))) {
+  const names = (await caches.keys()).filter(isSet).sort((a, b) => stamp(b) - stamp(a));
+  // Every set is opened and checked at once; the newest complete one wins.
+  const sets = await Promise.all(names.map(async name => {
     const cache = await caches.open(name);
-    if (await cache.match(COMPLETE)) return { name, cache };
-  }
-  return undefined;
+    return await cache.match(COMPLETE) ? { name, cache } : undefined;
+  }));
+  return sets.find(set => set !== undefined);
 }
 
 let latest: Promise<Shell | undefined> | undefined;
