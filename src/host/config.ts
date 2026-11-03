@@ -435,7 +435,11 @@ export function parseRoster(value: unknown, path: string): Roster {
  * written (`readRoster` parses it).
  */
 export async function readSettings(path: string): Promise<Settings> {
-  const value = await readSettingsJson(path);
+  return settingsOf(path, await readSettingsJson(path));
+}
+
+/** The settings in `value`, settings.json's object as read (undefined: no file); throws as `readSettings` rejects. */
+function settingsOf(path: string, value: Record<string, unknown> | undefined): Settings {
   if (!value) return {};
   if (value.model !== undefined && typeof value.model !== 'string') {
     throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
@@ -473,9 +477,9 @@ export function writeSettings(path: string, { model, thinkingLevel }: Pick<Setti
 
 /** Change the model or thinking level in settings.json, keeping the rest, `agents` included, as it is. */
 export async function updateSettings(path: string, change: Pick<Settings, 'model' | 'thinkingLevel'>): Promise<void> {
-  const saved = await readSettings(path);
-  writeSettings(path, { model: change.model ?? saved.model, thinkingLevel: change.thinkingLevel ?? saved.thinkingLevel },
-    await readSettingsJson(path) ?? {});
+  const json = await readSettingsJson(path);
+  const saved = settingsOf(path, json);
+  writeSettings(path, { model: change.model ?? saved.model, thinkingLevel: change.thinkingLevel ?? saved.thinkingLevel }, json ?? {});
 }
 
 /**
@@ -607,9 +611,14 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
   // Only work launches run agents and read the roster, which an invalid entry makes a launch error; inspection and the
   // admin commands never read it.
   const runsAgents = (options.command === 'chat' || options.command === 'serve') && !inspectOnly;
-  const roster = runsAgents ? await readRoster(paths.settings, { lenient: options.model !== undefined }) : DEFAULT_ROSTER;
+  // Both read settings.json at once; a broken roster is still the error said first.
+  const [rosterRead, modelRead] = await Promise.allSettled([
+    runsAgents ? readRoster(paths.settings, { lenient: options.model !== undefined }) : DEFAULT_ROSTER, resolveModel(options, env, paths.settings)]);
+  if (rosterRead.status === 'rejected') throw rosterRead.reason;
+  if (modelRead.status === 'rejected') throw modelRead.reason;
+  const roster = rosterRead.value, model = modelRead.value;
   const chromium = runsAgents ? chromiumPath(env) : undefined;
-  return { ...options, ...await resolveModel(options, env, paths.settings), roster, ...chromium ? { chromium } : {}, cwd, dataDir, databasePath,
+  return { ...options, ...model, roster, ...chromium ? { chromium } : {}, cwd, dataDir, databasePath,
     memoryDir: paths.memoryDir, settingsPath: paths.settings, ...paths.socket ? { socketPath: paths.socket } : {},
     serveDir: paths.serveDir, ...serve, exists, inspectOnly, authFile: resolve(options.authFile ?? join(agentDir, 'auth.json')) };
 }

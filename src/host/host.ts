@@ -197,13 +197,13 @@ async function main(): Promise<void> {
   if (stopping) return;
   // The server owns its Instance, and closes it after its clients got `bye`.
   if (config.command === 'serve') return serve(config, { models, signal: shutdown.signal });
-  if (config.allowTools && !config.inspectOnly) {
-    const problem = await sandboxProblem(protection(config));
-    if (problem) console.error(`Coding tools: bash is off. ${problem}`);
-  }
+  // The sandbox probe (it runs bwrap once) never rejects, and runs while the chat opens.
+  const sandbox = config.allowTools && !config.inspectOnly ? sandboxProblem(protection(config)) : undefined;
   instance = await openInstance({ ...config, models, configureAgent: !config.inspectOnly, protection: protection(config), sshKeys: sshKeys(),
     onWarning: message => console.error(`Pi Durable: ${message}`),
     onReport: report => console.error(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
+  const problem = await sandbox;
+  if (problem) console.error(`Coding tools: bash is off. ${problem}`);
   if (stopping) return;
   if (config.status) return printStatus();
   if (config.history) return printHistory();
