@@ -298,6 +298,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Security: npm `overrides` lift `undici` to 8.12.3 (TLS validation bypass, cache poisoning across redirects and
+  denial-of-service fixes) and `minimatch` to 11.0.4 (globparts denial of service). Both came in through the Pi
+  1.3.0 packages and `openai`, so the Pi pins stay. eslint is 10.14.0 and typescript-eslint 8.72.1.
 - Server web files initialize only after the chat opens, skipping startup after failure or cancellation.
 - Model switches check queued images after credential validation, including input admitted while credentials were pending.
 - Terminal: tool output drops hyperlinks and other escape sequences whole, and carriage returns overwrite as in a
