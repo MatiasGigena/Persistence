@@ -97,15 +97,16 @@ type Access = 'read' | 'write' | 'remove';
 async function sandboxArgs(bin: string, { hidden, readOnly, sshAgent }: Protection): Promise<string[]> {
   const args = [bin, '--die-with-parent', '--dev-bind', '/', '/', '--unsetenv', 'SSH_AGENT_PID',
     ...sshAgent ? ['--setenv', 'SSH_AUTH_SOCK', sshAgent] : ['--unsetenv', 'SSH_AUTH_SOCK']];
-  for (const path of readOnly) {
-    // A symlink (/bin -> usr/bin) is covered by its target.
-    const info = await lstat(path).catch(() => undefined);
-    if (info?.isDirectory()) args.push('--ro-bind', path, path);
-  }
   // A path inside a hidden folder is hidden with it; mounting it too would show its name in the empty folder.
   const outermost = hidden.filter(path => !hidden.some(other => other !== path && within(path, other)));
-  for (const path of outermost) {
-    const info = await lstat(path).catch(() => undefined);
+  const stat = (path: string) => lstat(path).catch(() => undefined);
+  const [readOnlyInfo, hiddenInfo] = await Promise.all([Promise.all(readOnly.map(stat)), Promise.all(outermost.map(stat))]);
+  readOnly.forEach((path, index) => {
+    // A symlink (/bin -> usr/bin) is covered by its target.
+    if (readOnlyInfo[index]?.isDirectory()) args.push('--ro-bind', path, path);
+  });
+  for (const [index, path] of outermost.entries()) {
+    const info = hiddenInfo[index];
     if (!info || info.isSymbolicLink()) continue;
     if (info.isDirectory()) args.push('--tmpfs', path);
     else args.push('--ro-bind', '/dev/null', path);
@@ -141,11 +142,15 @@ function probe(args: readonly string[]): Promise<string | undefined> {
   return found;
 }
 
+/** `guarded` with its protected paths' symlinks resolved, all at once. */
+async function canonicalOf(guarded: Protection): Promise<Protection> {
+  const [hidden, readOnly] = await Promise.all([Promise.all(guarded.hidden.map(real)), Promise.all(guarded.readOnly.map(real))]);
+  return { hidden, readOnly, sshAgent: guarded.sshAgent };
+}
+
 /** Why bash cannot run under `guarded` on this machine, or undefined when it can: checked at launch, so it is said early. */
 export async function sandboxProblem(guarded: Protection, bwrap = bwrapBinary()): Promise<string | undefined> {
-  const canonical = { hidden: await Promise.all(guarded.hidden.map(real)), readOnly: await Promise.all(guarded.readOnly.map(real)),
-    sshAgent: guarded.sshAgent };
-  return probe(await sandboxArgs(bwrap, canonical));
+  return probe(await sandboxArgs(bwrap, await canonicalOf(guarded)));
 }
 
 export interface GuardedEnvOptions {
@@ -174,18 +179,13 @@ export class GuardedEnv extends NodeExecutionEnv {
 
   /** The protected paths with symlinks resolved, computed once. */
   private canonical(): Promise<Protection> {
-    this.roots ??= (async () => ({
-      hidden: await Promise.all(this.guarded.hidden.map(real)),
-      readOnly: await Promise.all(this.guarded.readOnly.map(real)),
-      sshAgent: this.guarded.sshAgent,
-    }))();
+    this.roots ??= canonicalOf(this.guarded);
     return this.roots;
   }
 
   /** The refusal for `access` to `path`, or undefined when it is allowed. */
   private async refusal(path: string, mode: Access): Promise<FileError | undefined> {
-    const target = await real(isAbsolute(path) ? path : resolve(this.cwd, path));
-    const { hidden, readOnly } = await this.canonical();
+    const [target, { hidden, readOnly }] = await Promise.all([real(isAbsolute(path) ? path : resolve(this.cwd, path)), this.canonical()]);
     const deny = (root: string, why: string): FileError =>
       new FileError('permission_denied', `${path} is protected (${root}): ${why}. The user can change this with PI_DURABLE_UNPROTECT.`, path);
     for (const root of hidden) if (within(target, root)) return deny(root, 'Pi\'s tools cannot read or change it');
@@ -224,10 +224,8 @@ export class GuardedEnv extends NodeExecutionEnv {
     return this.guard(path, 'read', () => super.openDirReader(path, context));
   }
   override async watch(targets: readonly WatchTarget[], onChange: (change: WatchChange) => void, context: Context): Promise<Result<FileWatcher, FileError>> {
-    for (const { path } of targets) {
-      const refused = await this.refusal(path, 'read');
-      if (refused) return err(refused);
-    }
+    const refused = (await Promise.all(targets.map(({ path }) => this.refusal(path, 'read')))).find(each => each !== undefined);
+    if (refused) return err(refused);
     return super.watch(targets, onChange, context);
   }
   override writeFile(path: string, content: string | Uint8Array, context: Context): Promise<Result<void, FileError>> {
@@ -243,7 +241,8 @@ export class GuardedEnv extends NodeExecutionEnv {
     return this.guard(path, 'write', () => super.flushFile(path, context));
   }
   override async renameFile(sourcePath: string, destinationPath: string, context: Context): Promise<Result<void, FileError>> {
-    const refused = await this.refusal(sourcePath, 'remove') ?? await this.refusal(destinationPath, 'remove');
+    const [source, destination] = await Promise.all([this.refusal(sourcePath, 'remove'), this.refusal(destinationPath, 'remove')]);
+    const refused = source ?? destination;
     return refused ? err(refused) : super.renameFile(sourcePath, destinationPath, context);
   }
   override createDir(path: string, options: { recursive?: boolean } | undefined, context: Context): Promise<Result<void, FileError>> {
@@ -255,11 +254,11 @@ export class GuardedEnv extends NodeExecutionEnv {
 
   /** Every command runs in bubblewrap with the protection mounted; a string through bash (sh without it), as upstream. */
   override async exec(command: string | readonly string[], options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecError>> {
-    const prefix = await sandboxArgs(this.bin, await this.canonical());
-    const problem = await probe(prefix);
-    if (problem) return err(new ExecutionError('shell_unavailable', `bash is off: ${problem}`));
     this.shell ??= access('/bin/bash', constants.X_OK).then(() => '/bin/bash', () => '/bin/sh');
-    const argv = typeof command === 'string' ? [...prefix, await this.shell, '-c', command] : [...prefix, ...command];
+    const prefix = await sandboxArgs(this.bin, await this.canonical());
+    const [problem, shell] = await Promise.all([probe(prefix), this.shell]);
+    if (problem) return err(new ExecutionError('shell_unavailable', `bash is off: ${problem}`));
+    const argv = typeof command === 'string' ? [...prefix, shell, '-c', command] : [...prefix, ...command];
     return super.exec(argv, options, context);
   }
 }
