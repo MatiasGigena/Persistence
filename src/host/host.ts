@@ -15,9 +15,9 @@ import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts
 import { agentInputOf, listAgents } from '../agents/index.ts';
 import { claudeCliProvider } from '../providers/claude-cli.ts';
 import { backupOffline } from '../server/backup.ts';
-import { formatBytes } from '../client/admin.ts';
+import { formatBytes } from '../ui/text.ts';
 import { serve } from '../server/serve.ts';
-import { createUiSession } from './session.ts';
+import { createUiSession } from '../session/session.ts';
 import { isCommand, runTui } from '../ui/tui/app.ts';
 import { parseConfig } from '../config/options.ts';
 import type { Config } from '../config/options.ts';

@@ -8,7 +8,8 @@ import { HELP, VERSION, parseArgs, resolveOptions } from './config/options.ts';
 import { resolveSocketPath, statePaths } from './config/paths.ts';
 import { errorCode, errorMessage } from './protocol/util.ts';
 import type { Config } from './config/options.ts';
-import { agentsCommand, backupOverSocket, devicesCommand, formatBytes, NoServer, pairCommand } from './client/admin.ts';
+import { agentsCommand, backupOverSocket, devicesCommand, NoServer, pairCommand } from './client/admin.ts';
+import { formatBytes } from './ui/text.ts';
 
 /** `backup` through the running server; false when none answers (then the backup takes the flock itself). */
 async function backupViaServer(config: Config): Promise<boolean> {

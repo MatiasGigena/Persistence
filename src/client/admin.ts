@@ -175,11 +175,3 @@ export async function agentsCommand(config: Pick<Config, 'socketPath' | 'archive
   const active = agents.filter(agent => agent.archivedAt === undefined), archived = agents.filter(agent => agent.archivedAt !== undefined);
   for (const agent of [...active, ...archived]) console.log(agentLine(agent, ARCHIVE_TTL_MS));
 }
-
-/** A size in bytes, readably. */
-export function formatBytes(bytes: number): string {
-  const units = ['bytes', 'KiB', 'MiB', 'GiB'];
-  let value = bytes, unit = 0;
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
-  return unit === 0 ? `${value} bytes` : `${value.toFixed(1)} ${units[unit] ?? ''}`;
-}

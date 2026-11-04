@@ -13,7 +13,7 @@ import { settleAgents } from '../../src/runtime/recovery.ts';
 import { TURN_HEAD } from '../../src/memory/extension.ts';
 import { openInstance, transcript, type Instance } from '../../src/runtime/runtime.ts';
 import type { MachineTarget } from '../../src/protocol/machines.ts';
-import { createUiSession } from '../../src/host/session.ts';
+import { createUiSession } from '../../src/session/session.ts';
 import { call, router, say, type Turn } from '../fixtures/agents-instance.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 

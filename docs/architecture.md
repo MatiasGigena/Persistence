@@ -256,8 +256,8 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/config/paths.ts` | `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), `resolveSocketPath`, `PI_DURABLE_CHROMIUM`, the server's environment (`serveSettings`) |
 | `src/config/settings.ts` | `settings.json`: the saved model and effort, the standing-agent roster (`parseRoster`), atomic writes that keep the other keys |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
-| `src/host/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
-| `src/host/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
+| `src/session/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
+| `src/session/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
 | `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`, `autoreview`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers and Pi's SSH agent included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read`, `coding` or `autoreview`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/ssh-agent.ts` | `startSshAgent`: Pi's own `ssh-agent` with `PI_DURABLE_SSH_KEYS` only, bash's `SSH_AUTH_SOCK` (ADR 0030); started by `openInstance` and by an SSH connector |

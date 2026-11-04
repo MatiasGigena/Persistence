@@ -156,3 +156,11 @@ export function parseMessage(out: string): { note: string | undefined; body: str
   const head = out.slice(0, bar), paren = head.indexOf(' (');
   return { note: paren < 0 ? undefined : head.slice(paren + 1), body: out.slice(bar + 1) };
 }
+
+/** A size in bytes, readably. */
+export function formatBytes(bytes: number): string {
+  const units = ['bytes', 'KiB', 'MiB', 'GiB'];
+  let value = bytes, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return unit === 0 ? `${value} bytes` : `${value.toFixed(1)} ${units[unit] ?? ''}`;
+}

@@ -1,4 +1,4 @@
-// The session contract: what the host's state (src/host/session.ts) offers its clients, the terminal UI (src/ui/tui/)
+// The session contract: what the host's state (src/session/session.ts) offers its clients, the terminal UI (src/ui/tui/)
 // and, over the wire protocol, the attached TUI and the web app. The session knows pi-durable, memory and agents;
 // clients know only these types. Type-only, like the rest of src/protocol/ free of Node and DOM imports, so the browser
 // type-checks against it; the wire messages (messages.ts) are built from these items.
