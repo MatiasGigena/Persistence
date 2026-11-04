@@ -32,7 +32,7 @@ import type { Protection } from './guard.ts';
 import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { CredentialStatus, CatalogModels } from './models.ts';
 import { createMachineRouting } from '../machines/routing.ts';
-import type { RoutingDispatcher } from '../machines/routing.ts';
+import type { MachineRouting, RoutingDispatcher } from '../machines/routing.ts';
 import type { SendOptions } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import { userInput } from './input.ts';
@@ -399,15 +399,7 @@ export async function openInstance({
   const available: ToolKits = { ...builtinKits(), browser: { extension: Browser, tools: Browser.tools },
     web_fetch: { extension: WebFetch, tools: WebFetch.tools },
     autoreview: { extension: Autoreview, tools: Autoreview.tools }, ...extraKits };
-  const kits: ToolKits = Object.fromEntries(Object.entries(available).map(([name, kit]) => {
-    if (!routing || !kit.extension) return [name, kit];
-    // Never reinstall the unwrapped coding-tools extension through a standing agent's kit.
-    // Autoreview already calls routed bash; network kits stay server-only with their own protections.
-    const extension = kit.extension.name === CodingTools.name ? codingTools
-      : kit.extension === Autoreview ? Autoreview : routing.localOnly(kit.extension);
-    const names = new Set(kit.tools.map(tool => tool.name));
-    return [name, { ...kit, extension, tools: (extension.tools ?? []).filter(tool => names.has(tool.name)) }];
-  }));
+  const kits = routing ? routedKits(available, routing, codingTools, Autoreview) : available;
   const setup: AgentsSetup = { childAgent, roster, kits, routed: routing !== undefined };
   const Agents = createAgentsExtension({ ...setup, onSpawn: routing?.pinSpawn, onDelivery: routing?.pinDelivery,
     initialContext: async (_agent, _api, spawn) => {
@@ -443,21 +435,18 @@ export async function openInstance({
   registry.install(ShowImage);
   registry.install(Codemode);
   for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== codingTools) registry.install(kit.extension);
-  const agent: AgentChange = {
-    cwd,
-    model,
-    thinkingLevel,
-    extensions: [codingTools, Unii, Agents, ShowImage, Codemode],
-    tools: piTools([Unii, Agents], allowTools, [ShowImage, Codemode]),
-    modelTools: null,
-    instructions: piInstructions(cwd, allowTools, routing !== undefined),
-  };
+  /** Pi's tools and the instructions that describe them, with the coding tools on or off. */
+  const toolChoice = (on: boolean): AgentChange => ({
+    tools: piTools([Unii, Agents], on, [ShowImage, Codemode]), instructions: piInstructions(cwd, on, routing !== undefined),
+  });
+  const agent: AgentChange = { cwd, model, thinkingLevel, extensions: [codingTools, Unii, Agents, ShowImage, Codemode], modelTools: null,
+    ...toolChoice(allowTools) };
+  // What the instance owns besides the harness; they share nothing, so they close together.
+  const closeOwned = (): Promise<void> => closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
 
   // close() stops the roster checks, and drops what they would still warn.
   const checks = new AbortController();
-  // The archive sweeper (ADR 0034): its timer, and the sweep in progress, which close() waits for.
-  let sweeper: ReturnType<typeof setInterval> | undefined;
-  let sweeping: Promise<void> | undefined;
+  let sweeper: Sweeper | undefined;
   let database: HostDatabase | undefined;
   let storage: SqliteStorage | undefined;
   try {
@@ -482,19 +471,7 @@ export async function openInstance({
       await root.configure(agent, context);
       // Agents spawned under an earlier launch must not keep its tool choices; the roster's standing agents exist.
       await syncAgents(harness, context, setup);
-      // Delete agents archived for a day: now, since a closed host deletes nothing, then hourly. A failed sweep is
-      // reported and retried by the next.
-      const sweep = async (): Promise<void> => {
-        try {
-          const deleted = await purgeArchived(harness, context, clock());
-          // A deleted agent's name may be taken again: its browser profile, with the sites' logins, goes with it.
-          for (const name of deleted) await Browser.forget(name);
-          if (deleted.length) onWarning?.(`Deleted archived agents: ${deleted.join(', ')}.`);
-        } catch (error) { onReport?.(error); }
-      };
-      await sweep();
-      sweeper = setInterval(() => { sweeping ??= sweep().finally(() => { sweeping = undefined; }); }, sweepMs);
-      sweeper.unref();
+      sweeper = await startSweeper({ harness, context, clock, everyMs: sweepMs, forget: name => Browser.forget(name), onWarning, onReport });
       const missing = missingKits(roster, kits);
       if (missing.length) onWarning?.(`Standing agents run without tool kits this host lacks: ${missing.join('; ')}.`);
       // Not awaited: a credential check may take seconds (claude-cli asks its CLI), and only warns.
@@ -534,33 +511,72 @@ export async function openInstance({
       async setTools(enabled) {
         // Disabling takes effect even for an already-resolved tool invocation, before configuration commits.
         if (!enabled) toolsAllowed = false;
-        await reconfigure({ tools: piTools([Unii, Agents], enabled, [ShowImage, Codemode]), instructions: piInstructions(cwd, enabled, routing !== undefined) });
+        await reconfigure(toolChoice(enabled));
         toolsAllowed = enabled;
       },
       exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
         checks.abort();
-        clearInterval(sweeper);
-        await sweeping;
-        // The harness first, so no tool still runs; then the rest, which share nothing, together.
-        try { await harness.close(context); } finally {
-          await closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
-        }
+        await sweeper?.stop();
+        // The harness first, so no tool still runs; then the rest.
+        try { await harness.close(context); } finally { await closeOwned(); }
       },
     };
   } catch (error) {
-    clearInterval(sweeper);
     try {
+      await sweeper?.stop();
       if (opened) await opened.close(context);
       else if (storage) await storage.close(context);
       else if (database) await database.close();
-      await closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
+      await closeOwned();
     } catch {
       // Preserve the opening failure, including when an API already closed
       // its owned database while handling that same failure.
     }
     throw error;
   }
+}
+
+/**
+ * The kits as a machine-routed launch offers them: the coding tools routed, autoreview as it is (it already calls the
+ * routed bash), and every other kit local only (network kits stay on the server, with their own protections).
+ */
+function routedKits(available: ToolKits, routing: MachineRouting, codingTools: Extension, autoreview: Extension): ToolKits {
+  return Object.fromEntries(Object.entries(available).map(([name, kit]) => {
+    if (!kit.extension) return [name, kit];
+    // Never reinstall the unwrapped coding-tools extension through a standing agent's kit.
+    const extension = kit.extension.name === CodingTools.name ? codingTools
+      : kit.extension === autoreview ? autoreview : routing.localOnly(kit.extension);
+    const names = new Set(kit.tools.map(tool => tool.name));
+    return [name, { ...kit, extension, tools: (extension.tools ?? []).filter(tool => names.has(tool.name)) }];
+  }));
+}
+
+/** The archive sweeper (ADR 0034); `stop` ends its timer and waits for the sweep in progress. */
+interface Sweeper { stop(): Promise<void> }
+
+/**
+ * Deletes agents archived for a day: now, since a closed host deletes nothing, then every `everyMs`. A deleted agent's
+ * name may be taken again, so `forget` drops its browser profile and the sites' logins with it. A failed sweep is
+ * reported and retried by the next.
+ */
+async function startSweeper({ harness, context, clock, everyMs, forget, onWarning, onReport }: {
+  readonly harness: Harness; readonly context: Context; readonly clock: () => number; readonly everyMs: number;
+  readonly forget: (name: string) => Promise<void>; readonly onWarning?: ((message: string) => void) | undefined;
+  readonly onReport?: ((error: unknown) => void) | undefined;
+}): Promise<Sweeper> {
+  let sweeping: Promise<void> | undefined;
+  const sweep = async (): Promise<void> => {
+    try {
+      const deleted = await purgeArchived(harness, context, clock());
+      for (const name of deleted) await forget(name);
+      if (deleted.length) onWarning?.(`Deleted archived agents: ${deleted.join(', ')}.`);
+    } catch (error) { onReport?.(error); }
+  };
+  await sweep();
+  const timer = setInterval(() => { sweeping ??= sweep().finally(() => { sweeping = undefined; }); }, everyMs);
+  timer.unref();
+  return { stop: async () => { clearInterval(timer); await sweeping; } };
 }
 
 /** Run every close at once; all of them run even when one fails, and the first failure is thrown once all settled. */
