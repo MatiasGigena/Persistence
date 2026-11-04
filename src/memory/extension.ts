@@ -64,6 +64,8 @@ const textOf = (content: Content | undefined): string => typeof content === 'str
   : (content ?? []).map(b => b.type === 'text' ? b.text : b.type === 'image' ? '[image]' : '').filter(Boolean).join('\n');
 const blocksOf = (content: UserMessage['content']): (TextContent | ImageContent)[] =>
   typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+// Joined with '\n', unlike agents/entries.ts's `text`: the hash of this text is the reply's persisted `src` key, so it
+// stays as it is.
 const replyText = (m: AssistantMessage): string => m.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
 const replySrc = (m: AssistantMessage): string => `a:${m.timestamp}:${hash(replyText(m))}`;
 const callsOf = (m: AssistantMessage): ToolCall[] => m.content.filter(b => b.type === 'toolCall');

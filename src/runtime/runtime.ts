@@ -14,7 +14,7 @@ import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { chromium as playwrightChromium } from 'playwright-core';
-import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents, missingKits, purgeArchived, syncAgents } from '../agents/index.ts';
+import { AgentsDoc, agentTranscript, assistantText, createAgentsExtension, listAgents, missingKits, purgeArchived, syncAgents } from '../agents/index.ts';
 import type { AgentRecord, AgentsSetup, Roster, ToolKits } from '../agents/index.ts';
 import { LOCAL_KITS, rosterEntry } from '../agents/roster.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
@@ -408,7 +408,7 @@ export async function openInstance({
     const names = new Set(kit.tools.map(tool => tool.name));
     return [name, { ...kit, extension, tools: (extension.tools ?? []).filter(tool => names.has(tool.name)) }];
   }));
-  const setup: AgentsSetup = { childAgent, roster, kits };
+  const setup: AgentsSetup = { childAgent, roster, kits, routed: routing !== undefined };
   const Agents = createAgentsExtension({ ...setup, onSpawn: routing?.pinSpawn, onDelivery: routing?.pinDelivery,
     initialContext: async (_agent, _api, spawn) => {
     if (!memory) return undefined;
@@ -591,10 +591,5 @@ export async function answerText(root: Conversation, settled: SubmissionRecord |
   }
   const answer = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
   if (!answer) throw new Error(`Committed assistant answer ${settled.answer} was not found`);
-  return (answer.model ?? [])
-    .filter((message) => message.role === 'assistant')
-    .flatMap((message) => message.content)
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('');
+  return assistantText(answer);
 }

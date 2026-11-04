@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { Interface } from 'node:readline/promises';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { cleanupSessionResources } from '@earendil-works/pi-ai';
-import type { Message, Models } from '@earendil-works/pi-ai';
+import type { Models } from '@earendil-works/pi-ai';
 import type { ConversationView, ConversationWatch, EntryRecord } from '@earendil-works/pi-durable';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { protection, sandboxProblem } from '../runtime/guard.ts';
@@ -11,7 +11,7 @@ import { answerText, launchOptions, openInstance, reportText, transcript } from 
 import type { Instance } from '../runtime/runtime.ts';
 import { isWork, resumeInstance, settleAgents } from '../runtime/recovery.ts';
 import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts';
-import { agentInputOf, listAgents } from '../agents/index.ts';
+import { agentInputOf, assistantText, listAgents, text } from '../agents/index.ts';
 import { claudeCliProvider } from '../providers/claude-cli.ts';
 import { backupOffline } from '../server/backup.ts';
 import { formatBytes } from '../ui/text.ts';
@@ -25,8 +25,6 @@ import { errorMessage } from '../protocol/util.ts';
 import type { ModelSource } from '../config/options.ts';
 
 // Internal entry point: src/cli.ts owns the database flock for this process.
-const textContent = (content: Message['content'] | undefined): string => typeof content === 'string' ? content
-  : (content ?? []).flatMap(block => block.type === 'text' ? [block.text] : []).join('');
 
 /** An agent's report as its name and text: what the terminal UI shows, without the note to Pi its model text ends with. */
 function reportOf(entry: EntryRecord): { name: string; text: string } | undefined {
@@ -37,11 +35,11 @@ function reportOf(entry: EntryRecord): { name: string; text: string } | undefine
 async function printHistory({ root, context }: Instance, limit?: number): Promise<void> {
   const entries = await transcript(root, context);
   const messages = entries.flatMap(entry => (entry.model ?? []).map(message => ({ entry, message })))
-    .filter(({ message }) => ['user', 'assistant'].includes(message.role) && textContent(message.content));
+    .filter(({ message }) => ['user', 'assistant'].includes(message.role) && text(message.content));
   for (const { entry, message } of limit ? messages.slice(-limit) : messages) {
     const report = reportOf(entry);
     if (report) console.log(`${report.name}: ${report.text}\n`);
-    else console.log(`${message.role === 'user' ? 'You' : 'Pi'}: ${textContent(message.content)}\n`);
+    else console.log(`${message.role === 'user' ? 'You' : 'Pi'}: ${text(message.content)}\n`);
   }
   if (!messages.length) console.log('No messages saved yet.');
 }
@@ -84,7 +82,7 @@ async function watchReplies({ root, context }: Instance, prompt: () => void): Pr
       if (seen.has(entry.id)) continue;
       seen.add(entry.id);
       const report = reportOf(entry);
-      const reply = entry.kind === 'pi.assistant' ? (entry.model ?? []).map(message => textContent(message.content)).join('') : '';
+      const reply = entry.kind === 'pi.assistant' ? assistantText(entry) : '';
       const line = report ? `[${report.name}] ${report.text}` : reply && `pi> ${reply}`;
       if (!line) continue;
       process.stdout.write(`\r\x1b[K${line}\n\n`);

@@ -13,7 +13,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/session/`: `session.ts` and `feed.ts`, the host's state as a `UiSession` (pi-durable's conversation views, memory and agents turned into chat items), shared by the terminal host and the server.
 - `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends), `console.ts` (stray console output as chat notices).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
-- `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks; `roster.ts`: the standing agents and kit names; `entries.ts`: the input entry kinds and their decoder.
+- `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks; `roster.ts`: the standing agents and kit names; `entries.ts`: the input entry kinds and their decoder, and `text`/`assistantText` (a message's text).
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and
   `web-fetch.ts` (`web_fetch`), `autoreview.ts` (the Reviewer's installed skill helper, fixed P0–P2, through guarded/routed execution), `show-image.ts`, and `codemode.ts` (scripts that call the coding tools, ADR 0033).
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.

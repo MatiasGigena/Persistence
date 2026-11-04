@@ -1,5 +1,4 @@
 import { type Context, copyJson, type Draft } from '@earendil-works/chord';
-import { type ImageContent, type Message, type TextContent, type ThinkingContent, type ToolCall } from '@earendil-works/pi-ai';
 import {
   AgentDoc, AssistantEntry, configure, defineDoc, defineTask, defineTool,
   hook, LiveDoc, ROOT_CONVERSATION_ID, section, ToolTask,
@@ -12,13 +11,13 @@ import type {
 import {
   AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, rosterEntry, type StandingAgent,
 } from './roster.ts';
-import { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
+import { agentInputOf, assistantText, MESSAGE_KIND, REPORT_KIND, text } from './entries.ts';
 import { NotFound } from '../protocol/errors.ts';
 import type { ArchiveTarget } from '../protocol/session.ts';
 import { isRecord } from '../protocol/util.ts';
 
 export { DEFAULT_ROSTER } from './roster.ts';
-export { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
+export { agentInputOf, assistantText, MESSAGE_KIND, REPORT_KIND, text } from './entries.ts';
 export type { AgentInput } from './entries.ts';
 export type { Kit, Roster, StandingAgent } from './roster.ts';
 
@@ -106,7 +105,6 @@ export type AgentsSource = DocumentReader & Pick<Session, 'commit'>;
 
 type Named = AgentRecord & { name: string };
 type Caller = Named | { name: typeof PI; role: 'root'; conversationId: ConversationId };
-type Block = TextContent | ImageContent | ThinkingContent | ToolCall;
 type DeliverState = { phase: 'deliver' };
 type DeliveryInput = {
   to: string;
@@ -126,10 +124,6 @@ export const AgentsDoc = defineDoc<AgentsState>({
   checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
-const text = (content: string | readonly Block[] | undefined) => typeof content === 'string' ? content
-  : (content ?? []).filter((block) => block.type === 'text').map((block) => block.text).join('');
-const assistantText = (entry: { readonly model?: readonly Message[] } | undefined) => (entry?.model ?? [])
-  .filter((message) => message.role === 'assistant').map((message) => text(message.content)).join('');
 const reply = (value: string): ToolExecutionResult => ({ output: [{ type: 'text', text: value }] });
 const brief = (value: string, max = 120) => {
   const line = value.replace(/\s+/g, ' ').trim();
@@ -301,6 +295,8 @@ export interface AgentsSetup {
   /** The standing agents (ADR 0027); none without it. */
   readonly roster?: Roster;
   readonly kits?: ToolKits;
+  /** Each run's tools act on a pinned machine (src/machines/routing.ts), not this one: the agents' instructions say so. */
+  readonly routed?: boolean;
 }
 
 /** The agent tools' names (persisted, frozen); a standing agent gets them besides its kits. */
@@ -356,13 +352,14 @@ const protectedText = (bash: boolean, routed = false) => `These tools act on ${r
  * by the agent's own tools. `tools` are its kits' tools in force; `local` those of its local kits, `localOn` whether
  * they are on. Pi's instructions name read, write, edit and bash, which an agent without the coding kit must not call.
  */
-function standingInstructions(pi: string | undefined, tools: readonly string[], local: readonly string[], localOn: boolean): string {
+function standingInstructions(pi: string | undefined, tools: readonly string[], local: readonly string[], localOn: boolean,
+  routed: boolean): string {
   const kept = (pi ?? '').split('\n').filter((line) => line && !/\bbash\b/.test(line));
   const own = tools.length ? `Your tools besides the agent tools: ${tools.join(', ')}. You have no others.`
     : 'You have no tools besides the agent tools.';
   const lines = [...kept, own];
   const usable = localOn ? local : [];
-  if (usable.length) lines.push(protectedText(usable.includes('bash'), (pi ?? '').includes('Your machine and working directory are pinned per run')));
+  if (usable.length) lines.push(protectedText(usable.includes('bash'), routed));
   if (!localOn && local.length) {
     lines.push(`Your local tools (${local.join(', ')}) are off for this launch; only the user can turn them on.`);
   }
@@ -380,7 +377,7 @@ function standingInstructions(pi: string | undefined, tools: readonly string[], 
  * tools; the local kits only while Pi's coding tools are on), and a sub its `subModel` and `subThinkingLevel`. Then the
  * role's tool offer (subs are not offered spawn_agent or stop_agent), then the host's `childAgent` change.
  */
-async function deriveAgent(tx: Tx, agents: Readonly<Record<string, AgentRecord>>, name: string, { childAgent, roster, kits = {} }: AgentsSetup,
+async function deriveAgent(tx: Tx, agents: Readonly<Record<string, AgentRecord>>, name: string, { childAgent, roster, kits = {}, routed = false }: AgentsSetup,
   conversationId?: ConversationId) {
   const agent = agents[name];
   if (!agent) return;
@@ -411,7 +408,7 @@ async function deriveAgent(tx: Tx, agents: Readonly<Record<string, AgentRecord>>
     state.tools = [...new Set([...AGENT_TOOLS, ...own])];
     // Pi's instructions describe Pi's tools; the agent's name its own.
     const local = names(standing.tools.filter((kit) => LOCAL_KITS.includes(kit)).flatMap((kit) => kits[kit] ?? []));
-    state.instructions = standingInstructions(root.instructions, own, local, localOn);
+    state.instructions = standingInstructions(root.instructions, own, local, localOn, routed);
   }
   // Pi's own tools leave the enabled list, or the offer when every tool is enabled; a sub's limits leave the offer.
   const tools = state.tools;
@@ -630,7 +627,7 @@ function archiveSet(agents: Readonly<Record<string, AgentRecord>>, target: Archi
  * `X is a standing agent; remove it from the roster first.` A crash before the commit leaves the agents only stopped,
  * and archiving again converges.
  */
-export async function archiveAgents(source: AgentsStopper & Pick<Session, 'commit'>, context: Context, target: ArchiveTarget,
+export async function archiveAgents(source: AgentsSource & AgentsStopper, context: Context, target: ArchiveTarget,
   now: number): Promise<string[]> {
   const before = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
   await stopNamed(source, context, before, archiveSet(before, target));
@@ -653,7 +650,7 @@ export async function archiveAgents(source: AgentsStopper & Pick<Session, 'commi
  * Returns the names restored, `name` first. Throws for an unknown agent, one not archived, or a sub whose main agent is
  * archived (restore that one).
  */
-export async function restoreAgent(source: Pick<Session, 'commit'> & DocumentReader, context: Context, name: string): Promise<string[]> {
+export async function restoreAgent(source: AgentsSource, context: Context, name: string): Promise<string[]> {
   const check = (agents: Readonly<Record<string, AgentRecord>>): Named => {
     const found = find(agents, name);
     if (!found) throw new NotFound(noAgent(agents, name));

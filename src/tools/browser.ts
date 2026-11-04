@@ -221,7 +221,7 @@ async function startEgressProxy(hooks: ProxyHooks): Promise<EgressProxy> {
     const given = Buffer.from(req.headers['proxy-authorization'] ?? '');
     return given.length === expected.length && timingSafeEqual(given, expected);
   };
-  const challenge = 'Proxy-Authenticate: Basic realm="pi-durable browser"';
+  const realm = 'Basic realm="pi-durable browser"';
   const agent = new HttpAgent({ keepAlive: false });
   const tunnels = new Set<Duplex>();
   const target = (addresses: readonly LookupAddress[]): readonly LookupAddress[] => {
@@ -230,7 +230,7 @@ async function startEgressProxy(hooks: ProxyHooks): Promise<EgressProxy> {
   };
 
   const forward = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    if (!authorized(req)) { res.writeHead(407, { 'proxy-authenticate': 'Basic realm="pi-durable browser"' }).end(); return; }
+    if (!authorized(req)) { res.writeHead(407, { 'proxy-authenticate': realm }).end(); return; }
     const url = req.url ?? '';
     if (!url.startsWith('http://')) { res.writeHead(400).end(); return; }
     const verdict = await hooks.check(url);
@@ -257,7 +257,7 @@ async function startEgressProxy(hooks: ProxyHooks): Promise<EgressProxy> {
     tunnels.add(socket);
     socket.on('close', () => tunnels.delete(socket));
     socket.on('error', () => socket.destroy());
-    if (!authorized(req)) { socket.end(`HTTP/1.1 407 Proxy Authentication Required\r\n${challenge}\r\nContent-Length: 0\r\n\r\n`); return; }
+    if (!authorized(req)) { socket.end(`HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: ${realm}\r\nContent-Length: 0\r\n\r\n`); return; }
     const authority = req.url ?? '';
     const url = `https://${authority}/`;
     let parsed: URL;
