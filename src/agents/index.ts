@@ -900,20 +900,8 @@ export interface AgentsExtension extends Extension {
   readonly tools: readonly ToolRegistration[];
 }
 
-/**
- * Build the agents extension.
- * - `initialContext({ name, role, parent, task }, api, context)` returns an optional preamble placed
- *   before a new agent's first task (string, undefined, or a promise of either). `api` is the
- *   spawning tool call's api; read through it, never through the Harness inside a commit.
- * - `onReport({ name, text })`, an observer the host does not use, is called after an input from agent `name` was
- *   durably admitted to Pi (a final report or a send_message). At most once per input; the durable record is the
- *   `agents.report` entry itself, which Pi's memory logs.
- * - `childAgent` is an AgentChange applied to every spawned agent after it copies Pi's choices.
- * - `roster` and `kits`: the standing agents and the tool kits (ADR 0027), as `syncAgents()` takes them. The roster
- *   names the standing agents in Pi's role text and adds each one's `instructions` to its own.
- */
-export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtension {
-  const { initialContext, onReport, onSpawn, onDelivery, roster = {} } = options;
+/** The Deliver task, which carries one input to one agent and then that agent's answer to its parent, and how to create one. */
+function deliveries({ onReport, onDelivery }: AgentsOptions) {
   const done = (): NextTaskState<DeliverState, null> => ({ status: 'terminal', outcome: { status: 'completed', result: null } });
 
   /**
@@ -1030,27 +1018,39 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
     await onDelivery?.(tx, source, conversationId, `agents:${id}`);
     return id;
   };
+  return { Deliver, createDelivery };
+}
 
-  /** Run `change` once per tool call: a replayed call returns the first result. */
-  const once = async (api: ToolExecutionApi, context: Context,
-    change: (tx: Tx, registry: Draft<AgentsState>) => Promise<string>) => {
-    const recorded = (await api.snapshot(AgentsDoc, context))?.calls?.[api.taskId];
-    if (recorded !== undefined) return reply(recorded);
-    return reply(await api.commit(async (tx) => {
-      const registry = await tx.doc(AgentsDoc);
-      const first = registry.calls[api.taskId];
-      if (first !== undefined) return first;
-      const result = await change(tx, registry);
-      registry.calls[api.taskId] = result;
-      const keys = Object.keys(registry.calls);
-      for (const key of keys.slice(0, Math.max(0, keys.length - KEEP_CALLS))) delete registry.calls[key];
-      return result;
-    }, context));
-  };
+/** What the agents tools share: the extension's options, the roster, and how to create a delivery. */
+interface ToolDeps {
+  readonly options: AgentsOptions;
+  readonly roster: Roster;
+  readonly createDelivery: ReturnType<typeof deliveries>['createDelivery'];
+}
 
-  const me = async (api: ToolExecutionApi, context: Context) => whoIs(await api.snapshot(AgentsDoc, context), api.conversationId);
+/** Run `change` once per tool call: a replayed call returns the first result. */
+const once = async (api: ToolExecutionApi, context: Context,
+  change: (tx: Tx, registry: Draft<AgentsState>) => Promise<string>) => {
+  const recorded = (await api.snapshot(AgentsDoc, context))?.calls?.[api.taskId];
+  if (recorded !== undefined) return reply(recorded);
+  return reply(await api.commit(async (tx) => {
+    const registry = await tx.doc(AgentsDoc);
+    const first = registry.calls[api.taskId];
+    if (first !== undefined) return first;
+    const result = await change(tx, registry);
+    registry.calls[api.taskId] = result;
+    const keys = Object.keys(registry.calls);
+    for (const key of keys.slice(0, Math.max(0, keys.length - KEEP_CALLS))) delete registry.calls[key];
+    return result;
+  }, context));
+};
 
-  const spawnAgent = defineTool({
+const me = async (api: ToolExecutionApi, context: Context) => whoIs(await api.snapshot(AgentsDoc, context), api.conversationId);
+
+function spawnAgentTool(deps: ToolDeps): ToolRegistration {
+  const { options, createDelivery } = deps;
+  const { initialContext, onSpawn } = deps.options;
+  return defineTool({
     name: 'spawn_agent',
     description: 'Start a new persistent agent that works on `task` in the background, in its own conversation. '
       + 'Pi spawns main agents; main agents spawn sub agents. Returns at once: never wait or poll for it. '
@@ -1096,8 +1096,12 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       });
     },
   });
+}
 
-  const delegate = defineTool({
+function delegateTool(deps: ToolDeps): ToolRegistration {
+  const { options, createDelivery } = deps;
+  const { initialContext, onSpawn } = deps.options;
+  return defineTool({
     name: 'delegate',
     description: 'Give a standing agent a new task. It starts in a fresh conversation (a new session) that begins with '
       + 'your view; its earlier sessions stay readable with zoom("Name#n"). Refused while the agent or a sub agent of its task is busy: steer or '
@@ -1166,8 +1170,10 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       });
     },
   });
+}
 
-  const listAgentsTool = defineTool({
+function listAgentsTool(): ToolRegistration {
+  return defineTool({
     name: 'list_agents',
     description: 'List all other agents: name, role (main/sub), parent, busy or idle, and a one-line last message.',
     parameters: obj({}, { open: true }),
@@ -1198,8 +1204,11 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return reply(lines.join('\n'));
     },
   });
+}
 
-  const sendMessage = defineTool({
+function sendMessageTool(deps: ToolDeps): ToolRegistration {
+  const { roster, createDelivery } = deps;
+  return defineTool({
     name: 'send_message',
     description: 'Send `text` to another agent by name. Main agents may also send to "Pi", the session agent; sub agents may not. '
       + 'An agent without coding tools may send only to Pi and its own sub agents, and its subs only to it and each other. '
@@ -1244,8 +1253,10 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       });
     },
   });
+}
 
-  const lastMessage = defineTool({
+function lastMessageTool(): ToolRegistration {
+  return defineTool({
     name: 'last_message',
     description: 'Get an agent\'s latest reply and whether it is busy. Main agents may also ask for "Pi"; sub agents may not.',
     parameters: obj({ name: str() }, { open: true }),
@@ -1265,8 +1276,10 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return reply(`${found.name} is ${state}. ${said === undefined ? 'No message yet.' : `Last message${from}:\n${said.text}`}`);
     },
   });
+}
 
-  const stopAgent = defineTool({
+function stopAgentTool(): ToolRegistration {
+  return defineTool({
     name: 'stop_agent',
     description: 'Stop an agent\'s current work and drop its queued messages; stopping a main agent also stops its sub agents. '
       + 'Stopped agents stay and can be messaged again. Pi may stop any agent; a main agent only its own sub agents.',
@@ -1289,8 +1302,11 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return reply(`Stopped ${found.name}${also}.${untold}`);
     },
   });
+}
 
-  const deleteAgentTool = defineTool({
+function deleteAgentTool(deps: ToolDeps): ToolRegistration {
+  const { roster } = deps;
+  return defineTool({
     name: 'delete_agent',
     description: 'Delete an agent you no longer need, with its sub agents, so it leaves list_agents and takes no more work. '
       + 'Pi only. Refused for standing agents, and while the agent or one of its sub agents is busy or has a message on its way: '
@@ -1304,9 +1320,11 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return once(api, context, async (tx, registry) => deleteText(await removeAgent(tx, registry, name, busy, roster)));
     },
   });
+}
 
-  // Tool-level guard, before a call's intent is recorded: what a role may not do never runs.
-  const guard = hook(ToolTask, {
+// Tool-level guard, before a call's intent is recorded: what a role may not do never runs.
+function agentsGuard(roster: Roster) {
+  return hook(ToolTask, {
     beforeTool: async (call, api, context) => {
       if (!['spawn_agent', 'stop_agent', 'send_message', 'last_message', 'delegate', 'delete_agent'].includes(call.name)) return undefined;
       const registry = await api.snapshot(AgentsDoc, context);
@@ -1329,13 +1347,32 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return undefined;
     },
   });
+}
+
+/**
+ * Build the agents extension.
+ * - `initialContext({ name, role, parent, task }, api, context)` returns an optional preamble placed
+ *   before a new agent's first task (string, undefined, or a promise of either). `api` is the
+ *   spawning tool call's api; read through it, never through the Harness inside a commit.
+ * - `onReport({ name, text })`, an observer the host does not use, is called after an input from agent `name` was
+ *   durably admitted to Pi (a final report or a send_message). At most once per input; the durable record is the
+ *   `agents.report` entry itself, which Pi's memory logs.
+ * - `childAgent` is an AgentChange applied to every spawned agent after it copies Pi's choices.
+ * - `roster` and `kits`: the standing agents and the tool kits (ADR 0027), as `syncAgents()` takes them. The roster
+ *   names the standing agents in Pi's role text and adds each one's `instructions` to its own.
+ */
+export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtension {
+  const { initialContext, roster = {} } = options;
+  const { Deliver, createDelivery } = deliveries(options);
+  const deps: ToolDeps = { options, roster, createDelivery };
 
   // Typed as AgentsExtension rather than through defineExtension (an identity), so `tools` stays required.
   return {
     name: 'agents',
     tasks: [Anchor, Deliver],
-    tools: [spawnAgent, delegate, listAgentsTool, sendMessage, lastMessage, stopAgent, deleteAgentTool],
-    hooks: [guard],
+    tools: [spawnAgentTool(deps), delegateTool(deps), listAgentsTool(), sendMessageTool(deps), lastMessageTool(), stopAgentTool(),
+      deleteAgentTool(deps)],
+    hooks: [agentsGuard(roster)],
     sections: [section('agents', async (input, context) => {
       const registry = await input.read.snapshot(AgentsDoc, context);
       const agents = registry?.agents ?? {};
