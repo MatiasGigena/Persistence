@@ -1,4 +1,5 @@
-// The wire protocol (its version is PROTOCOL in version.ts): every message between the server (src/server/) and its clients (src/client/, src/web/).
+// The wire protocol (its version is PROTOCOL in version.ts): every message between the server (src/server/) and
+// its clients (src/client/, src/web/).
 // docs/protocol.md is the prose spec; this file is its types and constants. Shared by Node and the browser, so it
 // holds plain types and constants only: no Node or DOM imports, and no runtime imports at all.
 import type { ArchiveTarget, ChatImage, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
