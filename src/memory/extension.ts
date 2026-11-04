@@ -251,22 +251,22 @@ export function createUniiExtension({
   /**
    * The run's frozen blocks. The run's input is logged first, so `whole` can measure it: the view ends at `k`, where
    * the input's parts start going whole (upstream Memory.ts `whole`); a huge paste's first parts are in the view, and
-   * the message is only its tail, `say(k, end)`.
+   * the message is only its tail, `joinedText(k, end)`.
    */
   async function freeze(mine: readonly Item[], first: Item | undefined, signal: AbortSignal | undefined): Promise<Frozen> {
     const memory = open();
     const from = viewEnd(mine);
     let end = from;
     while (first && end < memory.T && baseSrc(memory.log[end]?.src) === first.src) end++;
-    // Later records of a resumed run count in whole() too; the clamp keeps the input's last part whole.
-    const k = end > from ? Math.min(memory.whole(from), end - 1) : from;
+    // Later records of a resumed run count in firstWhole() too; the clamp keeps the input's last part whole.
+    const k = end > from ? Math.min(memory.firstWhole(from), end - 1) : from;
     if (!memory.ready(k)) await memory.settle(settleMs, signal, k);
     const working = atWork ? await atWork() : undefined;
     const state = ['<turn>', `now: ${formatDate(now())}`,
       ...(working ? [`agents at work: ${working.length ? working.join(', ') : 'none'}`] : []), '</turn>'].join('\n');
     const blocks = [memory.render(k), state, memory.previousExchange(k, prevBytes)]
       .filter(Boolean).map((text): TextContent => ({ type: 'text', text }));
-    return { blocks, message: k > from ? memory.say(k, end) : undefined };
+    return { blocks, message: k > from ? memory.joinedText(k, end) : undefined };
   }
 
   async function beforeRequest({ messages }: { readonly messages: readonly Message[] }, api: RequestApi, context: Context):

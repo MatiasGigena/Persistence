@@ -265,11 +265,11 @@ describe('unii extension in a real Harness (faux model)', { concurrency: false, 
 
     const parts = memory.log.filter(r => r.kind === 'user').length - 1;
     assert.equal(parts, 11, 'the paste is logged whole, split at 30,000 characters');
-    const k = memory.whole(2);
+    const k = memory.firstWhole(2);
     assert.ok(k > 2 && k < memory.T - 1);
     assert.deepEqual(seen[1]?.map(m => m.role), ['system', 'user']);
     const [view, , message] = texts(seen[1]?.[1]);
-    assert.equal(message, TURN_HEAD + memory.say(k, 2 + parts));
+    assert.equal(message, TURN_HEAD + memory.joinedText(k, 2 + parts));
     assert.ok(message?.endsWith('-TAIL') && !message.includes('HEAD-'));
     assert.ok(Buffer.byteLength(message ?? '') <= 128_000 + TURN_HEAD.length);
     assert.match(view ?? '', /\n2\+1\|summary 2\+1: other\n/, 'the head is in the view, summarized');

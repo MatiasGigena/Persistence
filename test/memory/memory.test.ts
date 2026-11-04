@@ -94,14 +94,14 @@ describe('unii memory', { concurrency: false }, () => {
     const paste = Array.from({ length: 2000 }, (_, n) => `row ${n} ${'p'.repeat(60)}`).join('\n');
     const parts = m.append({ kind: 'user', text: paste, src: 'e:9' });
     assert.equal(parts.length, 5);
-    const k = m.whole(1);
+    const k = m.firstWhole(1);
     assert.equal(k, 4, 'the last two parts fit in 70,000 bytes, three do not');
     assert.ok(m.log.slice(k).reduce((n, r) => n + r.size, 0) <= 70_000);
-    assert.equal(m.say(1), paste, 'parts rejoined');
-    assert.equal(m.say(0, 2).startsWith('before\n\nrow 0'), true, 'messages a blank line apart');
+    assert.equal(m.joinedText(1), paste, 'parts rejoined');
+    assert.equal(m.joinedText(0, 2).startsWith('before\n\nrow 0'), true, 'messages a blank line apart');
     m.append({ kind: 'user', text: 'x'.repeat(80_000) });
-    assert.equal(m.whole(m.T - 1), m.T - 1, 'the last message always goes whole');
-    assert.equal(m.whole(1, Infinity), 1);
+    assert.equal(m.firstWhole(m.T - 1), m.T - 1, 'the last message always goes whole');
+    assert.equal(m.firstWhole(1, Infinity), 1);
     await m.close();
   });
 
