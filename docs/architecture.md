@@ -330,7 +330,8 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/server/auth.ts` | `Devices` (the `DeviceRegistry`: pairing codes, `pd_device` cookies by sha256 in `serve/devices.json`), `gate` and `authenticate` (login allow-list, Origin, device) |
 | `src/server/static.ts` | The web app's files: `src/web/` at `/`, `src/protocol/`, `marked`; type stripping, ETags, the CSP; `assetsHash` for `welcome.assets` |
 | `src/web/index.html`, `manifest.webmanifest`, `offline.html`, `styles.css`, icons | The installable app shell; the only inline script is the `marked` import map, allowed by its CSP hash; `modulepreload` links fetch every startup module at once (ADR 0032) |
-| `src/web/main.ts` | Boots the app: screens changed by view transitions, the first load shown once whole (boot screen, then the chat's skeleton if it takes a while), pairing screen, connection banner, header, composer (one send, steer and stop button), chat settings |
+| `src/web/main.ts` | Boots the app: screens changed by view transitions, the first load shown once whole (boot screen, then the chat's skeleton if it takes a while), pairing screen, header, and the wiring of the link to the store, composer and banner |
+| `src/web/composer.ts`, `banner.ts`, `storage.ts` | `Composer`: the message box, its draft, the tray and the one send, steer and stop button, sending through the `Outbox`; `Banner`: the connection line and its retry button; `load`/`save`: web storage that tolerates being unavailable |
 | `src/web/tray.ts` | `AttachmentTray`: the images attached to the next message, their tiles and the files being read (ADR 0031) |
 | `src/web/outbox.ts`, `link-state.ts` | DOM-free: `Outbox` (sends not yet admitted, resent by request id after a reconnect) and `linkStep` (what a link state means for the banner, pairing, "gone" and reload screens) |
 | `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |
