@@ -15,7 +15,8 @@ import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/no
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { chromium as playwrightChromium } from 'playwright-core';
 import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents, missingKits, purgeArchived, syncAgents } from '../agents/index.ts';
-import type { AgentRecord, AgentsSetup, Roster, StandingAgent, ToolKits } from '../agents/index.ts';
+import type { AgentRecord, AgentsSetup, Roster, ToolKits } from '../agents/index.ts';
+import { LOCAL_KITS, rosterEntry } from '../agents/roster.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
@@ -32,7 +33,7 @@ import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { Access, CatalogModels } from './models.ts';
 import { createMachineRouting } from '../machines/routing.ts';
 import type { RoutingDispatcher } from '../machines/routing.ts';
-import type { ChatImage, MachineTarget } from '../ui/types.ts';
+import type { ChatImage, MachineTarget, SendOptions } from '../ui/types.ts';
 import { userInput } from './models.ts';
 import { errorMessage } from '../protocol/util.ts';
 
@@ -103,9 +104,11 @@ export interface Instance {
   readonly models: Models;
   /** The tool kits standing agents draw on, by kit (ADR 0027). */
   readonly kits: ToolKits;
-  /** Admit UI input, pinning its destination before submission when routing is enabled. */
-  /** `images` go with the text as one user message; callers check the model takes images (`imagesProblem`). */
-  submit(text: string, requestId?: string, target?: MachineTarget, steer?: boolean, images?: readonly ChatImage[]): Promise<Submission>;
+  /**
+   * Admit UI input, pinning its destination before submission when routing is enabled. `images` go with the text as
+   * one user message; callers check the model takes images (`imagesProblem`).
+   */
+  submit(text: string, options?: SendOptions): Promise<Submission>;
   /**
    * Switch Pi, its ad-hoc agents, and the memory's compaction model (its provider's cheap one) to `model`, from their
    * next request; standing agents and their subs keep the roster's. Checks nothing: callers validate first. Rejects on
@@ -197,15 +200,6 @@ function keyIn(agents: Readonly<Record<string, AgentRecord>>, conversationId: Co
   return String(conversationId);
 }
 
-/** The roster entry named `name`, ignoring case as every agent lookup does. */
-const rosterEntry = (roster: Roster, name: string): StandingAgent | undefined =>
-  Object.entries(roster).find(([each]) => each.toLowerCase() === name.toLowerCase())?.[1];
-
-/**
- * Whether browser key `key` gets a local-only browser: the agent, or a sub's main, is a standing agent whose roster
- * entry has a kit that reads local files (`read`, `coding`, `autoreview`), so its browser cannot carry those files off the machine.
- * The roster's own names count even before the registry knows them.
- */
 /** `extension` with each tool refusing once `allowed()` is false: launch permission, checked when the call runs. */
 export function whileAllowed(extension: Extension, allowed: () => boolean): Extension {
   return {
@@ -220,8 +214,13 @@ export function whileAllowed(extension: Extension, allowed: () => boolean): Exte
   };
 }
 
+/**
+ * Whether browser key `key` gets a local-only browser: the agent, or a sub's main, is a standing agent whose roster
+ * entry has a kit that reads local files (`LOCAL_KITS`), so its browser cannot carry those files off the machine.
+ * The roster's own names count even before the registry knows them.
+ */
 export function localOnlyBrowser(agents: Readonly<Record<string, AgentRecord>>, key: string, roster: Roster): boolean {
-  const readsFiles = (name: string): boolean => (rosterEntry(roster, name)?.tools ?? []).some(kit => kit === 'read' || kit === 'coding' || kit === 'autoreview');
+  const readsFiles = (name: string): boolean => (rosterEntry(roster, name)?.tools ?? []).some(kit => LOCAL_KITS.includes(kit));
   if (readsFiles(key)) return true;
   const agent = Object.entries(agents).find(([name]) => name.toLowerCase() === key.toLowerCase())?.[1];
   if (agent?.role !== 'sub') return false;
@@ -495,9 +494,10 @@ export async function openInstance({
       memory,
       models,
       kits,
-      submit(text, requestId, target, steer, images) {
+      submit(text, options = {}) {
         if (!configureAgent) return Promise.reject(new Error('An inspection cannot submit input.'));
-        if (routing) return routing.submit(text, requestId, target, context, steer, images);
+        if (routing) return routing.submit(text, options, context);
+        const { requestId, steer, target, images } = options;
         if (target !== undefined) return Promise.reject(new Error('Machine routing is not enabled.'));
         return root.submit({ type: 'input', content: userInput(text, images), ...requestId === undefined ? {} : { requestId },
           ...steer ? { whenBusy: 'steer' } : {} }, context);

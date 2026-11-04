@@ -10,7 +10,7 @@ import type {
   AgentChange, ConversationId, Cursor, DocumentReader, EntryId, EntryRecord, Extension, NextTaskState,
   Session, TaskId, TaskOptions, ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
-import { AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, type StandingAgent } from './roster.ts';
+import { AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, rosterEntry, type StandingAgent } from './roster.ts';
 
 export { AGENT_NAME, DEFAULT_ROSTER, isAgentName, isKit, KITS, LOCAL_KITS } from './roster.ts';
 export type { Kit, Roster, StandingAgent } from './roster.ts';
@@ -317,10 +317,6 @@ function standingOf(agents: Readonly<Record<string, AgentRecord>>, name: string,
   const main = agent.role === 'main' ? name : agent.parent;
   return agents[main]?.standing ? rosterEntry(roster, main) : undefined;
 }
-
-/** The roster entry named `name`, ignoring case as every agent lookup does. */
-const rosterEntry = (roster: Roster, name: string): StandingAgent | undefined =>
-  Object.entries(roster).find(([each]) => each.toLowerCase() === name.toLowerCase())?.[1];
 
 /**
  * Whether agent `name` is held to its own team: a standing agent without the `coding` kit, or a sub of one. Such an

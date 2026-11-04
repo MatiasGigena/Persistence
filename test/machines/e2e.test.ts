@@ -110,7 +110,7 @@ test('one central chat routes two devices locally; reconnect replays the pinned 
   await a.session.setTools(true);
   await until(() => a.session.status().toolsEnabled, 'A tools permission status');
   assert.equal(b.session.status().toolsEnabled, false, 'A cannot grant B local permission');
-  await a.session.send('write and read on device A', 'prompt-a');
+  await a.session.send('write and read on device A', { requestId: 'prompt-a' });
   await until(() => answered(a.session, 'DONE-A:local-A') && answered(b.session, 'DONE-A:local-A'), 'A response on both clients');
   assert.deepEqual(a.calls.map(each => each.name), ['write', 'read']);
   assert.equal(b.calls.length, 0);
@@ -119,7 +119,7 @@ test('one central chat routes two devices locally; reconnect replays the pinned 
   await assert.rejects(stat(join(serverCwd, 'note.txt')), { code: 'ENOENT' });
 
   // The server is enabled, but B is still disabled: its submitted tool must wait, not run on A or the server.
-  await b.session.send('write and read on device B', 'prompt-b');
+  await b.session.send('write and read on device B', { requestId: 'prompt-b' });
   await until(() => logs.some(line => line.includes('Waiting for the authorized connector of Device B')), 'disabled B waits');
   assert.equal(b.calls.length, 0);
   assert.equal(a.calls.length, 2);
@@ -137,7 +137,7 @@ test('one central chat routes two devices locally; reconnect replays the pinned 
   await a.session.close();
   await until(async () => !(await b.session.request('machine.list', {})).machines.some(machine => machine.target.machineId === targetA.machineId), 'A disconnect');
   const interrupted = await attach(targetA, true, message => message.name === 'bash');
-  await interrupted.session.send('reconnect', 'prompt-reconnect');
+  await interrupted.session.send('reconnect', { requestId: 'prompt-reconnect' });
   await interrupted.dropped;
   assert.equal(await readFile(join(aCwd, 'reconnect.log'), 'utf8'), 'once');
   await until(async () => !(await b.session.request('machine.list', {})).machines.some(machine => machine.target.machineId === targetA.machineId), 'lost result connector disconnect');

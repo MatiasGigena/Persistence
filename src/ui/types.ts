@@ -111,6 +111,18 @@ export interface ChatFeed {
 }
 
 /** Immutable execution destination; machineId "server" is reserved for the host. */
+/** What a send carries besides its text; every field is optional, and the same object crosses every layer. */
+export interface SendOptions {
+  /** A client's id for the send: a repeat with the same id is admitted once. */
+  readonly requestId?: string;
+  /** Deliver to a busy Pi between its steps, instead of after its run. */
+  readonly steer?: boolean;
+  /** The machine and folder its tools run in; the server's own when omitted. */
+  readonly target?: MachineTarget;
+  /** Images that go to the model with the text. */
+  readonly images?: readonly ChatImage[];
+}
+
 export interface MachineTarget {
   readonly machineId: string;
   readonly cwd: string;
@@ -130,7 +142,7 @@ export interface UiSession {
    * dedup), so a client may resend after losing the answer to a reconnect. `images` go to the model with the text;
    * the text may then be empty. Rejects when Pi's model takes no images, rather than dropping them.
    */
-  send(text: string, requestId?: string, steer?: boolean, target?: MachineTarget, images?: readonly ChatImage[]): Promise<void>;
+  send(text: string, options?: SendOptions): Promise<void>;
   /** Interrupts Pi's running work (Esc). Durable work stays resumable. */
   abort(): Promise<void>;
   /**

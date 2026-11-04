@@ -386,7 +386,7 @@ export class Hub implements PeerHub {
           throw new OpError(ErrorCode.badRequest, 'requestId must be 1 to 128 characters.');
         }
         if (target && !this.options.machines) throw new OpError(ErrorCode.unavailable, 'This server cannot route tools to execution machines; update it first.');
-        try { await this.need().send(text, requestId, steer === true, target, images?.length ? images : undefined); } catch (error) { throw failed(error); }
+        try { await this.need().send(text, { requestId, steer: steer === true, target, images: images?.length ? images : undefined }); } catch (error) { throw failed(error); }
         return null;
       },
       abort: async () => { await this.need().abort(); return null; },

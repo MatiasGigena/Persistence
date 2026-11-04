@@ -7,7 +7,7 @@ import type {
 } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { userInput } from '../runtime/models.ts';
-import type { ChatImage, MachineTarget } from '../ui/types.ts';
+import type { ChatImage, MachineTarget, SendOptions } from '../ui/types.ts';
 
 /** The dispatcher must wait for this destination to reconnect, never execute on another machine. */
 export interface RoutingDispatcher {
@@ -52,8 +52,7 @@ function requireSame(first: MachineTarget, second: MachineTarget): void {
 export interface MachineRouting {
   readonly tools: Extension;
   initialize(context: Context): Promise<void>;
-  submit(text: string, requestId: string | undefined, target: MachineTarget | undefined, context: Context, steer?: boolean,
-    images?: readonly ChatImage[]): Promise<Submission>;
+  submit(text: string, options: SendOptions, context: Context): Promise<Submission>;
   /**
    * Preserve local tool implementations and protections, but explicitly refuse unsupported remote network kits. With
    * `allowed` (a tool that comes and goes with the coding tools), permission is checked again once the destination
@@ -190,7 +189,7 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
         },
       })),
     }),
-    async submit(text, requestId = randomUUID(), target = host, context, steer, images) {
+    async submit(text, { requestId = randomUUID(), target = host, steer, images }, context) {
       if (!target.machineId || !target.cwd || !target.label) throw new Error('Invalid machine destination.');
       if (target.machineId === 'server') requireSame(host, target);
       const pinned = detached(target);

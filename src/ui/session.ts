@@ -149,17 +149,17 @@ export async function createUiSession(
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    send(text, requestId, steer, target, images) {
+    send(text, options = {}) {
       // Through the switching queue: while setModel() configures Pi and syncs its agents, chosenModel is not yet the
       // model Pi uses, so the image check and the admission wait for the switch to finish.
       return serially(async () => {
-        if (images?.length && !await admitted(requestId)) {
+        if (options.images?.length && !await admitted(options.requestId)) {
           const problem = imagesProblem(instance.models, currentModel());
           if (problem) throw new Error(problem);
         }
         // Standalone keeps follow-up/steering; routed admission pins the target and explicitly rejects busy runs. An
         // admitted request ID returns its first submission (dedup), after the route check.
-        await instance.submit(text, requestId, target, steer, images);
+        await instance.submit(text, options);
       });
     },
     async abort() {
