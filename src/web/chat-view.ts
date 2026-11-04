@@ -55,13 +55,15 @@ export function play(element: HTMLElement, className: string, delay = 0): void {
 const SHOW_IMAGE = 'show_image';
 
 /** The full-screen image viewer (index.html #viewer): a tap on any chat image opens it, a tap anywhere closes it. */
-let viewer: { readonly dialog: HTMLDialogElement; readonly image: HTMLImageElement } | undefined;
+interface Viewer { readonly dialog: HTMLDialogElement; readonly image: HTMLImageElement }
+let wired: Viewer | undefined;
 
-/** Wires the viewer up; call once at start. */
-export function initViewer(): void {
+/** The viewer, wired up on first use, so nothing has to set it up first; throws if index.html lacks it. */
+function viewer(): Viewer {
+  if (wired) return wired;
   const dialog = document.getElementById('viewer'), image = document.getElementById('viewer-image');
-  if (!(dialog instanceof HTMLDialogElement) || !(image instanceof HTMLImageElement)) return;
-  viewer = { dialog, image };
+  if (!(dialog instanceof HTMLDialogElement) || !(image instanceof HTMLImageElement)) throw new Error('index.html has no #viewer dialog');
+  wired = { dialog, image };
   dialog.addEventListener('click', () => closeViewer(dialog));
   // Escape, or Android's back: the same quick fade out as a tap. Where the browser does not let the cancel be held
   // (no recent user activation), the dialog just closes.
@@ -70,6 +72,7 @@ export function initViewer(): void {
     dialog.classList.remove('is-closing');
     image.removeAttribute('src');
   });
+  return wired;
 }
 
 /** Closes the viewer after its exit animation (styles.css .viewer.is-closing), quicker than its entrance. */
@@ -111,11 +114,11 @@ function imageStrip(images: readonly ChatImage[], label: string): HTMLElement {
     if (img.complete && img.naturalWidth) loaded();
     button.append(img);
     button.addEventListener('click', () => {
-      if (!viewer) return;
-      viewer.dialog.classList.remove('is-closing');
-      viewer.image.src = url;
-      viewer.image.alt = name;
-      viewer.dialog.showModal();
+      const { dialog, image } = viewer();
+      dialog.classList.remove('is-closing');
+      image.src = url;
+      image.alt = name;
+      dialog.showModal();
     });
     strip.append(button);
   });

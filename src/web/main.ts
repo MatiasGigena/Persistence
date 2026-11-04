@@ -1,7 +1,7 @@
 // The web app: pairing, the chat, the header and composer, the sheets, and the link to the server. See
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { imageUrl, toChatImage } from './attach.ts';
-import { ChatView, el, initViewer, play } from './chat-view.ts';
+import { ChatView, el, play } from './chat-view.ts';
 import { announce } from './copy.ts';
 import { guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { activeAgents } from '../ui/text.ts';
@@ -310,7 +310,6 @@ function start(): void {
   // landing ahead of the status.
   view.hold();
   jump.addEventListener('click', () => view.toBottom());
-  initViewer();
 
   const notice = (text: string, level: NoticeLevel = 'info'): void => store.notice(text, level);
   let reopen: string[] = [];
