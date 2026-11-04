@@ -147,7 +147,7 @@ export class Devices implements DeviceRegistry {
 }
 
 /** What the web listener checks requests against: ServeSettings with the web listener's two settings set. */
-export interface Access {
+export interface ListenerAccess {
   readonly origin: string;
   readonly allowLogins: readonly string[];
 }
@@ -156,7 +156,7 @@ export interface Access {
 export type AuthReason = 'login' | 'origin' | 'unpaired';
 export type Refusal = { readonly ok: false; readonly status: 401 | 403; readonly reason: AuthReason };
 /** Checks 1 and 2 passed. */
-export type Gate = { readonly ok: true; readonly login: string } | Refusal;
+export type GateResult = { readonly ok: true; readonly login: string } | Refusal;
 /** All three checks passed: the request comes from this device. */
 export type AuthResult = { readonly ok: true; readonly login: string; readonly device: Device } | Refusal;
 
@@ -176,7 +176,7 @@ const needsOrigin = (request: RequestHead): boolean =>
  * Checks 1 (login) and 2 (Origin, when the request needs it). `Tailscale-User-Login` is trusted only because the
  * listener is loopback-only behind `tailscale serve`, and only for this allow-list: never as an identity.
  */
-export function gate(request: RequestHead, access: Access): Gate {
+export function gate(request: RequestHead, access: ListenerAccess): GateResult {
   const login = header(request.headers, 'tailscale-user-login');
   if (login === undefined || !access.allowLogins.includes(login)) return { ok: false, status: 403, reason: 'login' };
   if (needsOrigin(request) && header(request.headers, 'origin') !== access.origin) return { ok: false, status: 403, reason: 'origin' };
@@ -190,7 +190,7 @@ export function deviceCookies(headers: IncomingHttpHeaders): string[] {
 }
 
 /** Checks 1, 2 and 3: the login, the Origin when needed, and a paired device's cookie. */
-export function authenticate(request: RequestHead, access: Access, devices: Devices): AuthResult {
+export function authenticate(request: RequestHead, access: ListenerAccess, devices: Devices): AuthResult {
   const passed = gate(request, access);
   if (!passed.ok) return passed;
   for (const cookie of deviceCookies(request.headers)) {

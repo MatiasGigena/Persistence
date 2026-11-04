@@ -2,7 +2,7 @@
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { ChatView, el, play } from './chat-view.ts';
 import { announce } from './copy.ts';
-import { guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
+import { guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, formatCodeInput, pairErrorText, shortModel, statusParts } from './format.ts';
 import { activeAgents } from '../ui/text.ts';
 import { errorMessage, isRecord } from '../protocol/util.ts';
 import { Link } from './link.ts';
@@ -237,7 +237,7 @@ function pairScreen(onPaired: () => void, why = ''): void {
     button.replaceChildren(spinner, 'Pairing…');
   };
   code.addEventListener('input', () => {
-    const next = normalizeCode(code.value);
+    const next = formatCodeInput(code.value);
     if (next !== code.value) code.value = next;
   });
   form.addEventListener('submit', event => {
@@ -247,7 +247,7 @@ function pairScreen(onPaired: () => void, why = ''): void {
     busy(true);
     fetch('/api/pair', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: normalizeCode(code.value), name: name.value.trim() }),
+      body: JSON.stringify({ code: formatCodeInput(code.value), name: name.value.trim() }),
     }).then(
       async response => {
         if (response.ok) { code.value = ''; afterPairing(); return; }

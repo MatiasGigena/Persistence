@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { SessionStatus } from '../../src/protocol/messages.ts';
-import { base64UrlBytes, guessDeviceName, normalizeCode, pairErrorText, sortModels, statusParts } from '../../src/web/format.ts';
+import { base64UrlBytes, guessDeviceName, formatCodeInput, pairErrorText, sortModels, statusParts } from '../../src/web/format.ts';
 import { footerText } from '../../src/ui/tui/footer.ts';
 import { theme } from '../../src/ui/tui/theme.ts';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
@@ -37,10 +37,10 @@ test('models sort current first, then available, then unavailable', () => {
 });
 
 test('pairing codes normalize to Crockford XXXX-XXXX', () => {
-  assert.equal(normalizeCode('abcd efgh'), 'ABCD-EFGH');
-  assert.equal(normalizeCode('o1il-0000-extra'), '0111-0000');
-  assert.equal(normalizeCode('ab'), 'AB');
-  assert.equal(normalizeCode('uuuu'), '', 'U is not Crockford');
+  assert.equal(formatCodeInput('abcd efgh'), 'ABCD-EFGH');
+  assert.equal(formatCodeInput('o1il-0000-extra'), '0111-0000');
+  assert.equal(formatCodeInput('ab'), 'AB');
+  assert.equal(formatCodeInput('uuuu'), '', 'U is not Crockford');
 });
 
 test('a refused pairing says which check refused it, rather than to try again', () => {

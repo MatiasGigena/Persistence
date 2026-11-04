@@ -92,7 +92,7 @@ async function real(path: string): Promise<string> {
 
 const within = (path: string, root: string): boolean => path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 
-type Access = 'read' | 'write' | 'remove';
+type AccessMode = 'read' | 'write' | 'remove';
 
 /** Bubblewrap's argv prefix for `protection`, from what exists now: hidden folders become empty, hidden files unreadable. */
 async function sandboxArgs(bin: string, { hidden, readOnly, sshAgent }: Protection): Promise<string[]> {
@@ -185,7 +185,7 @@ export class GuardedEnv extends NodeExecutionEnv {
   }
 
   /** The refusal for `access` to `path`, or undefined when it is allowed. */
-  private async refusal(path: string, mode: Access): Promise<FileError | undefined> {
+  private async refusal(path: string, mode: AccessMode): Promise<FileError | undefined> {
     const [target, { hidden, readOnly }] = await Promise.all([real(isAbsolute(path) ? path : resolve(this.cwd, path)), this.canonical()]);
     const deny = (root: string, why: string): FileError =>
       new FileError('permission_denied', `${path} is protected (${root}): ${why}. The user can change this with PI_DURABLE_UNPROTECT.`, path);
@@ -198,7 +198,7 @@ export class GuardedEnv extends NodeExecutionEnv {
     return undefined;
   }
 
-  private async guard<T>(path: string, mode: Access, run: () => Promise<Result<T, FileError>>): Promise<Result<T, FileError>> {
+  private async guard<T>(path: string, mode: AccessMode, run: () => Promise<Result<T, FileError>>): Promise<Result<T, FileError>> {
     const refused = await this.refusal(path, mode);
     return refused ? err(refused) : run();
   }

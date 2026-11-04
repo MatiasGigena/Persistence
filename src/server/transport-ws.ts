@@ -12,7 +12,7 @@ import { cutBytes, errorMessage, isRecord } from '../protocol/util.ts';
 import { CloseCode, ErrorCode, LIMITS } from '../protocol/messages.ts';
 import type { Bye, Device, ErrorResponse } from '../protocol/messages.ts';
 import { authenticate, gate, setCookie } from './auth.ts';
-import type { Access, Devices, Refusal } from './auth.ts';
+import type { ListenerAccess, Devices, Refusal } from './auth.ts';
 import type { PeerHub, PeerLink } from './link.ts';
 import { createStaticFiles, DEFAULT_ROOTS, securityHeaders } from './static.ts';
 import type { StaticFiles, StaticRoots } from './static.ts';
@@ -25,7 +25,7 @@ export const HOST = '127.0.0.1';
  * frame closes the socket with 1009; a frame within it but over LIMITS.clientMessage code units gets
  * `bad_request` and the connection stays.
  */
-export const MAX_PAYLOAD = 3 * LIMITS.clientMessage;
+export const MAX_WS_PAYLOAD = 3 * LIMITS.clientMessage;
 /** `/api/pair` attempts per client address and window. */
 export const PAIR_RATE = { tries: 10, windowMs: 60_000 } as const;
 const PAIR_BODY_MAX = 1024;
@@ -128,12 +128,12 @@ function refuseUpgrade(socket: Duplex, status: number, error: string): void {
 export async function startWebListener(hub: PeerHub, settings: ServeSettings, devices: Devices, options: WebListenerOptions = {}): Promise<WebListener> {
   const { origin, allowLogins } = settings;
   if (origin === undefined || allowLogins.length === 0) throw new Error('the web listener needs PI_DURABLE_ORIGIN and PI_DURABLE_ALLOW_LOGIN');
-  const access: Access = { origin, allowLogins };
+  const access: ListenerAccess = { origin, allowLogins };
   const log = options.log ?? ((line: string) => { process.stderr.write(`${line}\n`); });
   const files: StaticFiles = await createStaticFiles(origin, options.roots ?? DEFAULT_ROOTS);
   const pairAllowed = rateLimiter(PAIR_RATE.tries, PAIR_RATE.windowMs);
   const links = new Map<WebSocket, PeerLink>();
-  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD });
 
   const json = (response: ServerResponse, status: number, value: unknown, headers: Record<string, string> = {}): void => {
     const body = value === undefined ? '' : JSON.stringify(value);

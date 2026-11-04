@@ -141,7 +141,8 @@ export interface UiSession {
   /**
    * Archives one agent (with a main agent's sub agents), or every ad-hoc main agent: their work stops, and they are
    * deleted a day later unless restored. Resolves with the names archived; an agent already archived keeps its time
-   * and is among them. Rejects with a readable refusal for a standing agent, and NotFound for an unknown one.
+   * and is among them. Rejects with a readable refusal for a standing agent or an unknown name (on the host an
+   * unknown name is NotFound; over the wire it is the not_found code).
    */
   archiveAgents(target: ArchiveTarget): Promise<readonly string[]>;
   /** Restores an archived agent (with a main agent's sub agents). Resolves with the names restored; rejects readably. */

@@ -22,7 +22,7 @@ import { isRecord } from '../../src/protocol/util.ts';
 import { AgentsDoc } from '../../src/agents/index.ts';
 import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
 import { answerText, browserKey, localOnlyBrowser, openInstance, rosterWarnings, transcript } from '../../src/runtime/runtime.ts';
-import type { Access } from '../../src/runtime/models.ts';
+import type { CredentialStatus } from '../../src/runtime/models.ts';
 import type { Roster } from '../../src/agents/roster.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
 import { resumeInstance } from '../../src/runtime/recovery.ts';
@@ -503,7 +503,7 @@ describe('portable durable runtime (offline)', { concurrency: false, timeout: 30
       Researcher: { ...faux, model: { provider: 'nowhere', modelId: 'y' }, tools: ['web_fetch'] },
     };
     const calls: string[] = [];
-    const ok = async (access: Access) => rosterWarnings(roster, { models, exists: () => false, defaultChromium: () => '/pw/chrome',
+    const ok = async (access: CredentialStatus) => rosterWarnings(roster, { models, exists: () => false, defaultChromium: () => '/pw/chrome',
       access: (provider) => { calls.push(provider); return Promise.resolve(access); } });
     const failing = await ok({ ok: false, reason: 'none' });
     assert.equal(failing.length, 4, failing.join('\n'));

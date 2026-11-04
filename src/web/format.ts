@@ -68,7 +68,7 @@ export function base64UrlBytes(text: string): Uint8Array<ArrayBuffer> {
 }
 
 /** A pairing code as typed: Crockford base32 upper-cased (I and L read as 1, O as 0), as `XXXX-XXXX`. */
-export function normalizeCode(input: string): string {
+export function formatCodeInput(input: string): string {
   const chars = input.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/[^0-9A-HJKMNP-TV-Z]/g, '').slice(0, 8);
   return chars.length > 4 ? `${chars.slice(0, 4)}-${chars.slice(4)}` : chars;
 }

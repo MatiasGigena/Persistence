@@ -12,7 +12,7 @@ import type { ServeSettings } from '../../src/host/config.ts';
 import { CloseCode, LIMITS } from '../../src/protocol/messages.ts';
 import { Devices } from '../../src/server/auth.ts';
 import type { PeerHub, PeerLink } from '../../src/server/link.ts';
-import { HOST, MAX_PAYLOAD, PAIR_RATE, startWebListener } from '../../src/server/transport-ws.ts';
+import { HOST, MAX_WS_PAYLOAD, PAIR_RATE, startWebListener } from '../../src/server/transport-ws.ts';
 import type { WebListener } from '../../src/server/transport-ws.ts';
 
 const ORIGIN = 'https://vps.tail1.ts.net';
@@ -170,7 +170,7 @@ test('frame limits: a long text gets bad_request and the socket stays; over maxP
   assert.equal(hub.received[0], '{"t":"ping","n":1}', 'the long text was not delivered; the next one was');
 
   const closed = closeOf(ws);
-  ws.send('a'.repeat(MAX_PAYLOAD + 1));
+  ws.send('a'.repeat(MAX_WS_PAYLOAD + 1));
   assert.equal((await closed).code, 1009);
 
   const binary = await connect(base, cookie);

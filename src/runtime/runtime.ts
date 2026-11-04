@@ -30,7 +30,7 @@ import { GuardedEnv } from './guard.ts';
 import { startSshAgent } from './ssh-agent.ts';
 import type { Protection } from './guard.ts';
 import { accessProblem, catalogProblem, checkAccess } from './models.ts';
-import type { Access, CatalogModels } from './models.ts';
+import type { CredentialStatus, CatalogModels } from './models.ts';
 import { createMachineRouting } from '../machines/routing.ts';
 import type { RoutingDispatcher } from '../machines/routing.ts';
 import type { SendOptions } from '../ui/types.ts';
@@ -246,7 +246,7 @@ export interface RosterCheckOptions {
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   /** Default: `checkAccess()`. */
-  readonly access?: (provider: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<Access>;
+  readonly access?: (provider: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<CredentialStatus>;
 }
 
 const listed = (names: readonly string[]): string => names.length === 1 ? `Standing agent ${names[0] ?? ''}` : `Standing agents ${names.join(', ')}`;
@@ -287,7 +287,7 @@ export async function rosterWarnings(roster: Roster, {
     }
   }
   const checked = await Promise.all([...byProvider].map(async ([provider, { model, names }]) => {
-    let result: Access;
+    let result: CredentialStatus;
     try { result = await access(provider, { timeoutMs, ...signal ? { signal } : {} }); } catch (error) {
       result = { ok: false, reason: 'error', detail: errorMessage(error) };
     }

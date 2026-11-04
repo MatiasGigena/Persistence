@@ -663,7 +663,7 @@ export const reportSrc = ({ name: agent, text, id }: ReportInput): string => `re
  * Options: `summarize(systemPrompt, messages, { signal, tools, node }) → Promise<string>` (the compaction model; messages
  * are `{ role: 'user' | 'assistant', content: string }`), or `models` (a pi-ai Models / ModelRuntime) with
  * `compactionModel` / `model` ({ provider, modelId }) for the default pi-ai summarizer; `reasoning`, `maxTokens`,
- * `tooLongRetries` (default 1), `jobs`, `retryMs`, `view` / `compactionView` budgets ({ hi, lo } bytes), `warn`.
+ * `tooLongRetries` (default 1), `jobs`, `lead` (default 8: how many unbuilt leaves may precede the next one), `retryMs`, `view` / `compactionView` budgets ({ hi, lo } bytes), `warn`.
  */
 export function openMemory(dir: string, options?: MemoryOptions): Memory {
   const at = resolve(dir);

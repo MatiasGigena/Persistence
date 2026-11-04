@@ -39,14 +39,8 @@ export type { Kit, Roster, StandingAgent } from './roster.ts';
  * request IDs make every resubmission return the first one, so nothing is lost or delivered twice.
  * Tool calls that create deliveries are replay-safe and keyed by their tool task ID.
  *
- * Host wiring (src/runtime/runtime.ts):
- *   const Agents = createAgentsExtension({ initialContext, roster, onSpawn, onDelivery });
- *   registry.install(Agents);                       // also on inspect-only launches: tasks stay known
- *   agent.extensions = [CodingTools, Agents, ...];  // the root's array selects exactly these
- *   agent.tools = [...(allowTools ? CodingTools.tools : []), ...Agents.tools];  // an array enables exactly these
- *   await root.configure(agent, context);
- *   await syncAgents(harness, context, { childAgent, roster, kits });  // every work launch, after root.configure()
- *   harness.resume();                               // on work launches, so pending deliveries continue
+ * The host wiring is openInstance in src/runtime/runtime.ts: it installs the extension (inspect-only launches too, so
+ * the tasks stay known), configures Pi with it, and calls syncAgents on every work launch before resuming the harness.
  * Pi is always ROOT_CONVERSATION_ID; nothing else needs configuring and no settings are required.
  * Every input reaching Pi (a main agent's final report or its send_message) is the user message
  * `piReportText(name, text)`, placed as the entry `{ kind: 'agents.report', data: { name, text, id } }`; inputs to
