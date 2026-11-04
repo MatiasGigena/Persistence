@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
 import { attachChat, DETACHED, serverAnswers } from '../../src/client/attach.ts';
-import { parseArgs, resolveOptions } from '../../src/host/config.ts';
+import { parseArgs, resolveOptions } from '../../src/config/options.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 
 class FakeTerminal implements Terminal {

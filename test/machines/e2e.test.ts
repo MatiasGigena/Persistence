@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { MachineExecutor } from '../../src/client/machine-executor.ts';
 import type { RemoteSession } from '../../src/client/remote-session.ts';
 import { ClientLink, unixConnector } from '../../src/client/unix-link.ts';
-import { parseArgs, resolveOptions } from '../../src/host/config.ts';
+import { parseArgs, resolveOptions } from '../../src/config/options.ts';
 import type { MachineCall, MachineToolResult } from '../../src/protocol/machines.ts';
 import { serve } from '../../src/server/serve.ts';
 import type { MachineTarget } from '../../src/protocol/machines.ts';

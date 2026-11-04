@@ -193,7 +193,7 @@ Details: [agents.md](agents.md), [decisions/](decisions/).
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
 | `chat.unii/browser/<agent name>/` | a Chromium profile per agent that used the browser, shared by all its sessions (any other caller: its conversation ID): cookies, localStorage | Chromium, under the host | Chromium's own; not backed up |
 | `chat.sqlite.lock` | nothing; the flock target | `flock` | none needed |
-| `settings.json` (beside the database) | default model, effort, optional standing-agent roster | `writeSettings` (`src/host/config.ts`), on `/model` and `/effort` (preserves other keys) | written to a temp file, fsynced, renamed |
+| `settings.json` (beside the database) | default model, effort, optional standing-agent roster | `writeSettings` (`src/config/settings.ts`), on `/model` and `/effort` (preserves other keys) | written to a temp file, fsynced, renamed |
 | workstation `client.json` and `machine-id` | stable machine identity and optional SSH preferences, never a tools grant | `src/client/config.ts` | private files, fsynced before publication |
 | workstation `machine-tools/<execution hash>/` | call intent/fingerprint and cached result, not a local chat | `MachineExecutor` | intent and directory fsynced before effects; result atomically replaced and fsynced |
 | `serve/devices.json`, `push.json`, `vapid.json` | paired devices, push subscriptions, the VAPID keys | the server (`store.ts` `writeJson`) | written to a temp file, fsynced, renamed, directory fsynced |
@@ -252,7 +252,9 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 |---|---|
 | `bin/pi-durable` | Bash launcher: picks Node (`PI_DURABLE_NODE`, `node`, or Pi's private Node) and runs `src/cli.ts` |
 | `src/cli.ts` | Entry: parses arguments, checks Node, selects SSH/bridge before local state; otherwise resolves paths and runs the host under `flock` |
-| `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file, `PI_DURABLE_CHROMIUM`) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
+| `src/config/options.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `serve agents`, `backup`, `connect`, `bridge`), the model's precedence, `resolveOptions` (data dir, database, auth file) and the `Config` the CLI hands to the host as JSON |
+| `src/config/paths.ts` | `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), `resolveSocketPath`, `PI_DURABLE_CHROMIUM`, the server's environment (`serveSettings`) |
+| `src/config/settings.ts` | `settings.json`: the saved model and effort, the standing-agent roster (`parseRoster`), atomic writes that keep the other keys |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
 | `src/host/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
 | `src/host/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
@@ -277,7 +279,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/providers/claude-cli-mcp.ts` | Stub stdio MCP server that lists Pi's tools to the CLI and runs none |
 | `src/providers/anthropic.ts` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
 | `src/agents/entries.ts` | `REPORT_KIND`, `MESSAGE_KIND` and `agentInputOf`: the agents' input entries and the one decoder of their data, read by the memory, the UI and the terminal host |
-| `src/agents/roster.ts` | The standing agents' roster: `DEFAULT_ROSTER`, the kit names (`KITS`), agent name rules; no pi-durable imports, so `config.ts` parses settings.json's `agents` with it |
+| `src/agents/roster.ts` | The standing agents' roster: `DEFAULT_ROSTER`, the kit names (`KITS`), agent name rules; no pi-durable imports, so `src/config/settings.ts` parses settings.json's `agents` with it |
 | `src/tools/browser.ts` | `createBrowserExtension`: the `browser` extension's eight `browser_*` tools, a headless Chromium and persistent profile per key (`keyOf`: the agent's name, from the host), one queue and a 60 s timeout per operation, URL redaction, `close()` |
 | `src/tools/autoreview.ts` | `createAutoreviewExtension`: dedicated skill-helper invocation, fixed P0–P2; guarded local shell or pinned connector execution, no raw commands or isolation overrides |
 | `src/tools/web-fetch.ts` | `createWebFetchExtension`: the `web-fetch` extension's `web_fetch` tool, a page as Markdown (Readability, Turndown) or a PDF as text; refuses private destinations, redirects included |

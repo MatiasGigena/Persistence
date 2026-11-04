@@ -5,8 +5,9 @@
 import { randomBytes } from 'node:crypto';
 import { format } from 'node:util';
 import type { Models } from '@earendil-works/pi-ai';
-import type { Config } from '../host/config.ts';
-import { statePaths, VERSION } from '../host/config.ts';
+import type { Config } from '../config/options.ts';
+import { VERSION } from '../config/options.ts';
+import { statePaths } from '../config/paths.ts';
 import { errorMessage, isRecord } from '../protocol/util.ts';
 import { CloseCode } from '../protocol/messages.ts';
 import { resumeInstance } from '../runtime/recovery.ts';

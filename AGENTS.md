@@ -8,7 +8,8 @@ TypeScript that Node runs by type stripping: there is no build step.
 ## Map
 
 - `src/cli.ts`: entry. Parses arguments, takes the flock, spawns the host.
-- `src/host/`: `host.ts` (terminal chat, /commands, reply watcher), `config.ts` (CLI options, paths), `session.ts` and `feed.ts` (the host's state as a `UiSession`: pi-durable's conversation views, memory and agents turned into chat items).
+- `src/config/`: every mode's process configuration: `options.ts` (CLI parsing, `--help`, the resolved `Config`), `paths.ts` (`statePaths`, the socket, `serve`'s environment), `settings.json` and the standing-agent roster in `settings.ts`.
+- `src/host/`: `host.ts` (terminal chat, /commands, reply watcher), `session.ts` and `feed.ts` (the host's state as a `UiSession`: pi-durable's conversation views, memory and agents turned into chat items).
 - `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks; `roster.ts`: the standing agents and kit names; `entries.ts`: the input entry kinds and their decoder.

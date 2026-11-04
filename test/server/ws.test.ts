@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { WebSocket } from 'ws';
-import type { ServeSettings } from '../../src/host/config.ts';
+import type { ServeSettings } from '../../src/config/paths.ts';
 import { CloseCode, LIMITS } from '../../src/protocol/messages.ts';
 import { Devices } from '../../src/server/auth.ts';
 import type { PeerHub, PeerLink } from '../../src/server/link.ts';

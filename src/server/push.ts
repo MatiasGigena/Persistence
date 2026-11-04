@@ -5,7 +5,7 @@ import { createCipheriv, createECDH, createHash, createPrivateKey, generateKeyPa
 import type { ECDH, KeyObject } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ServeSettings, StatePaths } from '../host/config.ts';
+import type { ServeSettings, StatePaths } from '../config/paths.ts';
 import { errorMessage, isRecord } from '../protocol/util.ts';
 import type { PushSubscriptionJson } from '../protocol/messages.ts';
 import type { PushNotifier } from './link.ts';

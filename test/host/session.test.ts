@@ -10,7 +10,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCal
 import type { FauxResponseStep } from '@earendil-works/pi-ai/providers/faux';
 import type { Agent } from '@earendil-works/pi-durable';
 import { listAgents, REPORT_KIND } from '../../src/agents/index.ts';
-import { parseArgs, resolveOptions } from '../../src/host/config.ts';
+import { parseArgs, resolveOptions } from '../../src/config/options.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
 import { createUiSession } from '../../src/host/session.ts';

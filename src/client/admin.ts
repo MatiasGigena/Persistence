@@ -4,8 +4,8 @@
 import { lstat } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
-import type { Config } from '../host/config.ts';
-import { VERSION } from '../host/config.ts';
+import type { Config } from '../config/options.ts';
+import { VERSION } from '../config/options.ts';
 import { errorCode } from '../protocol/util.ts';
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
 import type { ClientMessage, Device, Request, Response, ServerMessage } from '../protocol/messages.ts';

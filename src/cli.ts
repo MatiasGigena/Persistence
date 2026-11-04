@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { attachChat, serverAnswers, SERVER_RUNS } from './client/attach.ts';
 import { bridge } from './client/bridge.ts';
 import { remoteChat } from './client/remote.ts';
-import { HELP, VERSION, parseArgs, resolveOptions, resolveSocketPath, statePaths } from './host/config.ts';
+import { HELP, VERSION, parseArgs, resolveOptions } from './config/options.ts';
+import { resolveSocketPath, statePaths } from './config/paths.ts';
 import { errorCode, errorMessage } from './protocol/util.ts';
-import type { Config } from './host/config.ts';
+import type { Config } from './config/options.ts';
 import { agentsCommand, backupOverSocket, devicesCommand, formatBytes, NoServer, pairCommand } from './client/admin.ts';
 
 /** `backup` through the running server; false when none answers (then the backup takes the flock itself). */

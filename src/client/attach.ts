@@ -3,8 +3,8 @@
 // process. Otherwise src/cli.ts takes the local path. Detaching leaves the server working.
 import { format } from 'node:util';
 import type { Terminal } from '@earendil-works/pi-tui';
-import { VERSION } from '../host/config.ts';
-import type { Config } from '../host/config.ts';
+import { VERSION } from '../config/options.ts';
+import type { Config } from '../config/options.ts';
 import { RemoteSession } from './remote-session.ts';
 import { ClientLink, ForeignSocket, unixConnector } from './unix-link.ts';
 

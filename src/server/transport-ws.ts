@@ -7,7 +7,7 @@ import type { Duplex } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { RawData } from 'ws';
-import type { ServeSettings } from '../host/config.ts';
+import type { ServeSettings } from '../config/paths.ts';
 import { cutBytes, errorMessage, isRecord } from '../protocol/util.ts';
 import { CloseCode, ErrorCode, LIMITS } from '../protocol/messages.ts';
 import type { Bye, Device, ErrorResponse } from '../protocol/messages.ts';

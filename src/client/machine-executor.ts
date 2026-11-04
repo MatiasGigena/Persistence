@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { OutputBuffer, PROGRESS_BYTES_PER_SECOND } from '@earendil-works/chord/output';
 import { createModels, validateToolArguments } from '@earendil-works/pi-ai';
-import { statePaths } from '../host/config.ts';
+import { statePaths } from '../config/paths.ts';
 import { bwrapBinary, GuardedEnv, protection } from '../runtime/guard.ts';
 import type { Protection } from '../runtime/guard.ts';
 import { clientConfigPath } from './config.ts';

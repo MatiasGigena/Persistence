@@ -19,10 +19,10 @@ import { formatBytes } from '../client/admin.ts';
 import { serve } from '../server/serve.ts';
 import { createUiSession } from './session.ts';
 import { isCommand, runTui } from '../ui/tui/app.ts';
-import { parseConfig } from './config.ts';
-import type { Config } from './config.ts';
+import { parseConfig } from '../config/options.ts';
+import type { Config } from '../config/options.ts';
 import { errorMessage, isRecord } from '../protocol/util.ts';
-import type { ModelSource } from './config.ts';
+import type { ModelSource } from '../config/options.ts';
 
 // Internal entry point: src/cli.ts owns the database flock for this process.
 const textContent = (content: Message['content'] | undefined): string => typeof content === 'string' ? content
