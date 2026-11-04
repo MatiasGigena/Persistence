@@ -7,11 +7,13 @@ import type { Duplex } from 'node:stream';
 import type { Context, JsonValue } from '@earendil-works/chord';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { ConversationId, Extension, ToolExecutionResult, ToolRegistration } from '@earendil-works/pi-durable';
-import { arr, bool, num, obj, opt, type Schema, str, union } from '@earendil-works/pi-schema';
+import { arr, bool, num, obj, opt, str, union } from '@earendil-works/pi-schema';
 import {
   type BrowserContext, chromium, type ConsoleMessage, type Page, type Request, type Route, type WebSocketRoute,
 } from 'playwright-core';
 import { addressKind, type Lookup, type LookupAddress, lookupAll } from './web-fetch.ts';
+import { errorMessage } from '../protocol/util.ts';
+import { literal } from './schema.ts';
 
 /**
  * Browser tools: a headless Chromium per agent, adapted from the browser extension of Pi Cloud,
@@ -39,8 +41,6 @@ export const BROWSER_EXTENSION = 'browser';
 export const MAX_BUFFER = 1000;
 export const OPERATION_TIMEOUT_MS = 60_000;
 const EVAL_LIMIT = 50_000;
-/** A string literal as TypeBox wrote it (`type` and `const`), so the tool's JSON Schema stays as it was. */
-const literal = <const V extends string>(value: V): Schema<V> => ({ type: 'string', const: value });
 const MAX_FULL_PAGE_PIXELS = 8_000_000;
 const MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024;
 
@@ -414,19 +414,25 @@ type Browser = {
  * to run `npx playwright install`, a package this one does not have. Any other failure as it is.
  */
 function launchError(error: unknown, executablePath: string | undefined): unknown {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   if (!/executable doesn't exist/i.test(message)) return error;
   if (executablePath) {
-    return new Error(`PI_DURABLE_CHROMIUM names ${executablePath}, which does not exist. The user can fix the path, or unset it to use Playwright's Chromium.`);
+    return new Error(`PI_DURABLE_CHROMIUM names ${executablePath}, which does not exist. The user can fix the path, or unset it to use Playwright's Chromium.`,
+      { cause: error });
   }
   return new Error(`Chromium for the browser tools is not installed (${message.split('\n')[0] ?? ''}). The user can run `
-    + 'npx --no-install playwright-core install chromium in the installation directory, or set PI_DURABLE_CHROMIUM to a Chromium executable.');
+    + 'npx --no-install playwright-core install chromium in the installation directory, or set PI_DURABLE_CHROMIUM to a Chromium executable.',
+    { cause: error });
 }
 
 const result = (text: string, details: JsonValue = {}, isError = false): ToolExecutionResult =>
   ({ output: [{ type: 'text', text }], details, ...(isError ? { isError } : {}) });
 
-export function createBrowserExtension(options: BrowserOptions): BrowserExtension {
+/**
+ * The agents' browsers: one per browser key, launched on first use with its persistent profile, each behind its own
+ * loopback egress proxy that checks every connection; `run` serializes the work on one browser and bounds it in time.
+ */
+function browserSessions(options: BrowserOptions) {
   const launch = options.launch ?? ((dir, launchOptions) => chromium.launchPersistentContext(dir, launchOptions));
   const timeoutMs = options.timeoutMs ?? OPERATION_TIMEOUT_MS;
   const browsers = new Map<string, Browser>();
@@ -629,7 +635,33 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
     }
   }
 
-  const goto = defineTool({
+  const shut = async (browser: Browser): Promise<void> => {
+    await teardown(browser);
+    const proxy = browser.proxy;
+    browser.proxy = null;
+    (await proxy?.catch(() => undefined))?.close();
+  };
+
+  return {
+    run, ensurePage, refusalFor, teardown,
+    /** Closes every browser and its proxy: the instance is closing. */
+    closeAll: async (): Promise<void> => { await Promise.all([...browsers.values()].map(shut)); },
+    /** Closes the browser of `key` and deletes its profile: its agent is gone. */
+    forget: async (key: string): Promise<void> => {
+      // Only a safe key names a folder under the profile root; anything else was never one.
+      if (!BROWSER_KEY.test(key)) return;
+      const browser = browsers.get(key);
+      browsers.delete(key);
+      if (browser) await shut(browser);
+      await rm(join(options.profileRoot, 'browser', key), { recursive: true, force: true });
+    },
+  };
+}
+type BrowserSessions = ReturnType<typeof browserSessions>;
+
+function gotoTool(sessions: BrowserSessions): ToolRegistration {
+  const { run, ensurePage, refusalFor } = sessions;
+  return defineTool({
     name: 'browser_goto',
     description: 'Navigate your persistent headless Chromium to an http(s) URL; returns the HTTP status and final URL. '
       + 'Cookies and localStorage persist across calls. Loopback and private addresses work; link-local (cloud metadata), '
@@ -675,8 +707,11 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       return result(`${status ?? '?'} ${finalUrl}`, { status, finalUrl });
     }),
   });
+}
 
-  const evaluate = defineTool({
+function evaluateTool(sessions: BrowserSessions): ToolRegistration {
+  const { run, ensurePage } = sessions;
+  return defineTool({
     name: 'browser_eval',
     description: 'Evaluate JavaScript in the current page: an expression (\'localStorage.length\'), a function '
       + '(\'() => Object.keys(localStorage)\', \'async () => { ... }\'), or an already-called IIFE. The value must be '
@@ -691,15 +726,18 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       try {
         value = await page.evaluate<unknown>(evalSource(expression));
       } catch (error) {
-        return result(`eval error: ${error instanceof Error ? error.message : String(error)}`, {}, true);
+        return result(`eval error: ${errorMessage(error)}`, {}, true);
       }
       const text = typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? String(value));
       const truncated = text.length > EVAL_LIMIT;
       return result(truncated ? `${text.slice(0, EVAL_LIMIT)}\n[Output truncated at 50,000 characters]` : text, { truncated });
     }),
   });
+}
 
-  const consoleTool = defineTool({
+function consoleTool(sessions: BrowserSessions): ToolRegistration {
+  const { run } = sessions;
+  return defineTool({
     name: 'browser_console',
     description: 'Drain buffered console and pageerror entries, oldest first. With clear=true (default) the ENTIRE buffer is '
       + 'wiped after the read, not just the entries returned, so the next call sees fresh activity; clear=false peeks. '
@@ -720,8 +758,11 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       return Promise.resolve(result(text, { count: out.length }));
     }),
   });
+}
 
-  const network = defineTool({
+function networkTool(sessions: BrowserSessions): ToolRegistration {
+  const { run } = sessions;
+  return defineTool({
     name: 'browser_network',
     description: 'Drain buffered network requests, one terse line each (\'<status> <method> <url>\'). verbose=true adds a '
       + `curated set of request and response headers (${[...KEEP_HEADERS].join(', ')}); includeHeaders adds more for this `
@@ -760,8 +801,11 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       return Promise.resolve(result(lines.join('\n') || '(empty)', { count: out.length }));
     }),
   });
+}
 
-  const fill = defineTool({
+function fillTool(sessions: BrowserSessions): ToolRegistration {
+  const { run, ensurePage } = sessions;
+  return defineTool({
     name: 'browser_fill',
     description: 'Type a value into the input matching the selector; dispatches input and change events, unlike assigning .value.',
     parameters: obj({ selector: str(), value: str() }, { open: true }),
@@ -771,8 +815,11 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       return result(`filled ${selector}`);
     }),
   });
+}
 
-  const click = defineTool({
+function clickTool(sessions: BrowserSessions): ToolRegistration {
+  const { run, ensurePage } = sessions;
+  return defineTool({
     name: 'browser_click',
     description: 'Click the element matching the selector, as a user would (form submits, SPA navigation). CSS selectors and '
       + 'Playwright text= and role= selectors work. CSS attribute selectors match HTML attributes, not DOM properties: '
@@ -784,8 +831,11 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       return result(`clicked ${selector}`);
     }),
   });
+}
 
-  const screenshot = defineTool({
+function screenshotTool(sessions: BrowserSessions): ToolRegistration {
+  const { run, ensurePage } = sessions;
+  return defineTool({
     name: 'browser_screenshot',
     description: 'Capture a PNG of the current page and return it as an image, for when DOM and state inspection are not '
       + 'enough. fullPage captures the whole scrollable page, up to 8 megapixels.',
@@ -810,8 +860,11 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       };
     }),
   });
+}
 
-  const close = defineTool({
+function closeTool(sessions: BrowserSessions): ToolRegistration {
+  const { run, teardown } = sessions;
+  return defineTool({
     name: 'browser_close',
     description: 'Close your browser. The next browser_* call relaunches it with the same profile.',
     parameters: obj({}, { open: true }),
@@ -821,27 +874,15 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       return result('browser closed');
     }),
   });
+}
 
-  const shut = async (browser: Browser): Promise<void> => {
-    await teardown(browser);
-    const proxy = browser.proxy;
-    browser.proxy = null;
-    (await proxy?.catch(() => undefined))?.close();
-  };
-
+export function createBrowserExtension(options: BrowserOptions): BrowserExtension {
+  const sessions = browserSessions(options);
   return {
     name: BROWSER_EXTENSION,
-    tools: [goto, evaluate, consoleTool, network, fill, click, screenshot, close],
-    close: async () => {
-      await Promise.all([...browsers.values()].map(shut));
-    },
-    forget: async (key) => {
-      // Only a safe key names a folder under the profile root; anything else was never one.
-      if (!BROWSER_KEY.test(key)) return;
-      const browser = browsers.get(key);
-      browsers.delete(key);
-      if (browser) await shut(browser);
-      await rm(join(options.profileRoot, 'browser', key), { recursive: true, force: true });
-    },
+    tools: [gotoTool(sessions), evaluateTool(sessions), consoleTool(sessions), networkTool(sessions), fillTool(sessions), clickTool(sessions),
+      screenshotTool(sessions), closeTool(sessions)],
+    close: sessions.closeAll,
+    forget: sessions.forget,
   };
 }

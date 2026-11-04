@@ -5,9 +5,8 @@ import { NARROW } from '../theme.ts';
 import type { ModelChoice, UiSession } from '../../types.ts';
 import { clean, ListView, openPanel, PanelFrame } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
-
-/** "provider/id": what /model takes and SessionStatus.model shows. */
-export const modelRef = (model: { readonly provider: string; readonly id: string }): string => `${model.provider}/${model.id}`;
+import { errorMessage } from '../../../protocol/util.ts';
+import { modelRef } from '../../text.ts';
 
 /**
  * Opens the picker over the chat, filtered by `filter` as if typed. Resolves, once it has closed and the editor has
@@ -41,7 +40,7 @@ export async function openModelPanel(tui: TUI, session: UiSession, theme: PanelT
   });
   session.models().then(
     all => { models = all; tui.requestRender(); },
-    (error: unknown) => { failure = `Could not list models: ${error instanceof Error ? error.message : String(error)}`; tui.requestRender(); },
+    (error: unknown) => { failure = `Could not list models: ${errorMessage(error)}`; tui.requestRender(); },
   );
   await openPanel(tui, frame);
   return picked;

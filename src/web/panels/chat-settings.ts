@@ -3,8 +3,10 @@
 // or effort applies to Pi and its agents from the next request and is saved as the default; the tools are for this
 // server run only, and turning them on asks first.
 import { el } from '../chat-view.ts';
-import { activeAgents, errorText, memoryHeader, modelRef, sortModels } from '../format.ts';
-import { RequestError } from '../link.ts';
+import { memoryHeader, sortModels } from '../format.ts';
+import { activeAgents, modelRef } from '../../ui/text.ts';
+import { errorMessage } from '../../protocol/util.ts';
+import { RequestError } from '../../protocol/request-error.ts';
 import { disablePush, enablePush, pushState } from '../push.ts';
 import type { PushState } from '../push.ts';
 import type { Link } from '../link.ts';
@@ -249,7 +251,7 @@ export function chatSettingsView(ctx: PanelContext): View {
       let shownModel = '';
       /** A list was asked for while the link was down: asked again once it is back. */
       let retry = false;
-      const lost = (error: unknown): void => { if (error instanceof RequestError && error.code === 'lost') retry = true; };
+      const lost = (error: unknown): void => { if (error instanceof RequestError && error.code === 'disconnected') retry = true; };
       const loadModels = (): void => {
         const current = ctx.store.status?.model ?? '';
         shownModel = current;
@@ -260,7 +262,7 @@ export function chatSettingsView(ctx: PanelContext): View {
           (error: unknown) => {
             if (!model.ready) { choose(model.select, current); model.reveal(); }
             lost(error);
-            say(`Could not list models: ${errorText(error)}`, true);
+            say(`Could not list models: ${errorMessage(error)}`, true);
           },
         );
       };
@@ -279,7 +281,7 @@ export function chatSettingsView(ctx: PanelContext): View {
           (error: unknown) => {
             if (!effort.ready) { choose(effort.select, current, levelText(current)); effort.reveal(); }
             lost(error);
-            say(`Could not list levels: ${errorText(error)}`, true);
+            say(`Could not list levels: ${errorMessage(error)}`, true);
           },
         );
       };
@@ -303,7 +305,7 @@ export function chatSettingsView(ctx: PanelContext): View {
           (error: unknown) => {
             shownModel = ctx.store.status?.model ?? '';
             choose(model.select, shownModel);
-            say(`Model not changed: ${errorText(error)}`, true);
+            say(`Model not changed: ${errorMessage(error)}`, true);
           },
         ).finally(settle);
       });
@@ -317,7 +319,7 @@ export function chatSettingsView(ctx: PanelContext): View {
           (error: unknown) => {
             const now = ctx.store.status?.thinkingLevel ?? '';
             choose(effort.select, now, levelText(now));
-            say(`Effort not changed: ${errorText(error)}`, true);
+            say(`Effort not changed: ${errorMessage(error)}`, true);
           },
         ).finally(settle);
       });
@@ -364,7 +366,7 @@ export function chatSettingsView(ctx: PanelContext): View {
         // enablePush asks for permission first thing: the prompt must come straight from this tap.
         void (pushNow === 'on' ? disablePush(ctx.link) : enablePush(ctx.link, key)).then(
           () => { ctx.notice(pushNow === 'on' ? 'Notifications off for this device.' : 'Notifications on for this device.'); refreshPush(); },
-          (error: unknown) => { push.note.textContent = errorText(error); refreshPush(errorText(error)); },
+          (error: unknown) => { push.note.textContent = errorMessage(error); refreshPush(errorMessage(error)); },
         );
       });
 

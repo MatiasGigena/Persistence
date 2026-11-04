@@ -4,7 +4,7 @@ import { hook, ToolTask } from '@earendil-works/pi-durable';
 import type { Extension, ToolHookCall, ToolRegistration, Wrap } from '@earendil-works/pi-durable';
 import { CODEMODE_TOOL_NAME, createCodemodeExtension } from '@earendil-works/pi-durable/codemode';
 import { err, FileError } from '@earendil-works/pi-durable/env';
-import type { ExecutionEnv } from '@earendil-works/pi-durable/env';
+import type { ExecutionEnv, Result } from '@earendil-works/pi-durable/env';
 import type { Context } from '@earendil-works/chord';
 import type { ConversationId } from '@earendil-works/pi-durable';
 import { CODEMODE_OPTIONS_PREFIX, parseCodemodeSource } from '@earendil-works/pi-codemode/source';
@@ -56,10 +56,27 @@ export function withDefaultTimeout(source: string, timeoutMs = CODEMODE_TIMEOUT_
  * The environment pi-durable writes a script's output files with (a truncated result's full text, its images) when
  * they may not be saved: both writes it makes fail with `reason`, so the result says so instead of naming a path.
  */
-function refusingOutput(reason: string): ExecutionEnv {
-  const refused = () => Promise.resolve(err(new FileError('not_supported', reason)));
-  // pi-durable's code mode uses only these two methods of its call's environment (outputFiles, outputDir).
-  return { createTempDir: refused, writeFile: refused } as unknown as ExecutionEnv;
+function refusingOutput(base: ExecutionEnv, reason: string): ExecutionEnv {
+  const refused = <T>(): Promise<Result<T, FileError>> => Promise.resolve(err(new FileError('not_supported', reason)));
+  // pi-durable's code mode writes output files (outputFiles, outputDir) through these two; everything else is `base`'s.
+  // Members are bound one by one, not spread or inherited, so a class env keeps its private state and tsc checks that
+  // none is missing.
+  return {
+    get id() { return base.id; },
+    get cwd() { return base.cwd; },
+    set cwd(cwd: string) { base.cwd = cwd; },
+    absolutePath: base.absolutePath.bind(base), joinPath: base.joinPath.bind(base),
+    readTextFile: base.readTextFile.bind(base), openTextLineReader: base.openTextLineReader.bind(base),
+    readTextLines: base.readTextLines.bind(base), readBinaryFile: base.readBinaryFile.bind(base),
+    openBinaryReader: base.openBinaryReader.bind(base), appendFile: base.appendFile.bind(base),
+    truncateFile: base.truncateFile.bind(base), flushFile: base.flushFile.bind(base), renameFile: base.renameFile.bind(base),
+    fileInfo: base.fileInfo.bind(base), listDir: base.listDir.bind(base),
+    ...base.listFiles ? { listFiles: base.listFiles.bind(base) } : {},
+    openDirReader: base.openDirReader.bind(base), watch: base.watch.bind(base), canonicalPath: base.canonicalPath.bind(base),
+    exists: base.exists.bind(base), createDir: base.createDir.bind(base), remove: base.remove.bind(base),
+    createTempFile: base.createTempFile.bind(base), exec: base.exec.bind(base), cleanup: base.cleanup.bind(base),
+    createTempDir: refused<string>, writeFile: refused<void>,
+  };
 }
 
 export type CodemodeExtension = Extension & { readonly tools: readonly ToolRegistration[] };
@@ -109,8 +126,9 @@ export function createCodemode({ sandbox = new CodemodeSandbox({ memoryLimitByte
     extension: { ...base, tools: (base.tools ?? []).map(tool => tool.name !== CODEMODE_TOOL_NAME ? tool : { ...tool,
       async execute(args, api, context) {
         const code = withDefaultTimeout((args as { code: string }).code, timeoutMs);
+        // Without an env, code mode writes no output files at all (it says so itself).
         const refused = await outputRefusal?.(api.conversationId, context);
-        return tool.execute({ ...args as object, code }, refused === undefined ? api : { ...api, env: refusingOutput(refused) }, context);
+        return tool.execute({ ...args as object, code }, refused === undefined || !api.env ? api : { ...api, env: refusingOutput(api.env, refused) }, context);
       } }), sections: (base.sections ?? []).map(each => ({ ...each,
       render: (input, context) => input.agent.tools.some(tool => tool.name === CODEMODE_TOOL_NAME) ? each.render(input, context) : undefined })),
     hooks: [...base.hooks ?? [], guard], wraps: [...base.wraps ?? [], ...wraps] },

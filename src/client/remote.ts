@@ -4,10 +4,9 @@ import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { Options } from '../host/config.ts';
 import { CLIENT, runAttached } from './attach.ts';
-import { ENABLE_TOOLS } from '../protocol/messages.ts';
-import type { MachineTarget } from '../ui/types.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 import { clientConfigPath, machineId, readClientConfig, remoteTarget, saveClientConfig, validateTarget } from './config.ts';
-import { RemoteSession } from './remote-session.ts';
+import { connectMachine } from './machine-link.ts';
 import { sshConnector } from './ssh-link.ts';
 import { ClientLink } from './unix-link.ts';
 
@@ -33,33 +32,13 @@ export async function remoteChat(options: Options, env: NodeJS.ProcessEnv = proc
     Promise.all([import('./machine-executor.ts'), import('../runtime/guard.ts'), import('../runtime/ssh-agent.ts')])]);
   const link = new ClientLink({ connect: sshConnector(selected.target), client: CLIENT, helloMs: 15_000, reconnectNormal: true });
   const target: MachineTarget = { machineId: id, cwd, label: hostname() };
-  let enabled = options.remoteAllowTools === true;
+  const enabled = options.remoteAllowTools === true;
   // Pi's own SSH agent for the tools here (ADR 0030); its warnings wait for the TUI.
   const agentWarnings: string[] = [];
   const sshAgent = await startSshAgent(sshKeys(env), warning => agentWarnings.push(warning), env);
   const executor = new MachineExecutor({ target, enabled, env, protectedPaths: [dirname(clientConfigPath(env))], sshAgent: sshAgent?.socket,
     ledgerDir: join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'pi-durable', 'machine-tools') });
-  const session = new RemoteSession(link, { clientId: `tui-${crypto.randomUUID()}`, target, requireMachines: true,
-    machineToolsEnabled: () => enabled,
-    setMachineTools: async next => {
-      enabled = next;
-      executor.setEnabled(next);
-      await session.request('machine.set', next ? { enabled: true, confirm: ENABLE_TOOLS } : { enabled: false });
-    } });
-  let registered: Promise<unknown> = Promise.resolve();
-  const off = link.onMessage(message => {
-    if (message.t === 'ready') {
-      registered = session.request('machine.register', { registration: { target, enabled } });
-      registered.catch((error: unknown) => {
-        session.notify(error instanceof Error ? error.message : String(error), 'error');
-        link.close();
-      });
-    } else if (message.t === 'machine.call') {
-      void executor.execute(message).catch((error: unknown) => ({ isError: true,
-        output: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }] }))
-        .then(result => { link.send({ t: 'machine.result', id: message.id, result }); });
-    } else if (message.t === 'machine.cancel') executor.cancel(message.id);
-  });
+  const { session, registered, dispose } = connectMachine(link, target, executor, { enabled, clientId: `tui-${crypto.randomUUID()}` });
   let timer: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
@@ -69,13 +48,13 @@ export async function remoteChat(options: Options, env: NodeJS.ProcessEnv = proc
       }),
     ]);
     clearTimeout(timer);
-    await registered;
+    await registered();
     for (const warning of agentWarnings) session.notify(warning, 'warn');
     if (enabled) await session.setTools(true);
     return await runAttached(session, { cwd, initialNotice: `Shared chat: ${selected.target.host}. Tools execute on ${target.label}: ${cwd}.` });
   } finally {
     clearTimeout(timer);
-    off();
+    dispose();
     await executor.close();
     await sshAgent?.close();
     await session.close();

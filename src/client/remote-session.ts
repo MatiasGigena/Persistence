@@ -4,12 +4,16 @@
 // agent feeds that were open.
 import { ENABLE_TOOLS, ROOT_FEED } from '../protocol/messages.ts';
 import type {
-  ErrorCode, Op, Params, RequestOf, Response, ResponseOf, Result, ServerMessage, Welcome,
+  Op, Params, RequestOf, Response, ResponseOf, Result, ServerMessage, Welcome,
 } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
-import type { AttachedLink, LinkState } from '../ui/tui/app.ts';
-import type { ArchiveTarget, ChatFeed, ChatImage, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
+import type {
+  ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, ViewLine,
+} from '../ui/types.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
+import { errorMessage } from '../protocol/util.ts';
+import { RequestError } from '../protocol/request-error.ts';
 
 /** What the session needs of its link; `ClientLink` (unix-link.ts) is one. */
 export interface ServerLink {
@@ -21,14 +25,6 @@ export interface ServerLink {
   close(): void;
 }
 
-/** A failed request: the server's error code and its readable message. */
-export class RemoteError extends Error {
-  readonly code: ErrorCode | 'disconnected' | 'timeout';
-  constructor(code: RemoteError['code'], message: string) {
-    super(message);
-    this.code = code;
-  }
-}
 
 export interface RemoteSessionOptions {
   /** A request without an answer this long rejects. Default 30 s. */
@@ -77,7 +73,7 @@ interface Pending {
   /** Unset while waiting for a connection to send it on. */
   id: number | undefined;
   readonly settle: (response: Response) => void;
-  readonly fail: (error: RemoteError) => void;
+  readonly fail: (error: RequestError) => void;
   readonly timer: NodeJS.Timeout;
 }
 
@@ -170,8 +166,7 @@ export class RemoteSession implements UiSession {
   }
 
   /** Admitted once even if resent: the requestId (given, or made here) stays with the text across reconnects. */
-  async send(text: string, requestId = `${this.clientId}-${++this.sends}`, steer = false, target = this.options.target,
-    images?: readonly ChatImage[]): Promise<void> {
+  async send(text: string, { requestId = `${this.clientId}-${++this.sends}`, steer = false, target = this.options.target, images }: SendOptions = {}): Promise<void> {
     await this.request('send', { text, requestId, ...steer ? { steer } : {}, ...target ? { target } : {}, ...images?.length ? { images } : {} });
   }
 
@@ -198,7 +193,7 @@ export class RemoteSession implements UiSession {
       const mirror = [...this.agents].find(each => each.id === feed);
       return mirror && this.handle(mirror);
     } catch (error) {
-      if (error instanceof RemoteError && error.code === 'not_found') return undefined;
+      if (error instanceof RequestError && error.code === 'not_found') return undefined;
       throw error;
     }
   }
@@ -231,15 +226,15 @@ export class RemoteSession implements UiSession {
 
   /**
    * Sends `op` and resolves with its result. `hook` runs on the result as the `res` is read, before any later
-   * message. Rejects with a RemoteError: the server's, `timeout`, or `disconnected` (a dropped link; `send`s wait
+   * message. Rejects with a RequestError: the server's, `timeout`, or `disconnected` (a dropped link; `send`s wait
    * for the next connection instead).
    */
   request<O extends Op>(op: O, params: Params<O>, hook?: (result: Result<O>) => void): Promise<Result<O>> {
     if (this.detaching || this.link.state() === 'closed') {
-      return Promise.reject(new RemoteError('disconnected', 'Not connected to the server'));
+      return Promise.reject(new RequestError('disconnected', 'Not connected to the server'));
     }
     if (!this.connected && op !== 'send') {
-      return Promise.reject(new RemoteError('disconnected', 'Not connected to the server; reconnecting…'));
+      return Promise.reject(new RequestError('disconnected', 'Not connected to the server; reconnecting…'));
     }
     const { promise, resolve, reject } = Promise.withResolvers<Result<O>>();
     const entry: Pending = {
@@ -248,13 +243,13 @@ export class RemoteSession implements UiSession {
       id: undefined,
       settle: response => {
         this.forget(entry);
-        if (!response.ok) { reject(new RemoteError(response.error.code, response.error.message)); return; }
-        if (!answers(response, op)) { reject(new RemoteError('failed', `The server answered ${op} with ${response.op}`)); return; }
+        if (!response.ok) { reject(new RequestError(response.error.code, response.error.message)); return; }
+        if (!answers(response, op)) { reject(new RequestError('failed', `The server answered ${op} with ${response.op}`)); return; }
         hook?.(response.result);
         resolve(response.result);
       },
       fail: error => { this.forget(entry); reject(error); },
-      timer: setTimeout(() => entry.fail(new RemoteError('timeout', `The server did not answer ${op} within ${Math.round(this.timeoutMs / 1000)} s`)),
+      timer: setTimeout(() => entry.fail(new RequestError('timeout', `The server did not answer ${op} within ${Math.round(this.timeoutMs / 1000)} s`)),
         this.timeoutMs),
     };
     this.pending.add(entry);
@@ -279,7 +274,7 @@ export class RemoteSession implements UiSession {
   }
 
   private failAll(which: (entry: Pending) => boolean, message: string): void {
-    for (const entry of [...this.pending]) if (which(entry)) entry.fail(new RemoteError('disconnected', message));
+    for (const entry of [...this.pending]) if (which(entry)) entry.fail(new RequestError('disconnected', message));
   }
 
   // ---------------------------------------------------------------------------------------------- feeds
@@ -320,7 +315,7 @@ export class RemoteSession implements UiSession {
         mirror.waiting = true;
         this.feeds.set(feed, mirror);
       }).catch((error: unknown) => {
-        if (error instanceof RemoteError && error.code === 'not_found') mirror.ended = true;
+        if (error instanceof RequestError && error.code === 'not_found') mirror.ended = true;
       });
     }
   }
@@ -331,7 +326,7 @@ export class RemoteSession implements UiSession {
     switch (message.t) {
       case 'welcome': {
         if (this.options.requireMachines && !message.machines) {
-          const error = new RemoteError('failed', 'This server lacks machine routing. Update and restart its pi-durable service first; no local chat was opened.');
+          const error = new RequestError('failed', 'This server lacks machine routing. Update and restart its pi-durable service first; no local chat was opened.');
           this.first.reject(error);
           this.notify(error.message, 'error');
           this.link.close();
@@ -370,7 +365,12 @@ export class RemoteSession implements UiSession {
         if (items !== 'resync') { mirror.set(items); return; }
         // Keep the last good mirror and ignore this feed's items until the snapshot asked for.
         mirror.waiting = true;
-        this.request('feed.resync', { feed: mirror.id }).catch(() => undefined);
+        this.request('feed.resync', { feed: mirror.id }).catch((error: unknown) => {
+          // A dropped link gets fresh snapshots on reconnect; any other refusal must not leave the feed frozen.
+          if (error instanceof RequestError && error.code === 'disconnected') return;
+          mirror.waiting = false;
+          this.notify(`Could not resync the chat: ${errorMessage(error)}`, 'error');
+        });
         return;
       }
       case 'feed.end': {
@@ -393,7 +393,7 @@ export class RemoteSession implements UiSession {
 
   private linkChanged(): void {
     const state = this.link.state();
-    if (state === 'open' || state === 'connecting') return;
+    if (state === 'ready' || state === 'connecting') return;
     this.connected = false;
     if (state === 'reconnecting') {
       // A `send` may have been admitted; it goes again with its requestId, so it is admitted once.
@@ -415,7 +415,7 @@ export class RemoteSession implements UiSession {
   private linkState(): LinkState {
     const state = this.link.state();
     if (state === 'closed') return 'closed';
-    return state === 'open' && this.connected ? 'open' : 'reconnecting';
+    return state === 'ready' && this.connected ? 'ready' : 'reconnecting';
   }
 
   private linkEvent(): void {

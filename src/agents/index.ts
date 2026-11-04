@@ -1,5 +1,4 @@
 import { type Context, copyJson, type Draft } from '@earendil-works/chord';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { type ImageContent, type Message, type TextContent, type ThinkingContent, type ToolCall } from '@earendil-works/pi-ai';
 import {
   AgentDoc, AssistantEntry, configure, defineDoc, defineTask, defineTool,
@@ -8,11 +7,18 @@ import {
 import { obj, str } from '@earendil-works/pi-schema';
 import type {
   AgentChange, ConversationId, Cursor, DocumentReader, EntryId, EntryRecord, Extension, NextTaskState,
-  Session, TaskId, TaskOptions, ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx,
+  Session, SettledSubmissionRecord, TaskId, TaskOptions, TaskRuntime, ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
-import { AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, type StandingAgent } from './roster.ts';
+import {
+  AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, rosterEntry, type StandingAgent,
+} from './roster.ts';
+import { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
+import { NotFound } from '../ui/errors.ts';
+import type { ArchiveTarget } from '../ui/types.ts';
 
-export { AGENT_NAME, DEFAULT_ROSTER, isAgentName, isKit, KITS, LOCAL_KITS } from './roster.ts';
+export { DEFAULT_ROSTER } from './roster.ts';
+export { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
+export type { AgentInput } from './entries.ts';
 export type { Kit, Roster, StandingAgent } from './roster.ts';
 
 /**
@@ -33,7 +39,7 @@ export type { Kit, Roster, StandingAgent } from './roster.ts';
  * Tool calls that create deliveries are replay-safe and keyed by their tool task ID.
  *
  * Host wiring (src/runtime/runtime.ts):
- *   const Agents = createAgentsExtension({ initialContext, onReport });
+ *   const Agents = createAgentsExtension({ initialContext, roster, onSpawn, onDelivery });
  *   registry.install(Agents);                       // also on inspect-only launches: tasks stay known
  *   agent.extensions = [CodingTools, Agents, ...];  // the root's array selects exactly these
  *   agent.tools = [...(allowTools ? CodingTools.tools : []), ...Agents.tools];  // an array enables exactly these
@@ -50,8 +56,6 @@ export type { Kit, Roster, StandingAgent } from './roster.ts';
  */
 
 export const PI = 'Pi';
-export const REPORT_KIND = 'agents.report';
-export const MESSAGE_KIND = 'agents.message';
 const KEEP_CALLS = 256;
 const KEEP_REPORTED = 32;
 /**
@@ -189,12 +193,12 @@ function target(registry: Readonly<AgentsState> | undefined, me: Caller, name: s
     return { name: PI, role: 'root', conversationId: ROOT_CONVERSATION_ID };
   }
   // Only Pi gets the list: an agent that web content may steer has no use for names it cannot address.
-  return find(registry?.agents ?? {}, name)
-    ?? { error: me.role === 'root' ? noAgent(registry?.agents ?? {}, name) : `No agent named ${name}.` };
+  const agents = registry?.agents ?? {};
+  return find(agents, name) ?? { error: me.role === 'root' ? noAgent(agents, name) : `No agent named ${name}.` };
 }
 
-/** Latest committed assistant text of a conversation, read through a transaction. */
-async function lastAnswer(tx: Tx, conversationId: ConversationId): Promise<string | undefined> {
+/** Latest committed assistant text of one conversation, read through a transaction; see `agentAnswer` for an agent's. */
+async function conversationAnswer(tx: Tx, conversationId: ConversationId): Promise<string | undefined> {
   let cursor: Cursor | undefined;
   for (let pages = 0; pages < 8; pages++) {
     const page = await tx.scanEntries({ conversationId }, 64, cursor);
@@ -208,23 +212,24 @@ async function lastAnswer(tx: Tx, conversationId: ConversationId): Promise<strin
 
 /** The latest answer of an agent: its current session's, else its newest past session's that has one (then `session`). */
 type Answer = { text: string; session?: number };
-async function latestAnswer(tx: Tx, agent: Pick<AgentRecord, 'conversationId' | 'past'>): Promise<Answer | undefined> {
+async function agentAnswer(tx: Tx, agent: Pick<AgentRecord, 'conversationId' | 'past'>): Promise<Answer | undefined> {
   const sessions = [...agent.past ?? [], agent.conversationId];
   for (let index = sessions.length - 1; index >= 0; index--) {
     const id = sessions[index];
-    const text = id === undefined ? undefined : await lastAnswer(tx, id);
+    const text = id === undefined ? undefined : await conversationAnswer(tx, id);
     if (text !== undefined) return index === sessions.length - 1 ? { text } : { text, session: index + 1 };
   }
   return undefined;
 }
 
-const busyOf = async (source: DocumentReader, conversationId: ConversationId, context: Context) =>
+/** Whether one conversation has a run; see `agentBusy` for an agent's every session. */
+const conversationBusy = async (source: DocumentReader, conversationId: ConversationId, context: Context) =>
   (await source.snapshot(LiveDoc, conversationId, context))?.run !== undefined;
 /** Every conversation of an agent: a standing agent's past sessions, oldest first, then its current one. */
 const sessionsOf = (agent: Pick<AgentRecord, 'conversationId' | 'past'>): ConversationId[] => [...agent.past ?? [], agent.conversationId];
 /** Whether any of an agent's conversations has a run: a past session can still run (input that reached it before). */
 async function agentBusy(source: DocumentReader, agent: Pick<AgentRecord, 'conversationId' | 'past'>, context: Context): Promise<boolean> {
-  return (await Promise.all(sessionsOf(agent).map((id) => busyOf(source, id, context)))).includes(true);
+  return (await Promise.all(sessionsOf(agent).map((id) => conversationBusy(source, id, context)))).includes(true);
 }
 
 const DELIVER_KIND = 'agents.deliver';
@@ -317,10 +322,6 @@ function standingOf(agents: Readonly<Record<string, AgentRecord>>, name: string,
   const main = agent.role === 'main' ? name : agent.parent;
   return agents[main]?.standing ? rosterEntry(roster, main) : undefined;
 }
-
-/** The roster entry named `name`, ignoring case as every agent lookup does. */
-const rosterEntry = (roster: Roster, name: string): StandingAgent | undefined =>
-  Object.entries(roster).find(([each]) => each.toLowerCase() === name.toLowerCase())?.[1];
 
 /**
  * Whether agent `name` is held to its own team: a standing agent without the `coding` kit, or a sub of one. Such an
@@ -480,7 +481,7 @@ async function ensureStanding(tx: Tx, registry: Draft<AgentsState>, roster: Rost
  * `root.configure()`, and after each change to Pi's model, effort or tools.
  */
 export async function syncAgents(
-  harness: Pick<Session, 'commit'>, context: Context = BACKGROUND_CONTEXT, setup: AgentsSetup = {},
+  harness: Pick<Session, 'commit'>, context: Context, setup: AgentsSetup = {},
 ): Promise<void> {
   await harness.commit(async (tx) => {
     const registry = await tx.doc(AgentsDoc);
@@ -510,7 +511,7 @@ export type AgentsStopper = DocumentReader & {
  * every conversation is stopped, a standing agent's past sessions too. A stopped run reports nothing. Returns the
  * names stopped, `name` last; an unknown name stops nothing.
  */
-export async function stopAgents(source: AgentsStopper, context: Context = BACKGROUND_CONTEXT, name?: string): Promise<string[]> {
+export async function stopAgents(source: AgentsStopper, context: Context, name?: string): Promise<string[]> {
   const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
   const found = name === undefined ? undefined : find(agents, name);
   if (name !== undefined && !found) return [];
@@ -539,8 +540,11 @@ function deletedAgent(registry: Readonly<AgentsState> | undefined, name: string)
   return found && current !== undefined ? { name: found[0], conversationId: current, past: sessions.slice(0, -1), standing: false } : undefined;
 }
 
-/** The outcome of deleting an agent: the names removed (its subs first, the agent last), or why nothing was. */
-export type DeleteResult = { readonly deleted: readonly string[] } | { readonly error: string };
+/**
+ * The outcome of deleting an agent: the names removed (its subs first, the agent last), or why nothing was; `unknown`
+ * when no agent has that name.
+ */
+export type DeleteResult = { readonly deleted: readonly string[] } | { readonly error: string; readonly unknown?: true };
 
 /** The text `delete_agent` returns for a result. */
 export const deleteText = (result: DeleteResult): string => {
@@ -562,7 +566,7 @@ async function removeAgent(tx: Tx, registry: Draft<AgentsState>, name: string, b
   roster: Roster | undefined): Promise<DeleteResult> {
   const found = find(registry.agents, name);
   if (String(name).toLowerCase() === PI.toLowerCase()) return { error: 'Pi cannot be deleted.' };
-  if (!found) return { error: noAgent(registry.agents, name) };
+  if (!found) return { error: noAgent(registry.agents, name), unknown: true };
   if (found.standing || (roster && rosterEntry(roster, found.name))) {
     return { error: `${found.name} is a standing agent; it can be deleted only after it leaves the roster.` };
   }
@@ -597,16 +601,17 @@ const busyNames = async (source: DocumentReader, context: Context): Promise<Set<
 
 /**
  * Delete agent `name` and its sub agents for the host (see `removeAgent`): never Pi or a standing agent, never a busy
- * one. `roster` refuses its names even before a launch synced them. Returns the names deleted, or why none was.
+ * one. `roster` refuses its names even before a launch synced them. Returns the names deleted, subs first; throws the
+ * refusal, as `archiveAgents` and `restoreAgent` do (NotFound for an unknown name). The `delete_agent` tool returns
+ * the refusal as its text instead.
  */
-export async function deleteAgent(source: AgentsSource, context: Context = BACKGROUND_CONTEXT, name: string,
-  roster?: Roster): Promise<DeleteResult> {
+export async function deleteAgent(source: AgentsSource, context: Context, name: string, roster?: Roster): Promise<string[]> {
   const busy = await busyNames(source, context);
-  return source.commit(async (tx) => removeAgent(tx, await tx.doc(AgentsDoc), name, busy, roster), context);
+  const result = await source.commit(async (tx) => removeAgent(tx, await tx.doc(AgentsDoc), name, busy, roster), context);
+  if ('error' in result) throw result.unknown ? new NotFound(result.error) : new Error(result.error);
+  return [...result.deleted];
 }
 
-/** What to archive: one agent by name, or every ad-hoc (not standing) main agent. */
-export type ArchiveTarget = { readonly name: string } | { readonly adhoc: true };
 
 /**
  * The agents `target` archives in `agents`: a main agent with its subs, a sub alone, or every ad-hoc main agent with its
@@ -620,7 +625,7 @@ function archiveSet(agents: Readonly<Record<string, AgentRecord>>, target: Archi
       .flatMap(([name]) => withSubs(name));
   }
   const found = find(agents, target.name);
-  if (!found) throw new Error(noAgent(agents, target.name));
+  if (!found) throw new NotFound(noAgent(agents, target.name));
   if (found.standing) throw new Error(`${found.name} is a standing agent; remove it from the roster first.`);
   return found.role === 'main' ? withSubs(found.name) : [found.name];
 }
@@ -658,7 +663,7 @@ export async function archiveAgents(source: AgentsStopper & Pick<Session, 'commi
 export async function restoreAgent(source: Pick<Session, 'commit'> & DocumentReader, context: Context, name: string): Promise<string[]> {
   const check = (agents: Readonly<Record<string, AgentRecord>>): Named => {
     const found = find(agents, name);
-    if (!found) throw new Error(noAgent(agents, name));
+    if (!found) throw new NotFound(noAgent(agents, name));
     if (archivedSince(agents, found.name) === undefined) throw new Error(`${found.name} is not archived.`);
     if (found.role === 'sub' && agents[found.parent]?.archivedAt !== undefined) {
       throw new Error(`${found.name}'s main agent ${found.parent} is archived; restore ${found.parent}.`);
@@ -714,7 +719,7 @@ export async function purgeArchived(source: Pick<Session, 'commit'>, context: Co
  * Every spawned agent with its role, parent, conversation, busy state (a run in any of its conversations) and, when
  * archived, since when. Archived agents are left out unless `includeArchived`.
  */
-export async function listAgents(source: DocumentReader, context: Context = BACKGROUND_CONTEXT,
+export async function listAgents(source: DocumentReader, context: Context,
   options: { readonly includeArchived?: boolean } = {}): Promise<AgentInfo[]> {
   const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
   const rows = Object.entries(agents).map(([name, agent]) => ({ name, agent, archivedAt: archivedSince(agents, name) }))
@@ -728,11 +733,9 @@ export async function listAgents(source: DocumentReader, context: Context = BACK
 
 /** An input entry's own text, from its data: `[from X] text` or `[X] text`, never the view preamble. */
 function inputText(entry: EntryRecord): string | undefined {
-  const data = entry.data;
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) return undefined;
-  if (entry.kind === MESSAGE_KIND && typeof data.from === 'string' && typeof data.text === 'string') return `[from ${data.from}] ${data.text}`;
-  if (entry.kind === REPORT_KIND && typeof data.name === 'string' && typeof data.text === 'string') return `[${data.name}] ${data.text}`;
-  return undefined;
+  const input = agentInputOf(entry);
+  if (!input) return undefined;
+  return input.kind === 'message' ? `[from ${input.from}] ${input.text}` : `[${input.from}] ${input.text}`;
 }
 
 /**
@@ -755,15 +758,16 @@ function pageEnd(all: string, at: number, max: number): number {
  * go on; without it, the whole chat. `source` is the Harness or a tool's `api`; `name` may be "Pi".
  */
 export async function agentTranscript(
-  source: AgentsSource, name: string, context: Context = BACKGROUND_CONTEXT, page?: number,
+  source: AgentsSource, context: Context, name: string, page?: number,
 ): Promise<string> {
   const registry = await source.snapshot(AgentsDoc, context);
   // "Name#n" is a standing agent's session n, 1 the oldest; plain "Name" its current one.
   const [, base = String(name), number] = /^(.*?)#(\d+)$/.exec(String(name).trim()) ?? [];
+  const agents = registry?.agents ?? {};
   const gone = deletedAgent(registry, base);
   const agent = base.toLowerCase() === PI.toLowerCase()
-    ? { name: PI, conversationId: ROOT_CONVERSATION_ID, standing: false, past: [] } : find(registry?.agents ?? {}, base) ?? gone;
-  if (!agent) throw new Error(noAgent(registry?.agents ?? {}, base));
+    ? { name: PI, conversationId: ROOT_CONVERSATION_ID, standing: false, past: [] } : find(agents, base) ?? gone;
+  if (!agent) throw new NotFound(noAgent(agents, base));
   const sessions = [...agent.past ?? [], agent.conversationId];
   const index = number === undefined ? sessions.length : Number(number);
   const conversationId = sessions[index - 1];
@@ -880,7 +884,10 @@ export interface AgentsOptions extends AgentsSetup {
     agent: { readonly name: string; readonly role: AgentRole; readonly parent: string; readonly task: string },
     api: ToolExecutionApi, context: Context,
   ) => string | undefined | Promise<string | undefined>;
-  /** Called after an input from an agent was durably admitted to Pi, at most once per input. */
+  /**
+   * An observer, for tests and embedders: called after an input from an agent was durably admitted to Pi, at most
+   * once per input. The host does not pass one; Pi's memory logs reports from their `agents.report` entries.
+   */
   readonly onReport?: (report: AgentReport) => unknown;
   /** Pin a new agent or delegated task's conversation in the same once-only transaction as its first delivery. */
   readonly onSpawn?: (tx: Tx, parent: ConversationId, child: ConversationId) => Promise<void>;
@@ -893,20 +900,75 @@ export interface AgentsExtension extends Extension {
   readonly tools: readonly ToolRegistration[];
 }
 
-/**
- * Build the agents extension.
- * - `initialContext({ name, role, parent, task }, api, context)` returns an optional preamble placed
- *   before a new agent's first task (string, undefined, or a promise of either). `api` is the
- *   spawning tool call's api; read through it, never through the Harness inside a commit.
- * - `onReport({ name, text })` is called after an input from agent `name` was durably admitted to
- *   Pi (a final report or a send_message). At most once per input; the durable record is the
- *   `agents.report` entry itself.
- * - `childAgent` is an AgentChange applied to every spawned agent after it copies Pi's choices.
- * - `roster` and `kits`: the standing agents and the tool kits (ADR 0027), as `syncAgents()` takes them. The roster
- *   names the standing agents in Pi's role text and adds each one's `instructions` to its own.
- */
-export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtension {
-  const { initialContext, onReport, onSpawn, onDelivery, roster = {} } = options;
+/** The Deliver task, which carries one input to one agent and then that agent's answer to its parent, and how to create one. */
+function deliveries({ onReport, onDelivery }: AgentsOptions) {
+  const done = (): NextTaskState<DeliverState, null> => ({ status: 'terminal', outcome: { status: 'completed', result: null } });
+
+  /**
+   * The conversation delivery `input` (request `requestId`) submits into: its own, unless that is a past session of its
+   * agent. A report into a past session comes from a sub of a task the agent no longer works on, so it is dropped
+   * (undefined). A message goes to the current session instead, so a task that is over never wakes; the choice is made
+   * in a commit, from the registry as it is then (a snapshot may predate a delegate), and kept in a memo before the
+   * submit, so a replay after a crash submits to the same conversation, where the request id returns the first
+   * submission. Until the memo exists, deliveryTargets counts the current session for it, so delegate refuses.
+   * delegate refuses while a delivery to the current session is unfinished, and `past` only grows, so a target the
+   * snapshot `agents` does not show as past stays current.
+   */
+  async function deliverySession(input: DeliveryInput, agents: Readonly<Record<string, AgentRecord>>, requestId: string,
+    runtime: TaskRuntime<DeliveryInput, DeliverState, null, object>, context: Context): Promise<ConversationId | undefined> {
+    const { to, entry, conversationId: original } = input;
+    if (!agents[to]?.past?.includes(original)) return original;
+    if (entry.kind === REPORT_KIND) return undefined;
+    const chosen = await runtime.memo<ConversationId>(SESSION_MEMO, context);
+    if (chosen !== undefined) return chosen;
+    // A task runtime's commit returns nothing, so the choice leaves it through this holder.
+    const choice: { session?: ConversationId } = {};
+    await runtime.commit(async (tx) => {
+      const agent = (await tx.doc(AgentsDoc)).agents[to];
+      // One that already reached the past session (before a crash) stays there: it must not arrive twice.
+      const reached = await tx.submissionByRequest(original, requestId) !== undefined;
+      choice.session = reached || !agent ? original : agent.conversationId;
+      return undefined;
+    }, context);
+    return runtime.memo(SESSION_MEMO, choice.session ?? original, context);
+  }
+
+  /**
+   * In the commit of `tx`: record agent `to`'s answer in `settled` (from its conversation `conversationId`) as reported,
+   * and deliver it to the agent's parent. A failed run reports why; a stopped one reports nothing (its stopper knows).
+   */
+  async function recordAnswer(tx: Tx, to: string, settled: SettledSubmissionRecord, conversationId: ConversationId) {
+    const answer = settled.status === 'done' && settled.type === 'input' ? settled.answer : undefined;
+    const answerEntry = answer && await tx.entry(AssistantEntry, answer);
+    const registry = await tx.doc(AgentsDoc);
+    const agent = registry.agents[to];
+    if (!agent) return done();
+    let report: string | undefined;
+    if (settled.status === 'unanswered') {
+      const detail = typeof settled.detail === 'string' && settled.detail ? `: ${settled.detail}` : '';
+      if (settled.reason !== 'aborted') report = `failed: ${settled.reason}${detail}`;
+    } else if (answer && !agent.reported.includes(answer)) {
+      agent.reported.push(answer);
+      if (agent.reported.length > KEEP_REPORTED) agent.reported.splice(0, agent.reported.length - KEEP_REPORTED);
+      // As upstream, every answered run reports, even with an empty reply, so the parent learns it ended.
+      report = assistantText(answerEntry).trim() || '(no reply)';
+    }
+    // A sub of a standing agent's past session reports nowhere: its task is over (delegate switched sessions once the
+    // sub was idle), so only a message woke it since, and no session waits for its report. An archived agent's report
+    // goes nowhere either; the user put it away.
+    if (report === undefined || staleSub(registry.agents, agent) || archivedSince(registry.agents, to) !== undefined) return done();
+    const parent = agent.parent === PI ? ROOT_CONVERSATION_ID : registry.agents[agent.parent]?.conversationId;
+    if (!parent) return done();
+    // A report to Pi names the session it came from, so its link keeps opening that one.
+    const session = agent.parent === PI ? sessionNumber(agent, conversationId) : undefined;
+    await createDelivery(tx, {
+      to: agent.parent, conversationId: parent, whenBusy: 'followUp',
+      content: agent.parent === PI ? piReportText(to, report, session) : `[${to}] ${report}`,
+      entry: { kind: REPORT_KIND, data: { name: to, text: report, ...session === undefined ? {} : { session } } },
+    }, { source: conversationId });
+    return done();
+  }
+
   // Carries one input to one agent, then that agent's answer to its parent.
   const Deliver = defineTask<DeliveryInput, DeliverState, null>({
     name: DELIVER_KIND,
@@ -916,45 +978,17 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       deliver: async (task, runtime, context) => {
         const { to, content, entry, whenBusy } = task.input;
         const requestId = `agents:${task.id}`;
-        const done = (): NextTaskState<DeliverState, null> => ({ status: 'terminal', outcome: { status: 'completed', result: null } });
-        // delegate refuses while a delivery to the current session is unfinished, and `past` only grows, so a target
-        // this snapshot does not show as past stays current; one it shows as past was so before a delivery from before
-        // that rule ran.
-        const original = task.input.conversationId;
-        let conversationId = original;
         const agents = (await runtime.snapshot(AgentsDoc, context))?.agents ?? {};
         // An input to an archived or deleted agent completes without submitting, and so does a report from one, even one
         // on its way before the archive (ADR 0034).
         const gone = (name: string) => name !== PI && (!agents[name] || archivedSince(agents, name) !== undefined);
         if (gone(to) || (entry.kind === REPORT_KIND && gone(entry.data.name))) return runtime.commit(done, context);
-        if (agents[to]?.past?.includes(original)) {
-          // A report into a past session comes from a sub of a task the agent no longer works on: dropped.
-          if (entry.kind === REPORT_KIND) return runtime.commit(done, context);
-          // A message goes to the current session instead, so a task that is over never wakes. The choice is made in a
-          // commit, from the registry as it is then (a snapshot may predate a delegate), and kept in a memo before the
-          // submit, so a replay after a crash submits to the same conversation, where the request id returns the first
-          // submission. Until the memo exists, deliveryTargets counts the current session for it, so delegate refuses.
-          let chosen = await runtime.memo<ConversationId>(SESSION_MEMO, context);
-          if (chosen === undefined) {
-            const choice: { session?: ConversationId } = {};
-            await runtime.commit(async (tx) => {
-              const agent = (await tx.doc(AgentsDoc)).agents[to];
-              // One that already reached the past session (before a crash) stays there: it must not arrive twice.
-              const reached = await tx.submissionByRequest(original, requestId) !== undefined;
-              choice.session = reached || !agent ? original : agent.conversationId;
-              return undefined;
-            }, context);
-            chosen = await runtime.memo(SESSION_MEMO, choice.session ?? original, context);
-          }
-          conversationId = chosen;
-        }
-        const conversation = await runtime.conversation(conversationId, context);
-        if (!conversation) return runtime.commit(done, context);
+        const conversationId = await deliverySession(task.input, agents, requestId, runtime, context);
+        const conversation = conversationId === undefined ? undefined : await runtime.conversation(conversationId, context);
+        if (conversationId === undefined || !conversation) return runtime.commit(done, context);
         // A report carries its delivery's id, so memory logs each report once, even identical ones.
         const placed = entry.kind === REPORT_KIND ? { ...entry, data: { ...entry.data, id: task.id } } : entry;
-        const submission = await conversation.submit({
-          type: 'input', content, entry: placed, whenBusy, requestId,
-        }, context);
+        const submission = await conversation.submit({ type: 'input', content, entry: placed, whenBusy, requestId }, context);
         if (conversationId === ROOT_CONVERSATION_ID) {
           await runtime.commit(done, context);
           // Pi is only ever delivered reports.
@@ -964,74 +998,59 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
         }
         const settled = await submission.wait(context);
         // One commit records the answer as reported and creates its delivery to the parent.
-        await runtime.commit(async (tx) => {
-          let report: string | undefined;
-          const answer = settled.status === 'done' && settled.type === 'input' ? settled.answer : undefined;
-          const answerEntry = answer && await tx.entry(AssistantEntry, answer);
-          const registry = await tx.doc(AgentsDoc);
-          const agent = registry.agents[to];
-          if (!agent) return done();
-          if (settled.status === 'unanswered') {
-            // As upstream, a failed run reports why; a stopped (aborted) one reports nothing: its stopper knows.
-            const detail = typeof settled.detail === 'string' && settled.detail ? `: ${settled.detail}` : '';
-            if (settled.reason !== 'aborted') report = `failed: ${settled.reason}${detail}`;
-          } else if (answer && !agent.reported.includes(answer)) {
-            agent.reported.push(answer);
-            if (agent.reported.length > KEEP_REPORTED) agent.reported.splice(0, agent.reported.length - KEEP_REPORTED);
-            // As upstream, every answered run reports, even with an empty reply, so the parent learns it ended.
-            report = assistantText(answerEntry).trim() || '(no reply)';
-          }
-          // A sub of a standing agent's past session reports nowhere: its task is over (delegate switched sessions once the
-          // sub was idle), so only a message woke it since, and no session waits for its report.
-          // An archived agent's report goes nowhere; the user put it away.
-          if (report !== undefined && !staleSub(registry.agents, agent) && archivedSince(registry.agents, to) === undefined) {
-            const parent = agent.parent === PI ? ROOT_CONVERSATION_ID : registry.agents[agent.parent]?.conversationId;
-            // A report to Pi names the session it came from, so its link keeps opening that one.
-            const session = agent.parent === PI ? sessionNumber(agent, conversationId) : undefined;
-            const content = agent.parent === PI ? piReportText(to, report, session) : `[${to}] ${report}`;
-            if (parent) await createDelivery(tx, parent, agent.parent, content,
-              { kind: REPORT_KIND, data: { name: to, text: report, ...session === undefined ? {} : { session } } }, 'followUp', undefined, conversationId);
-          }
-          return done();
-        }, context);
+        await runtime.commit((tx) => recordAnswer(tx, to, settled, conversationId), context);
       },
     },
     abort: (_task, runtime, context) =>
       runtime.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), context),
   });
 
-  /** `owner` is the conversation that owns the delivery task; by default the committing tool call's own. */
-  const createDelivery = async (tx: Tx, conversationId: ConversationId, to: string, content: string,
-    entry: MessageEntry | ReportEntry, whenBusy: DeliveryInput['whenBusy'], owner: ConversationId | undefined,
-    source: ConversationId): Promise<TaskId<null>> => {
-    const id = await tx.createTask(Deliver, { to, conversationId, content, entry, whenBusy },
-      owner === undefined ? TASK_OPTIONS : { ...TASK_OPTIONS, conversationId: owner });
+  /**
+   * Create the Deliver task for `delivery` in the commit of `tx`. `source` is the conversation the input comes from;
+   * `owner` the one that owns the task, by default the committing tool call's own.
+   */
+  const createDelivery = async (tx: Tx, delivery: DeliveryInput,
+    { source, owner }: { readonly source: ConversationId; readonly owner?: ConversationId }): Promise<TaskId<null>> => {
+    const { conversationId } = delivery;
+    const id = await tx.createTask(Deliver, delivery, owner === undefined ? TASK_OPTIONS : { ...TASK_OPTIONS, conversationId: owner });
     // The caller supplies the actual sending/answered session, not its standing agent's mutable current session.
     // Its metadata and the delivery commit together, so replay cannot submit before a source binding exists.
     await onDelivery?.(tx, source, conversationId, `agents:${id}`);
     return id;
   };
+  return { Deliver, createDelivery };
+}
 
-  /** Run `change` once per tool call: a replayed call returns the first result. */
-  const once = async (api: ToolExecutionApi, context: Context,
-    change: (tx: Tx, registry: Draft<AgentsState>) => Promise<string>) => {
-    const recorded = (await api.snapshot(AgentsDoc, context))?.calls?.[api.taskId];
-    if (recorded !== undefined) return reply(recorded);
-    return reply(await api.commit(async (tx) => {
-      const registry = await tx.doc(AgentsDoc);
-      const first = registry.calls[api.taskId];
-      if (first !== undefined) return first;
-      const result = await change(tx, registry);
-      registry.calls[api.taskId] = result;
-      const keys = Object.keys(registry.calls);
-      for (const key of keys.slice(0, Math.max(0, keys.length - KEEP_CALLS))) delete registry.calls[key];
-      return result;
-    }, context));
-  };
+/** What the agents tools share: the extension's options, the roster, and how to create a delivery. */
+interface ToolDeps {
+  readonly options: AgentsOptions;
+  readonly roster: Roster;
+  readonly createDelivery: ReturnType<typeof deliveries>['createDelivery'];
+}
 
-  const me = async (api: ToolExecutionApi, context: Context) => whoIs(await api.snapshot(AgentsDoc, context), api.conversationId);
+/** Run `change` once per tool call: a replayed call returns the first result. */
+const once = async (api: ToolExecutionApi, context: Context,
+  change: (tx: Tx, registry: Draft<AgentsState>) => Promise<string>) => {
+  const recorded = (await api.snapshot(AgentsDoc, context))?.calls?.[api.taskId];
+  if (recorded !== undefined) return reply(recorded);
+  return reply(await api.commit(async (tx) => {
+    const registry = await tx.doc(AgentsDoc);
+    const first = registry.calls[api.taskId];
+    if (first !== undefined) return first;
+    const result = await change(tx, registry);
+    registry.calls[api.taskId] = result;
+    const keys = Object.keys(registry.calls);
+    for (const key of keys.slice(0, Math.max(0, keys.length - KEEP_CALLS))) delete registry.calls[key];
+    return result;
+  }, context));
+};
 
-  const spawnAgent = defineTool({
+const me = async (api: ToolExecutionApi, context: Context) => whoIs(await api.snapshot(AgentsDoc, context), api.conversationId);
+
+function spawnAgentTool(deps: ToolDeps): ToolRegistration {
+  const { options, createDelivery } = deps;
+  const { initialContext, onSpawn } = deps.options;
+  return defineTool({
     name: 'spawn_agent',
     description: 'Start a new persistent agent that works on `task` in the background, in its own conversation. '
       + 'Pi spawns main agents; main agents spawn sub agents. Returns at once: never wait or poll for it. '
@@ -1070,14 +1089,19 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
         const session = role === 'sub' && registry.agents[caller.name]?.standing ? { session: api.conversationId } : {};
         registry.agents[name] = { conversationId: child.id, role, parent: caller.name, reported: [], ...session };
         await deriveAgent(tx, registry.agents, name, options);
-        await createDelivery(tx, child.id, name, content,
-          { kind: MESSAGE_KIND, data: { from: caller.name, text: task } }, 'followUp', undefined, api.conversationId);
+        await createDelivery(tx, {
+          to: name, conversationId: child.id, content, whenBusy: 'followUp', entry: { kind: MESSAGE_KIND, data: { from: caller.name, text: task } },
+        }, { source: api.conversationId });
         return `Started ${role} agent ${name}. Its report will arrive as a message starting with [${name}].`;
       });
     },
   });
+}
 
-  const delegate = defineTool({
+function delegateTool(deps: ToolDeps): ToolRegistration {
+  const { options, createDelivery } = deps;
+  const { initialContext, onSpawn } = deps.options;
+  return defineTool({
     name: 'delegate',
     description: 'Give a standing agent a new task. It starts in a fresh conversation (a new session) that begins with '
       + 'your view; its earlier sessions stay readable with zoom("Name#n"). Refused while the agent or a sub agent of its task is busy: steer or '
@@ -1090,22 +1114,23 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
     replay: 'safe',
     execute: async ({ agent: name, task }, api, context) => {
       const registry = await api.snapshot(AgentsDoc, context);
+      const agents = registry?.agents ?? {};
       const recorded = registry?.calls?.[api.taskId];
       if (recorded !== undefined) return reply(recorded);
       const caller = whoIs(registry, api.conversationId);
       if (caller?.role !== 'root') return reply('Only Pi can delegate; use send_message.');
-      const found = find(registry?.agents ?? {}, name);
-      if (!found) return reply(noAgent(registry?.agents ?? {}, name));
-      const archived = archivedRefusal(registry?.agents ?? {}, found.name);
+      const found = find(agents, name);
+      if (!found) return reply(noAgent(agents, name));
+      const archived = archivedRefusal(agents, found.name);
       if (archived !== undefined) return once(api, context, () => Promise.resolve(archived));
       if (!found.standing) return reply(`${found.name} is not a standing agent: give it the task with send_message, or spawn_agent a new agent under another name.`);
       const busy = `${found.name} is busy with its current task; send_message to steer it, or stop_agent first.`;
       const subsBusy = (names: readonly string[]) => `${found.name}'s current task is still running (its sub agent${names.length === 1
         ? ` ${names.join('')} is` : `s ${names.join(', ')} are`} busy); send_message to steer it, or stop_agent first.`;
       // Busy: a run in any of its sessions, or in a sub of its current one (the task goes on while its main is idle).
-      const subs = subsOf(registry?.agents ?? {}, found.name, found.conversationId);
+      const subs = subsOf(agents, found.name, found.conversationId);
       const [mainBusy, subsRunning] = await Promise.all([agentBusy(api, found, context),
-        Promise.all(subs.map(([, sub]) => busyOf(api, sub.conversationId, context)))]);
+        Promise.all(subs.map(([, sub]) => conversationBusy(api, sub.conversationId, context)))]);
       if (mainBusy) return once(api, context, () => Promise.resolve(busy));
       const running = subs.filter((_, index) => subsRunning[index]).map(([each]) => each);
       if (running.length) return once(api, context, () => Promise.resolve(subsBusy(running)));
@@ -1138,31 +1163,35 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
         // The first delegate can reuse the initial empty conversation; pin it too, never the standing identity.
         await onSpawn?.(tx, api.conversationId, agent.conversationId);
         await deriveAgent(tx, draft.agents, found.name, options);
-        await createDelivery(tx, agent.conversationId, found.name, content,
-          { kind: MESSAGE_KIND, data: { from: PI, text: task } }, 'followUp', ROOT_CONVERSATION_ID, api.conversationId);
+        await createDelivery(tx, {
+          to: found.name, conversationId: agent.conversationId, content, whenBusy: 'followUp', entry: { kind: MESSAGE_KIND, data: { from: PI, text: task } },
+        }, { source: api.conversationId, owner: ROOT_CONVERSATION_ID });
         return `Delegated to ${found.name} (session ${agent.past.length + 1}). Its report will arrive as a message starting with [${found.name}].`;
       });
     },
   });
+}
 
-  const listAgentsTool = defineTool({
+function listAgentsTool(): ToolRegistration {
+  return defineTool({
     name: 'list_agents',
     description: 'List all other agents: name, role (main/sub), parent, busy or idle, and a one-line last message.',
     parameters: obj({}, { open: true }),
     replay: 'safe',
     execute: async (_args, api, context) => {
       const registry = await api.snapshot(AgentsDoc, context);
+      const agents = registry?.agents ?? {};
       const caller = whoIs(registry, api.conversationId);
       if (!caller) return reply('This conversation is not an agent.');
       const others: { name: string; role: string; conversationId: ConversationId; past?: ConversationId[]; standing?: boolean }[] = [
         ...(caller.role === 'main' ? [{ name: PI, role: 'session agent', conversationId: ROOT_CONVERSATION_ID }] : []),
-        ...Object.entries(registry?.agents ?? {}).filter(([name]) => name !== caller.name && archivedSince(registry?.agents ?? {}, name) === undefined)
+        ...Object.entries(agents).filter(([name]) => name !== caller.name && archivedSince(agents, name) === undefined)
           .map(([name, agent]) => ({ name, ...agent, role: `${agent.role}, parent ${agent.parent}${agent.standing ? ', standing' : ''}` })),
       ];
       if (!others.length) return reply('No other agents.');
       const [last, busy] = await Promise.all([api.commit(async (tx) => {
         const answers: Record<string, Answer | undefined> = {};
-        for (const agent of others) answers[agent.name] = await latestAnswer(tx, agent);
+        for (const agent of others) answers[agent.name] = await agentAnswer(tx, agent);
         return answers;
       }, context), Promise.all(others.map((agent) => agentBusy(api, agent, context)))]);
       const lines = others.map((agent, index) => {
@@ -1175,8 +1204,11 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return reply(lines.join('\n'));
     },
   });
+}
 
-  const sendMessage = defineTool({
+function sendMessageTool(deps: ToolDeps): ToolRegistration {
+  const { roster, createDelivery } = deps;
+  return defineTool({
     name: 'send_message',
     description: 'Send `text` to another agent by name. Main agents may also send to "Pi", the session agent; sub agents may not. '
       + 'An agent without coding tools may send only to Pi and its own sub agents, and its subs only to it and each other. '
@@ -1216,33 +1248,38 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
           ? { kind: REPORT_KIND, data: { name: caller.name, text: message, ...session === undefined ? {} : { session } } }
           : { kind: MESSAGE_KIND, data: { from: caller.name, text: message } };
         const content = found.role === 'root' ? piReportText(caller.name, message, session) : `[from ${caller.name}] ${message}`;
-        await createDelivery(tx, found.conversationId, found.name, content, entry, 'steer', undefined, api.conversationId);
+        await createDelivery(tx, { to: found.name, conversationId: found.conversationId, content, entry, whenBusy: 'steer' }, { source: api.conversationId });
         return `Sent to ${found.name}.`;
       });
     },
   });
+}
 
-  const lastMessage = defineTool({
+function lastMessageTool(): ToolRegistration {
+  return defineTool({
     name: 'last_message',
     description: 'Get an agent\'s latest reply and whether it is busy. Main agents may also ask for "Pi"; sub agents may not.',
     parameters: obj({ name: str() }, { open: true }),
     replay: 'safe',
     execute: async ({ name }, api, context) => {
       const registry = await api.snapshot(AgentsDoc, context);
+      const agents = registry?.agents ?? {};
       const caller = whoIs(registry, api.conversationId);
       if (!caller) return reply('This conversation is not an agent.');
       const found = target(registry, caller, name);
       if ('error' in found) return reply(found.error);
-      const archived = found.role === 'root' ? undefined : archivedRefusal(registry?.agents ?? {}, found.name);
+      const archived = found.role === 'root' ? undefined : archivedRefusal(agents, found.name);
       if (archived !== undefined) return reply(archived);
-      const [said, busy] = await Promise.all([api.commit((tx) => latestAnswer(tx, found), context), agentBusy(api, found, context)]);
+      const [said, busy] = await Promise.all([api.commit((tx) => agentAnswer(tx, found), context), agentBusy(api, found, context)]);
       const state = busy ? 'busy' : 'idle';
       const from = said?.session === undefined ? '' : ` (session ${said.session}, an earlier task)`;
       return reply(`${found.name} is ${state}. ${said === undefined ? 'No message yet.' : `Last message${from}:\n${said.text}`}`);
     },
   });
+}
 
-  const stopAgent = defineTool({
+function stopAgentTool(): ToolRegistration {
+  return defineTool({
     name: 'stop_agent',
     description: 'Stop an agent\'s current work and drop its queued messages; stopping a main agent also stops its sub agents. '
       + 'Stopped agents stay and can be messaged again. Pi may stop any agent; a main agent only its own sub agents.',
@@ -1251,11 +1288,12 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
     replay: 'unsafe',
     execute: async ({ name }, api, context) => {
       const registry = await api.snapshot(AgentsDoc, context);
+      const agents = registry?.agents ?? {};
       const caller = whoIs(registry, api.conversationId);
-      const found = find(registry?.agents ?? {}, name);
+      const found = find(agents, name);
       if (!caller || caller.role === 'sub') return reply('Sub agents cannot stop agents.');
-      if (!found) return reply(noAgent(registry?.agents ?? {}, name));
-      const archived = archivedRefusal(registry?.agents ?? {}, found.name);
+      if (!found) return reply(noAgent(agents, name));
+      const archived = archivedRefusal(agents, found.name);
       if (archived !== undefined) return reply(archived);
       if (caller.role === 'main' && found.parent !== caller.name) return reply(`${found.name} is not your sub agent.`);
       const subs = (await stopAgents(api, context, found.name)).slice(0, -1);
@@ -1264,8 +1302,11 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return reply(`Stopped ${found.name}${also}.${untold}`);
     },
   });
+}
 
-  const deleteAgentTool = defineTool({
+function deleteAgentTool(deps: ToolDeps): ToolRegistration {
+  const { roster } = deps;
+  return defineTool({
     name: 'delete_agent',
     description: 'Delete an agent you no longer need, with its sub agents, so it leaves list_agents and takes no more work. '
       + 'Pi only. Refused for standing agents, and while the agent or one of its sub agents is busy or has a message on its way: '
@@ -1279,19 +1320,22 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return once(api, context, async (tx, registry) => deleteText(await removeAgent(tx, registry, name, busy, roster)));
     },
   });
+}
 
-  // Tool-level guard, before a call's intent is recorded: what a role may not do never runs.
-  const guard = hook(ToolTask, {
+// Tool-level guard, before a call's intent is recorded: what a role may not do never runs.
+function agentsGuard(roster: Roster) {
+  return hook(ToolTask, {
     beforeTool: async (call, api, context) => {
       if (!['spawn_agent', 'stop_agent', 'send_message', 'last_message', 'delegate', 'delete_agent'].includes(call.name)) return undefined;
       const registry = await api.snapshot(AgentsDoc, context);
+      const agents = registry?.agents ?? {};
       const caller = whoIs(registry, api.conversationId);
       if (call.name === 'delegate') return caller?.role === 'root' ? undefined : { block: 'Only Pi can delegate; use send_message.' };
       if (call.name === 'delete_agent') return caller?.role === 'root' ? undefined : { block: 'Only Pi can delete agents.' };
       if (call.name === 'send_message' && caller) {
         const to = String(call.arguments?.to);
-        const name = to.toLowerCase() === PI.toLowerCase() ? PI : find(registry?.agents ?? {}, to)?.name;
-        const refused = name === undefined || name === caller.name ? undefined : messageRefusal(registry?.agents ?? {}, roster, caller, name);
+        const name = to.toLowerCase() === PI.toLowerCase() ? PI : find(agents, to)?.name;
+        const refused = name === undefined || name === caller.name ? undefined : messageRefusal(agents, roster, caller, name);
         if (refused !== undefined) return { block: refused };
       }
       if (caller?.role !== 'sub') return undefined;
@@ -1303,24 +1347,44 @@ export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtens
       return undefined;
     },
   });
+}
+
+/**
+ * Build the agents extension.
+ * - `initialContext({ name, role, parent, task }, api, context)` returns an optional preamble placed
+ *   before a new agent's first task (string, undefined, or a promise of either). `api` is the
+ *   spawning tool call's api; read through it, never through the Harness inside a commit.
+ * - `onReport({ name, text })`, an observer the host does not use, is called after an input from agent `name` was
+ *   durably admitted to Pi (a final report or a send_message). At most once per input; the durable record is the
+ *   `agents.report` entry itself, which Pi's memory logs.
+ * - `childAgent` is an AgentChange applied to every spawned agent after it copies Pi's choices.
+ * - `roster` and `kits`: the standing agents and the tool kits (ADR 0027), as `syncAgents()` takes them. The roster
+ *   names the standing agents in Pi's role text and adds each one's `instructions` to its own.
+ */
+export function createAgentsExtension(options: AgentsOptions = {}): AgentsExtension {
+  const { initialContext, roster = {} } = options;
+  const { Deliver, createDelivery } = deliveries(options);
+  const deps: ToolDeps = { options, roster, createDelivery };
 
   // Typed as AgentsExtension rather than through defineExtension (an identity), so `tools` stays required.
   return {
     name: 'agents',
     tasks: [Anchor, Deliver],
-    tools: [spawnAgent, delegate, listAgentsTool, sendMessage, lastMessage, stopAgent, deleteAgentTool],
-    hooks: [guard],
+    tools: [spawnAgentTool(deps), delegateTool(deps), listAgentsTool(), sendMessageTool(deps), lastMessageTool(), stopAgentTool(),
+      deleteAgentTool(deps)],
+    hooks: [agentsGuard(roster)],
     sections: [section('agents', async (input, context) => {
       const registry = await input.read.snapshot(AgentsDoc, context);
+      const agents = registry?.agents ?? {};
       const caller = whoIs(registry, input.conversationId);
       if (!caller) return undefined;
       // Without initialContext no view precedes the task, so the text about it is left out.
       const lines = ROLE_TEXT[caller.role](caller).filter((line) => initialContext || line !== VIEW_TEXT);
       if (caller.role === 'root') lines.push(...standingText(roster));
-      else if (confined(registry?.agents ?? {}, caller.name, roster)) lines.push(CONFINED_TEXT[caller.role]);
+      else if (confined(agents, caller.name, roster)) lines.push(CONFINED_TEXT[caller.role]);
       const own = caller.role === 'main' && caller.standing ? rosterEntry(roster, caller.name) : undefined;
       if (own?.instructions) lines.push(own.instructions);
-      if (standingOf(registry?.agents ?? {}, caller.name, roster)?.tools.includes('autoreview')) lines.push(AUTOREVIEW_POLICY);
+      if (standingOf(agents, caller.name, roster)?.tools.includes('autoreview')) lines.push(AUTOREVIEW_POLICY);
       return lines.join('\n');
     })],
   };

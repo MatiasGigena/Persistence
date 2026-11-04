@@ -4,7 +4,8 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto
 import type { IncomingHttpHeaders } from 'node:http';
 import type { Device } from '../protocol/messages.ts';
 import type { DeviceRegistry } from './link.ts';
-import { array, number, optionalNumber, readJson, record, ShapeError, string, writeJson } from './store.ts';
+import { array, number, optionalNumber, readJson, record, string, writeJson } from './store.ts';
+import { ShapeError } from '../protocol/util.ts';
 
 export const COOKIE = 'pd_device';
 /** 400 days: the longest cookie lifetime browsers keep. */

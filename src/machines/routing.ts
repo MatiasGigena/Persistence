@@ -6,15 +6,17 @@ import type {
   ConversationId, Extension, Harness, JsonObject, Submission, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { userInput } from '../runtime/models.ts';
-import type { ChatImage, MachineTarget } from '../ui/types.ts';
+import { userInput } from '../runtime/input.ts';
+import type { SendOptions } from '../ui/types.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 
 /** The dispatcher must wait for this destination to reconnect, never execute on another machine. */
 export interface RoutingDispatcher {
   execute(target: MachineTarget, executionId: string, name: string, args: JsonObject, context: Context): Promise<ToolExecutionResult>;
 }
 
-type Target = { machineId: string; cwd: string; label: string };
+/** A MachineTarget as the route documents store it (writable, so a draft can assign it). */
+type Target = { -readonly [K in keyof MachineTarget]: MachineTarget[K] };
 type RouteState = { target?: Target };
 
 /** Constant-size server namespace; historical routes never accumulate in this shared document. */
@@ -52,8 +54,7 @@ function requireSame(first: MachineTarget, second: MachineTarget): void {
 export interface MachineRouting {
   readonly tools: Extension;
   initialize(context: Context): Promise<void>;
-  submit(text: string, requestId: string | undefined, target: MachineTarget | undefined, context: Context, steer?: boolean,
-    images?: readonly ChatImage[]): Promise<Submission>;
+  submit(text: string, options: SendOptions, context: Context): Promise<Submission>;
   /**
    * Preserve local tool implementations and protections, but explicitly refuse unsupported remote network kits. With
    * `allowed` (a tool that comes and goes with the coding tools), permission is checked again once the destination
@@ -123,6 +124,17 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
     }, context);
   };
 
+  /** Refuses while `allowed()` (the launch's coding tools, by default) is false: permission is launch state. */
+  const requireTools = (allowed: () => boolean = allowTools): void => {
+    if (!allowed()) throw new Error('Coding tools are off for this launch.');
+  };
+  /** Whether `target` is the server itself; a server target must be this host's exact one. */
+  const isHost = (target: MachineTarget): boolean => {
+    if (target.machineId !== 'server') return false;
+    requireSame(host, target);
+    return true;
+  };
+
   const nativeTools: readonly ToolRegistration[] = CodingTools.tools ?? [];
   const tools: Extension = {
     ...CodingTools,
@@ -131,7 +143,7 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
       // Keep native replay policy. A restart after dispatch may settle as interrupted/unknown;
       // making unsafe local bash/write/edit replay-safe would permit duplicate host effects.
       async execute(args: JsonObject, api, context) {
-        if (!allowTools()) throw new Error('Coding tools are off for this launch.');
+        requireTools();
         const [target, routing] = await Promise.all([resolve(api.conversationId, context), api.snapshot(RoutingDoc, context)]);
         const namespace = routing?.namespace;
         if (!namespace) throw new Error('Machine execution namespace is missing.');
@@ -140,11 +152,8 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
         const intent = await api.memo('machines.intent', candidate, context);
         if (!isDeepStrictEqual(intent, candidate)) throw new Error('Machine tool intent mismatch.');
         // Permission is launch state, never a persisted authorization in an intent or agent document.
-        if (!allowTools()) throw new Error('Coding tools are off for this launch.');
-        if (intent.target.machineId === 'server') {
-          requireSame(host, intent.target);
-          return tool.execute(args, api, context);
-        }
+        requireTools();
+        if (isHost(intent.target)) return tool.execute(args, api, context);
         return dispatcher.execute(detached(intent.target), intent.executionId, intent.name, intent.args, context);
       },
     })),
@@ -178,21 +187,20 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
       tools: extension.tools?.map(tool => ({
         ...tool,
         async execute(args: JsonObject, api, context) {
-          if (allowed && !allowed()) throw new Error('Coding tools are off for this launch.');
+          if (allowed) requireTools(allowed);
           const target = await resolve(api.conversationId, context);
-          if (target.machineId !== 'server') {
+          if (!isHost(target)) {
             throw new Error(`Tool ${tool.name} is not supported on remote machine ${JSON.stringify(target.label)}; it will not run on the server instead.`);
           }
-          requireSame(host, target);
           // Permission is launch state: /tools off may have landed while the destination resolved.
-          if (allowed && !allowed()) throw new Error('Coding tools are off for this launch.');
+          if (allowed) requireTools(allowed);
           return tool.execute(args, api, context);
         },
       })),
     }),
-    async submit(text, requestId = randomUUID(), target = host, context, steer, images) {
+    async submit(text, { requestId = randomUUID(), target = host, steer, images }, context) {
       if (!target.machineId || !target.cwd || !target.label) throw new Error('Invalid machine destination.');
-      if (target.machineId === 'server') requireSame(host, target);
+      isHost(target); // throws for a server target other than this host
       const pinned = detached(target);
       // A crash here leaves an unused mapping, not an unpinned submission. Retrying may only use this target.
       await harness().commit(async tx => {
@@ -207,7 +215,7 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
         }
       }, context);
       const root = await harness().root(context);
-      // SDK 1.3 checks dedup first, then throws ConversationBusy before creating a rejected input.
+      // pi-durable (admitSubmission) checks dedup first, then throws ConversationBusy before creating a rejected input.
       // The public admission API cannot atomically compare a busy run's target and steer it. A separate
       // snapshot check would race another run's admission, so routed follow-ups and steering both reject.
       try {

@@ -177,7 +177,7 @@ test('socket-only and web-only ops are forbidden to the other peer', async t => 
     revoke: name => Promise.resolve(name === 'phone'),
   };
   const push = fakePush();
-  const { hub, session, connect, request } = setup(t, { devices, push });
+  const { hub, session, connect, request, logged } = setup(t, { devices, push });
   hub.start(session);
   const web = connect('web'), socket = connect('socket');
   for (const op of ['admin.backup', 'admin.pair', 'admin.devices', 'admin.revoke']) {
@@ -201,6 +201,9 @@ test('socket-only and web-only ops are forbidden to the other peer', async t => 
   assert.deepEqual(await request(socket, 'admin.revoke', { name: 'phone' }), { t: 'res', id: 12, op: 'admin.revoke', ok: true, result: null });
   assert.equal(web.closedWith?.code, CloseCode.unauthorized, 'the revoked device is disconnected');
   assert.equal(socket.closedWith, undefined);
+  // Every privileged change leaves a journal line.
+  assert.ok(logged.includes('pairing code issued, valid until 1970-01-01T00:00:00.005Z'), logged.join('\n'));
+  assert.ok(logged.includes('device "phone" revoked'), logged.join('\n'));
 });
 
 test('admin.pair refuses while the web app is off, saying why, and once it is on pairs, naming the origin', async t => {
@@ -477,4 +480,13 @@ test('close sends bye 1012 to every peer and refuses new ones', async t => {
   const late = fakeLink();
   hub.attach(late);
   assert.equal(late.closedWith?.code, CloseCode.restart);
+});
+
+test('admin.backup returns the snapshot and logs where it went', async t => {
+  const { hub, session, connect, request, logged } = setup(t, { backup: () => Promise.resolve({ path: '/backups/chat-1.sqlite', bytes: 4096 }) });
+  hub.start(session);
+  const socket = connect('socket');
+  const made = await request(socket, 'admin.backup');
+  assert.deepEqual(made?.t === 'res' && made.ok && made.op === 'admin.backup' && made.result, { path: '/backups/chat-1.sqlite', bytes: 4096 });
+  assert.deepEqual(logged, ['backup written: /backups/chat-1.sqlite (4096 bytes)']);
 });

@@ -9,9 +9,9 @@ import { int, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { reportSrc } from './memory.ts';
 import type { Memory, ReportInput } from './memory.ts';
 import { PROMPT } from './prompt.ts';
-import { CAP, clip, formatDate, hash, isObject } from './util.ts';
+import { CAP, clip, formatDate, hash } from './util.ts';
+import { agentInputOf } from '../agents/entries.ts';
 
-export const REPORT_KIND = 'agents.report';
 // Adapted from UniiChat's Server.ts HEAD (Apache-2.0): a turn's head, as a compaction's is "Compaction:", so the one
 // prompt tells the two apart.
 export const TURN_HEAD = 'Turn: the user\'s new message:\n\n';
@@ -94,10 +94,8 @@ function logResult(memory: Memory, { toolCallId, toolName, content, isError, tim
 }
 
 function reportOf(entry: ContextEntries['entries'][number]): ReportInput | undefined {
-  const { data } = entry;
-  if (entry.kind !== REPORT_KIND || !isObject(data) || typeof data.name !== 'string' || typeof data.text !== 'string') return undefined;
-  return { name: data.name, text: data.text, id: typeof data.id === 'string' || typeof data.id === 'number' ? data.id : undefined,
-    session: typeof data.session === 'number' ? data.session : undefined };
+  const input = agentInputOf(entry);
+  return input?.kind === 'report' ? { name: input.from, text: input.text, id: input.id, session: input.session } : undefined;
 }
 const userSrc = (entry: { readonly id: number }, n: number): string => `e:${entry.id}${n ? `:${n}` : ''}`;
 
@@ -253,22 +251,22 @@ export function createUniiExtension({
   /**
    * The run's frozen blocks. The run's input is logged first, so `whole` can measure it: the view ends at `k`, where
    * the input's parts start going whole (upstream Memory.ts `whole`); a huge paste's first parts are in the view, and
-   * the message is only its tail, `say(k, end)`.
+   * the message is only its tail, `joinedText(k, end)`.
    */
   async function freeze(mine: readonly Item[], first: Item | undefined, signal: AbortSignal | undefined): Promise<Frozen> {
     const memory = open();
     const from = viewEnd(mine);
     let end = from;
     while (first && end < memory.T && baseSrc(memory.log[end]?.src) === first.src) end++;
-    // Later records of a resumed run count in whole() too; the clamp keeps the input's last part whole.
-    const k = end > from ? Math.min(memory.whole(from), end - 1) : from;
+    // Later records of a resumed run count in firstWhole() too; the clamp keeps the input's last part whole.
+    const k = end > from ? Math.min(memory.firstWhole(from), end - 1) : from;
     if (!memory.ready(k)) await memory.settle(settleMs, signal, k);
     const working = atWork ? await atWork() : undefined;
     const state = ['<turn>', `now: ${formatDate(now())}`,
       ...(working ? [`agents at work: ${working.length ? working.join(', ') : 'none'}`] : []), '</turn>'].join('\n');
     const blocks = [memory.render(k), state, memory.previousExchange(k, prevBytes)]
       .filter(Boolean).map((text): TextContent => ({ type: 'text', text }));
-    return { blocks, message: k > from ? memory.say(k, end) : undefined };
+    return { blocks, message: k > from ? memory.joinedText(k, end) : undefined };
   }
 
   async function beforeRequest({ messages }: { readonly messages: readonly Message[] }, api: RequestApi, context: Context):

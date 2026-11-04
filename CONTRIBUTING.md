@@ -44,14 +44,14 @@ claude-ready'`, and one prompt that makes Pi read a file.
 ## Test layout
 
 ```
-test/host/       CLI parsing, paths, global chat, flock, shutdown
+test/host/       CLI parsing, paths, global chat, flock, shutdown, the UiSession
 test/runtime/    reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript
 test/memory/     log, tree, view, compactor, uniichat extension
 test/agents/     roles, messaging, delivery across close and SIGKILL
 test/providers/  claude-cli with a fake CLI, stub MCP server, subscription check
 test/protocol/   wire messages and parsers, item diff and mirror (randomized, seeded)
 test/tools/      browser and its egress proxy, web_fetch, autoreview, show_image, code mode
-test/ui/         chat items, the TUI and its panels
+test/ui/         the shared wording, the TUI and its panels
 test/server/     hub, auth, Unix socket and WebSocket transports, push, backups, static files
 test/client/     attach, remote session, SSH link and bridge, client config
 test/machines/   routing, the execution broker and the local executor
@@ -71,7 +71,8 @@ Give each test its own temporary data directory.
 - Erasable syntax only: no `enum`, `namespace`, or parameter properties. Import with
   `.ts` specifiers, and types with `import type`.
 - No `any`, written or inferred, and no `@ts-ignore`, `@ts-expect-error`, or
-  `@ts-nocheck`. tsc (strict) and typescript-eslint (`no-unsafe-*`) enforce both.
+  `@ts-nocheck`. tsc (strict) and typescript-eslint (`no-unsafe-*`) enforce both;
+  tsc also refuses unused locals and imports (`noUnusedLocals`).
 - Parse external data (JSON, IPC, process arguments) as `unknown` and narrow it.
   Cast only what is genuinely known, and say why.
 - Use Node built-ins and the pinned `@earendil-works/*` packages. Add a dependency

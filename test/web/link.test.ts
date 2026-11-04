@@ -4,7 +4,8 @@ import type { TestContext } from 'node:test';
 import { CloseCode, LIMITS } from '../../src/protocol/messages.ts';
 import type { ServerMessage } from '../../src/protocol/messages.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
-import { backoff, Link, RequestError } from '../../src/web/link.ts';
+import { backoff, Link } from '../../src/web/link.ts';
+import { RequestError } from '../../src/protocol/request-error.ts';
 import type { Gate, LinkState, SocketEvents } from '../../src/web/link.ts';
 
 /** One fake WebSocket: records what the client sent, and lets the test play the server. */
@@ -96,7 +97,7 @@ test('pings, and a silent link is dead and reconnects', async t => {
   t.mock.timers.tick(1);
   assert.equal(link.state, 'reconnecting');
   assert.equal(sockets[0]?.closed, CloseCode.normal);
-  await assert.rejects(pending, (error: unknown) => error instanceof RequestError && error.code === 'lost');
+  await assert.rejects(pending, (error: unknown) => error instanceof RequestError && error.code === 'disconnected');
   t.mock.timers.tick(500);
   await flush();
   assert.equal(sockets.length, 2);

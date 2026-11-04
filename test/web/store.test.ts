@@ -46,6 +46,17 @@ test('an op that does not fit asks for one resync and ignores items until the sn
   assert.deepEqual(ids(store), ['u2']);
 });
 
+test('a refused resync unfreezes the feed and says so, instead of ignoring it until a reconnect', () => {
+  const store = connected([user('u1', 'hi')]);
+  store.handle({ t: 'items', feed: 'root', ops: [{ op: 'append', id: 'u1', field: 'text', at: 99, text: '!' }] });
+  assert.equal(store.root.waiting, true);
+  store.resyncFailed('root', 'No open feed root.');
+  assert.equal(store.root.waiting, false);
+  assert.match(JSON.stringify(store.rootView().at(-1)), /Could not resync the chat: No open feed root\./);
+  store.handle({ t: 'items', feed: 'root', ops: [{ op: 'put', item: user('u2', 'x') }] });
+  assert.deepEqual(store.root.items.map(item => item.id), ['u1', 'u2'], 'items apply again');
+});
+
 test('a finished reply is announced once, but not the backlog', () => {
   const store = new Store();
   store.handle(WELCOME);

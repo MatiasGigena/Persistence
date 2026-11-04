@@ -4,6 +4,7 @@ import type { TUI } from '@earendil-works/pi-tui';
 import type { UiSession } from '../../types.ts';
 import { clean, ListView, openPanel, PanelFrame } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
+import { errorMessage } from '../../../protocol/util.ts';
 
 /** What each level means, in a few words. */
 const HINTS: Readonly<Record<string, string>> = {
@@ -29,7 +30,7 @@ export async function openEffortPanel(tui: TUI, session: UiSession, theme: Panel
     : theme.dim(`${clean(session.status().model)} · effort ${clean(session.status().thinkingLevel)} · applies from the next request`));
   session.thinkingLevels().then(
     all => { levels = all; tui.requestRender(); },
-    (error: unknown) => { failure = `Could not list levels: ${error instanceof Error ? error.message : String(error)}`; tui.requestRender(); },
+    (error: unknown) => { failure = `Could not list levels: ${errorMessage(error)}`; tui.requestRender(); },
   );
   await openPanel(tui, frame);
   return picked;

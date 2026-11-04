@@ -1,10 +1,13 @@
-// Wire protocol v3: every message between the server (src/server/) and its clients (src/client/, src/web/).
+// The wire protocol (its version is PROTOCOL in version.ts): every message between the server (src/server/) and
+// its clients (src/client/, src/web/).
 // docs/protocol.md is the prose spec; this file is its types and constants. Shared by Node and the browser, so it
 // holds plain types and constants only: no Node or DOM imports, and no runtime imports at all.
-import type { ArchiveTarget, ChatImage, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
-import type { MachineCall, MachineCancel, MachineRegistration, MachineResult } from './machines.ts';
+import type { ArchiveTarget, ChatItem, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+import type { ChatImage } from './images.ts';
+import type { MachineCall, MachineCancel, MachineRegistration, MachineResult, MachineTarget } from './machines.ts';
 
-export type { AgentStatus, ArchiveTarget, ChatImage, ChatItem, MemoryStats, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+export type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+export type { ChatImage } from './images.ts';
 
 /** Pi's feed, open on every connection from `ready` on. Agent feeds get their id from `feed.open`. */
 export const ROOT_FEED = 'root';
@@ -120,7 +123,7 @@ export interface Ops {
     readonly result: null;
   };
   readonly 'machine.register': { readonly params: { readonly registration: MachineRegistration }; readonly result: null };
-  readonly 'machine.set': { readonly params: { readonly enabled: boolean; readonly confirm?: 'enable-tools' }; readonly result: null };
+  readonly 'machine.set': { readonly params: { readonly enabled: boolean; readonly confirm?: typeof ENABLE_TOOLS }; readonly result: null };
   readonly 'machine.list': { readonly params: NoParams; readonly result: { readonly machines: readonly MachineRegistration[] } };
   /** Interrupts Pi's running work (Esc). */
   readonly abort: { readonly params: NoParams; readonly result: null };
@@ -149,7 +152,7 @@ export interface Ops {
   /** Switches Pi and its agents to a model, and saves it as the default. `failed` with a readable message. */
   readonly 'model.set': { readonly params: { readonly provider: string; readonly id: string }; readonly result: null };
   /** Coding tools on or off for this server run. Enabling needs `confirm: 'enable-tools'`. */
-  readonly 'tools.set': { readonly params: { readonly enabled: boolean; readonly confirm?: 'enable-tools' }; readonly result: null };
+  readonly 'tools.set': { readonly params: { readonly enabled: boolean; readonly confirm?: typeof ENABLE_TOOLS }; readonly result: null };
   /** The reasoning efforts the current model takes, lowest first. */
   readonly 'thinking.levels': { readonly params: NoParams; readonly result: { readonly levels: readonly string[] } };
   /** Sets Pi's and its agents' reasoning effort, and saves it as the default. `failed` with a readable message. */

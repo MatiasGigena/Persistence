@@ -6,7 +6,9 @@ import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
 import { DEFAULT_ROSTER, isAgentName, isKit, KITS } from '../agents/roster.ts';
 import type { Kit, Roster, StandingAgent } from '../agents/roster.ts';
-import { atomicWrite } from '../memory/util.ts';
+import { errorCode, errorMessage, isRecord } from '../protocol/util.ts';
+import { atomicWrite } from '../runtime/files.ts';
+import { isThinkingLevel, THINKING } from '../runtime/thinking.ts';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_MODEL = 'openai-codex/gpt-6.1-sol';
@@ -148,9 +150,6 @@ const COMMAND_NAMES: Readonly<Record<Command, string>> = {
   chat: 'chat', serve: 'serve', 'serve-pair': 'serve pair', 'serve-devices': 'serve devices', 'serve-agents': 'serve agents',
   backup: 'backup', connect: 'connect', bridge: 'bridge',
 };
-/** Every reasoning effort (thinking level), lowest first. */
-export const THINKING: readonly ModelThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
-export const isThinkingLevel = (x: unknown): x is ModelThinkingLevel => THINKING.some(level => level === x);
 const DEFAULT_THINKING: ModelThinkingLevel = 'high';
 
 /** Where the launch's model came from, highest precedence first. */
@@ -286,9 +285,6 @@ export interface Settings {
   agents?: unknown;
 }
 
-export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
-export const errorCode = (error: unknown): unknown => error instanceof Error && 'code' in error ? error.code : undefined;
-
 /** The subcommand that `words` (the positionals before any `--`) start with, and the words left after it. */
 function command(words: readonly string[]): { command: Command; rest: readonly string[] } {
   const [first, second] = words;
@@ -349,12 +345,7 @@ export function parseArgs(args: readonly string[]): Options {
       throw new Error(`Unknown ${name} argument: ${prompts[0] ?? ''}${chosen === 'serve' ? ' (to send a prompt starting with "serve", use -p)' : ''}`);
     }
     for (const [key, spelling] of given) if (!ALLOWED[chosen].has(key)) throw new Error(`${spelling} does not apply to ${name}`);
-    if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
-    // serve starts with coding tools on unless --no-tools (ADR 0025); backup never runs them.
-    options.allowTools = chosen === 'serve' && !options.noTools;
   } else {
-    if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
-    options.allowTools = !options.noTools;
     for (const [key, owner] of ONLY_FOR) {
       const spelling = given.get(key);
       if (spelling) throw new Error(`${spelling} applies only to ${owner}`);
@@ -368,6 +359,9 @@ export function parseArgs(args: readonly string[]): Options {
     if (local && options.attach) throw new Error(`${local} does not apply to --attach: the server's settings apply (use /model and /tools there)`);
     if (local) options.launchOption = local;
   }
+  if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
+  // chat and serve start with coding tools on unless --no-tools (ADR 0025); backup and the admin commands never run them.
+  options.allowTools = (chosen === 'chat' || chosen === 'serve') && !options.noTools;
   options.remoteAllowTools = chosen === 'chat' && given.has('allowTools') && !options.noTools;
   if (options.portSpec !== undefined) options.port = parsePort(options.portSpec, '--port');
   if (options.revoke !== undefined && !options.revoke.trim()) throw new Error('--revoke requires a device name');
@@ -404,7 +398,7 @@ async function readSettingsJson(path: string): Promise<Record<string, unknown> |
     throw error;
   }
   let value: unknown;
-  try { value = JSON.parse(text); } catch (error) { throw new Error(`${path} is not valid JSON (${errorMessage(error)}); fix or delete it`); }
+  try { value = JSON.parse(text); } catch (error) { throw new Error(`${path} is not valid JSON (${errorMessage(error)}); fix or delete it`, { cause: error }); }
   if (!isRecord(value)) throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
   return value;
 }
@@ -660,7 +654,6 @@ function isServeSettings(x: unknown): x is ServeSettings {
     && (x.toolsIdleMinutes === undefined || (typeof x.toolsIdleMinutes === 'number' && Number.isInteger(x.toolsIdleMinutes) && x.toolsIdleMinutes >= 1))
     && typeof x.pushPreview === 'boolean';
 }
-export const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 const isModelRef = (x: unknown): x is ModelRef => isRecord(x) && typeof x.provider === 'string' && typeof x.modelId === 'string';
 
 /** A resolved roster, as `JSON.stringify(config)` carries it. */

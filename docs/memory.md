@@ -297,7 +297,7 @@ The extension's `beforeRequest` hook replaces every request of a Pi run with:
   16,000 bytes. Tool steps between them are left out.
 - **message**: the run's first input (a typed message, or an agent's report), after upstream's head `TURN_HEAD` =
   `Turn: the user's new message:` and a blank line. It goes whole, unless its parts do not fit in the view's `hi`
-  (128,000 bytes): then `k = memory.whole(from)` and the message is only `memory.say(k, end)`, its last parts; the
+  (128,000 bytes): then `k = memory.firstWhole(from)` and the message is only `memory.joinedText(k, end)`, its last parts; the
   first ones are in the view, summarized. Steering messages are not headed and go whole.
 - **the run's steps**: the run's own assistant messages, tool results and steering messages, as pi-durable has them.
   Text blocks of tool results over 30,000 characters are clipped as in the log.
@@ -408,7 +408,7 @@ Upstream's hosting, billing, devices, computer use, iOS app and chat imports are
    messages the turn answers (`Memory.whole`, from the first waiting one) and leaves earlier ones to the view and to
    `zoom`. Follow-up questions such as "why?" work here without a zoom, and the view prefix is unchanged. Upstream
    also sends a huge new message whole only in its last 128 KB (`whole`), its first parts going to the view; the
-   extension does the same with `Memory.whole(from)` and `Memory.say(k, end)` for a run's first input (steering
+   extension does the same with `Memory.firstWhole(from)` and `Memory.joinedText(k, end)` for a run's first input (steering
    messages still go whole).
 4. **Turns wait at most 8 s** for pending summaries, then render placeholders. Upstream's `settle` waits with no limit
    and its turn view leaves unbuilt lines out. Upstream can afford that: its calls go to an API account it bills,

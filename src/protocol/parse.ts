@@ -6,6 +6,7 @@ import type {
   AgentStatus, AppendField, ArchiveTarget, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
   PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, SessionStatus, ToolsPolicy, ViewLine,
 } from './messages.ts';
+import { errorMessage, isRecord, ShapeError } from './util.ts';
 
 /**
  * Why a message did not parse; never sent. `id` is the request's when it could be read, so the server can answer
@@ -21,22 +22,19 @@ export const isParseError = (x: ClientMessage | ServerMessage | ParseError): x i
 
 type Obj = Readonly<Record<string, unknown>>;
 
-/** A field that is not what its type says; caught at the top and turned into a ParseError. */
-class Bad extends Error {}
 
-const isObj = (x: unknown): x is Obj => typeof x === 'object' && x !== null && !Array.isArray(x);
 const NOTICE_LEVELS: readonly NoticeLevel[] = ['info', 'warn', 'error'];
 const TOOL_STATUS = ['running', 'done', 'error'] as const;
 const APPEND_FIELDS: readonly AppendField[] = ['text', 'output', 'args'];
 const CONFIRMS: readonly (typeof ENABLE_TOOLS)[] = [ENABLE_TOOLS];
 
 function obj(x: unknown, what: string): Obj {
-  if (!isObj(x)) throw new Bad(`${what} must be an object`);
+  if (!isRecord(x)) throw new ShapeError(`${what} must be an object`);
   return x;
 }
 function str(o: Obj, key: string): string {
   const v = o[key];
-  if (typeof v !== 'string') throw new Bad(`${key} must be a string`);
+  if (typeof v !== 'string') throw new ShapeError(`${key} must be a string`);
   return v;
 }
 function optStr(o: Obj, key: string): string | undefined {
@@ -44,7 +42,7 @@ function optStr(o: Obj, key: string): string | undefined {
 }
 function bool(o: Obj, key: string): boolean {
   const v = o[key];
-  if (typeof v !== 'boolean') throw new Bad(`${key} must be a boolean`);
+  if (typeof v !== 'boolean') throw new ShapeError(`${key} must be a boolean`);
   return v;
 }
 function optBool(o: Obj, key: string): boolean | undefined {
@@ -53,19 +51,19 @@ function optBool(o: Obj, key: string): boolean | undefined {
 /** A safe integer, at least `min`. */
 function int(o: Obj, key: string, min = 0): number {
   const v = o[key];
-  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < min) throw new Bad(`${key} must be an integer >= ${min}`);
+  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < min) throw new ShapeError(`${key} must be an integer >= ${min}`);
   return v;
 }
 function list<T>(o: Obj, key: string, item: (x: unknown) => T): T[] {
   const v = o[key];
-  if (!Array.isArray(v)) throw new Bad(`${key} must be an array`);
+  if (!Array.isArray(v)) throw new ShapeError(`${key} must be an array`);
   const items: readonly unknown[] = v;
   return items.map(item);
 }
 function oneOf<T extends string>(o: Obj, key: string, values: readonly T[]): T {
   const v = o[key];
   const found = values.find(each => each === v);
-  if (found === undefined) throw new Bad(`${key} must be one of ${values.join(', ')}`);
+  if (found === undefined) throw new ShapeError(`${key} must be one of ${values.join(', ')}`);
   return found;
 }
 /** `{ ...base, [key]: value }` when `value` is defined: optional fields stay absent rather than undefined. */
@@ -92,7 +90,7 @@ export function chatItem(x: unknown): ChatItem {
       status: oneOf(o, 'status', TOOL_STATUS) }, 'images', optImages(o));
     case 'report': return { kind, id, from: str(o, 'from'), text: str(o, 'text') };
     case 'notice': return { kind, id, text: str(o, 'text'), level: oneOf(o, 'level', NOTICE_LEVELS) };
-    default: throw new Bad(`unknown item kind ${JSON.stringify(kind) ?? 'undefined'}`);
+    default: throw new ShapeError(`unknown item kind ${JSON.stringify(kind) ?? 'undefined'}`);
   }
 }
 
@@ -106,7 +104,7 @@ function memoryStats(x: unknown): MemoryStats {
 
 /** `standing`, when present, is `true`; an ad-hoc agent leaves it out. */
 function standingFlag(o: Obj): true {
-  if (o.standing !== true) throw new Bad('standing must be true when present');
+  if (o.standing !== true) throw new ShapeError('standing must be true when present');
   return true;
 }
 
@@ -119,9 +117,9 @@ function agentStatus(x: unknown): AgentStatus {
 
 /** `agents.archive`'s params: exactly one of a nonempty `name` or `adhoc: true`. */
 function archiveTarget(p: Obj): ArchiveTarget {
-  if (p.name !== undefined && p.adhoc !== undefined) throw new Bad('give either name or adhoc, not both');
+  if (p.name !== undefined && p.adhoc !== undefined) throw new ShapeError('give either name or adhoc, not both');
   if (p.adhoc !== undefined) {
-    if (p.adhoc !== true) throw new Bad('adhoc must be true');
+    if (p.adhoc !== true) throw new ShapeError('adhoc must be true');
     return { adhoc: true };
   }
   return { name: agentName(p) };
@@ -130,7 +128,7 @@ function archiveTarget(p: Obj): ArchiveTarget {
 /** A nonempty `name`. */
 function agentName(p: Obj): string {
   const v = str(p, 'name');
-  if (!v.trim()) throw new Bad('name must not be empty');
+  if (!v.trim()) throw new ShapeError('name must not be empty');
   return v;
 }
 
@@ -142,7 +140,7 @@ export function sessionStatus(x: unknown): SessionStatus {
     busy: bool(o, 'busy'), queued: int(o, 'queued'),
     memory: o.memory === undefined || o.memory === null ? undefined : memoryStats(o.memory),
     agents: list(o, 'agents', agentStatus),
-    ...o.machine === undefined ? {} : { machine: machineShape(() => machineTarget(o.machine)) },
+    ...o.machine === undefined ? {} : { machine: machineTarget(o.machine) },
   };
 }
 
@@ -166,7 +164,7 @@ function subscription(x: unknown): PushSubscriptionJson {
   const o = obj(x, 'subscription'), keys = obj(o.keys, 'keys');
   const expiration = o.expirationTime;
   if (expiration !== undefined && expiration !== null && (typeof expiration !== 'number' || !Number.isFinite(expiration))) {
-    throw new Bad('expirationTime must be a number or null');
+    throw new ShapeError('expirationTime must be a number or null');
   }
   return withOptional({ endpoint: str(o, 'endpoint'), keys: { p256dh: str(keys, 'p256dh'), auth: str(keys, 'auth') } },
     'expirationTime', expiration);
@@ -179,12 +177,8 @@ export function itemOp(x: unknown): ItemOp {
     case 'put': return withOptional({ op: 'put', item: chatItem(o.item) }, 'before', optStr(o, 'before'));
     case 'append': return { op: 'append', id: str(o, 'id'), field: oneOf(o, 'field', APPEND_FIELDS), at: int(o, 'at'), text: str(o, 'text') };
     case 'del': return { op: 'del', id: str(o, 'id') };
-    default: throw new Bad(`unknown item op ${JSON.stringify(o.op) ?? 'undefined'}`);
+    default: throw new ShapeError(`unknown item op ${JSON.stringify(o.op) ?? 'undefined'}`);
   }
-}
-
-function machineShape<T>(parse: () => T): T {
-  try { return parse(); } catch (error) { throw new Bad(error instanceof Error ? error.message : String(error)); }
 }
 
 function toolsPolicy(x: unknown): ToolsPolicy {
@@ -199,8 +193,8 @@ function toolsPolicy(x: unknown): ToolsPolicy {
 const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
   send: (id, p) => ({ t: 'req', id, op: 'send', params: withOptional(withOptional(withOptional(withOptional({ text: str(p, 'text') },
     'requestId', optStr(p, 'requestId')), 'steer', optBool(p, 'steer')), 'target',
-    p.target === undefined ? undefined : machineShape(() => machineTarget(p.target))), 'images', optImages(p)) }),
-  'machine.register': (id, p) => ({ t: 'req', id, op: 'machine.register', params: { registration: machineShape(() => machineRegistration(p.registration)) } }),
+    p.target === undefined ? undefined : machineTarget(p.target)), 'images', optImages(p)) }),
+  'machine.register': (id, p) => ({ t: 'req', id, op: 'machine.register', params: { registration: machineRegistration(p.registration) } }),
   'machine.set': (id, p) => ({ t: 'req', id, op: 'machine.set', params: withOptional({ enabled: bool(p, 'enabled') }, 'confirm',
     p.confirm === undefined ? undefined : oneOf(p, 'confirm', CONFIRMS)) }),
   'machine.list': id => ({ t: 'req', id, op: 'machine.list', params: {} }),
@@ -233,7 +227,7 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   'machine.register': id => ({ t: 'res', id, op: 'machine.register', ok: true, result: null }),
   'machine.set': id => ({ t: 'res', id, op: 'machine.set', ok: true, result: null }),
   'machine.list': (id, r) => ({ t: 'res', id, op: 'machine.list', ok: true,
-    result: { machines: list(obj(r, 'result'), 'machines', item => machineShape(() => machineRegistration(item))) } }),
+    result: { machines: list(obj(r, 'result'), 'machines', item => machineRegistration(item)) } }),
   abort: id => ({ t: 'res', id, op: 'abort', ok: true, result: null }),
   stopAgents: (id, r) => ({ t: 'res', id, op: 'stopAgents', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
   'agents.archive': (id, r) => ({ t: 'res', id, op: 'agents.archive', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
@@ -265,7 +259,7 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
 
 /** A string list item: an agent's name or a thinking level. */
 function name(x: unknown): string {
-  if (typeof x !== 'string') throw new Bad('names must be strings');
+  if (typeof x !== 'string') throw new ShapeError('names must be strings');
   return x;
 }
 
@@ -278,17 +272,17 @@ function object(text: string, max: number): { readonly o: Obj } | ParseError {
   if (text.length > max) return { invalid: 'too_large', message: `message over ${max} characters` };
   let value: unknown;
   try { value = JSON.parse(text); } catch (error) {
-    return { invalid: 'json', message: error instanceof Error ? error.message : String(error) };
+    return { invalid: 'json', message: errorMessage(error) };
   }
-  if (!isObj(value)) return { invalid: 'shape', message: 'a message must be a JSON object' };
+  if (!isRecord(value)) return { invalid: 'shape', message: 'a message must be a JSON object' };
   if (typeof value.t !== 'string') return { invalid: 'shape', message: 't must be a string' };
   return { o: value };
 }
 
-/** Runs `parse`, turning a Bad field into a ParseError (with `id` when known). */
+/** Runs `parse`, turning a ShapeError field into a ParseError (with `id` when known). */
 function checked<T>(parse: () => T, id?: number): T | ParseError {
   try { return parse(); } catch (error) {
-    if (!(error instanceof Bad)) throw error;
+    if (!(error instanceof ShapeError)) throw error;
     return id === undefined ? { invalid: 'shape', message: error.message } : { invalid: 'shape', message: error.message, id };
   }
 }
@@ -302,8 +296,8 @@ export function parseClientMessage(text: string): ClientMessage | ParseError {
     case 'hello': return checked(() => ({ t: 'hello', protocol: int(o, 'protocol'), client: str(o, 'client'), visible: bool(o, 'visible') }));
     case 'visible': return checked(() => ({ t: 'visible', visible: bool(o, 'visible') }));
     case 'ping': return checked(() => ({ t: 'ping', n: int(o, 'n') }));
-    case 'machine.result': return checked(() => ({ t: 'machine.result', id: machineShape(() => executionId(o.id)),
-      result: machineShape(() => machineToolResult(o.result)) }));
+    case 'machine.result': return checked(() => ({ t: 'machine.result', id: executionId(o.id),
+      result: machineToolResult(o.result) }));
     case 'req': {
       const id = checked(() => int(o, 'id'));
       if (typeof id !== 'number') return id;
@@ -330,12 +324,12 @@ export function parseServerMessage(text: string): ServerMessage | ParseError {
         t: 'welcome', protocol: int(o, 'protocol'), server: str(o, 'server'), boot: str(o, 'boot'), assets: str(o, 'assets'),
         peer: oneOf(o, 'peer', ['socket', 'web']), cwd: str(o, 'cwd'), tools: toolsPolicy(o.tools),
       } as const;
-      if (o.machines !== undefined && o.machines !== true) throw new Bad('machines must be true');
+      if (o.machines !== undefined && o.machines !== true) throw new ShapeError('machines must be true');
       return withOptional(withOptional(withOptional(base, 'pushKey', optStr(o, 'pushKey')), 'device', optStr(o, 'device')),
         'machines', o.machines === true ? true as const : undefined);
     });
-    case 'machine.call': return checked(() => machineShape(() => machineCall(o)));
-    case 'machine.cancel': return checked(() => ({ t: 'machine.cancel', id: machineShape(() => executionId(o.id)) }));
+    case 'machine.call': return checked(() => machineCall(o));
+    case 'machine.cancel': return checked(() => ({ t: 'machine.cancel', id: executionId(o.id) }));
     case 'ready': return { t: 'ready' };
     case 'status': return checked(() => ({ t: 'status', status: sessionStatus(o.status) }));
     case 'snapshot': return checked(() => ({ t: 'snapshot', feed: str(o, 'feed'), items: list(o, 'items', chatItem) }));

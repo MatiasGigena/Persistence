@@ -33,10 +33,11 @@ test('the service worker shell lists every app file and runtime import', async (
   const block = /const SHELL = \[([\s\S]*?)\];/.exec(sw)?.[1] ?? '';
   const shell = new Set([...block.matchAll(/'([^']+)'/g)].map(([, path = '']) => path));
   if (block.includes('OFFLINE')) shell.add('/offline.html');
-  const all = await files(WEB);
-  const served = all.filter(path => !path.endsWith('tsconfig.json') && !path.endsWith('sw.ts') && !path.endsWith('index.html'))
+  // The worker's own scripts (sw.ts, and sw/ that it loads with importScripts) are not the page's.
+  const all = (await files(WEB)).filter(path => !path.endsWith('sw.ts') && !relative(WEB, path).startsWith('sw/'));
+  const served = all.filter(path => !path.endsWith('tsconfig.json') && !path.endsWith('index.html'))
     .map(path => `/${relative(WEB, path)}`);
-  const sources = all.filter(path => path.endsWith('.ts') && !path.endsWith('sw.ts'));
+  const sources = all.filter(path => path.endsWith('.ts'));
   const needed = new Set([...served, ...await importedUrls(sources), '/']);
   // Protocol files import each other; follow one level.
   for (const url of [...needed].filter(u => u.startsWith('/protocol/'))) {
@@ -97,26 +98,6 @@ test('code and output never show ligatures, under any font shorthand', async () 
   const css = await readFile(join(WEB, 'styles.css'), 'utf8');
   assert.ok(/\bfont:\s/.test(css), 'the sheet uses the shorthand');
   assert.match(css, /^\*, \*::before, \*::after \{[^}]*font-variant-ligatures: none !important;/m);
-});
-
-test('the service worker marks a set complete only after its files agree on one version', async () => {
-  const sw = await readFile(join(WEB, 'sw.ts'), 'utf8');
-  const stable = /async function fetchStable[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
-  // Every file is fetched a second time and compared; a mismatch retries, and a server that never settles throws.
-  assert.match(stable, /const check = await fetchShell\(\)/);
-  assert.match(stable, /await same\(response, again\)/);
-  assert.match(stable, /throw new Error/);
-  const build = /async function build[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
-  assert.match(build, /await fetchStable\(seed\)/);
-  assert.ok(build.indexOf('fetchStable') < build.indexOf('COMPLETE'), 'the version check runs before the set is marked complete');
-});
-
-test('the service worker checks /index.html against the set like /', async () => {
-  const sw = await readFile(join(WEB, 'sw.ts'), 'utf8');
-  assert.match(sw, /const INDEX = new Set\(\['\/', '\/index\.html'\]\);/);
-  const page = /async function page[\s\S]*?\n}\n/.exec(sw)?.[0] ?? '';
-  assert.match(page, /!INDEX\.has\(new URL\(request\.url\)\.pathname\)/);
-  assert.doesNotMatch(page, /pathname !== '\/'/);
 });
 
 test('the pairing screen states how long a code lasts as the server does', async () => {

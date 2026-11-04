@@ -5,12 +5,13 @@ import { lstat } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
 import type { Config } from '../host/config.ts';
-import { errorCode, VERSION } from '../host/config.ts';
+import { VERSION } from '../host/config.ts';
+import { errorCode } from '../protocol/util.ts';
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
 import type { AgentStatus, ClientMessage, Device, Request, Response, ServerMessage } from '../protocol/messages.ts';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
 import { PROTOCOL } from '../protocol/version.ts';
-import { lineSplitter } from './transport-unix.ts';
+import { lineSplitter } from '../server/transport-unix.ts';
 
 /** No server answers on the socket (none there, or a stale file): the caller may take the flock instead. */
 export class NoServer extends Error {}

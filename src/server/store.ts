@@ -4,11 +4,10 @@
 import { closeSync, fsyncSync, mkdirSync, openSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { errorCode, errorMessage, isRecord } from '../host/config.ts';
-import { atomicWrite } from '../memory/util.ts';
+import { errorCode, errorMessage, isRecord, ShapeError } from '../protocol/util.ts';
+import { atomicWrite } from '../runtime/files.ts';
 
 /** A field that is not what the file's shape says; `readJson` turns it into a readable error naming the file. */
-export class ShapeError extends Error {}
 
 /** Replaces `file` with `value` as JSON (mode 600, directory mode 700), durably: the old or the new, never half. */
 export function writeJson(file: string, value: unknown): void {
@@ -31,35 +30,8 @@ export async function readJson<T>(file: string, parse: (value: unknown) => T, mi
     throw error;
   }
   try { return parse(JSON.parse(text)); } catch (error) {
-    throw new Error(`${file} is damaged (${errorMessage(error)}); fix it, or delete it to start over`);
+    throw new Error(`${file} is damaged (${errorMessage(error)}); fix it, or delete it to start over`, { cause: error });
   }
-}
-
-/** One JSON file with serialized updates: each `update` sees the result of the one before. */
-export interface JsonFile<T> {
-  readonly path: string;
-  load(): Promise<T>;
-  /** Applies `change` to the current value and writes the result; resolves with it. */
-  update(change: (current: T) => T): Promise<T>;
-}
-
-/** A JsonFile at `path`; `parse` narrows what is read, `empty` is the value of a missing file. */
-export function jsonFile<T>(path: string, parse: (value: unknown) => T, empty: () => T): JsonFile<T> {
-  let queue: Promise<unknown> = Promise.resolve();
-  const load = (): Promise<T> => readJson(path, parse, empty);
-  return {
-    path,
-    load,
-    update(change) {
-      const next = queue.then(async () => {
-        const value = change(await load());
-        writeJson(path, value);
-        return value;
-      });
-      queue = next.catch(() => {});
-      return next;
-    },
-  };
 }
 
 // Narrowing helpers for parsers. Each throws a ShapeError naming the field.

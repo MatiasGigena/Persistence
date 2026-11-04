@@ -7,9 +7,10 @@ import type {
   AgentState, ConversationDocToken, ConversationId, ConversationView, EntryId, EntryRecord, Harness, JsonObject, LiveState,
   RunFailure, ToolSlot,
 } from '@earendil-works/pi-durable';
-import { MESSAGE_KIND, REPORT_KIND } from '../agents/index.ts';
-import { isRecord } from '../host/config.ts';
-import type { ChatFeed, ChatImage, ChatItem } from './types.ts';
+import { agentInputOf } from '../agents/entries.ts';
+import { isRecord } from '../protocol/util.ts';
+import type { ChatFeed, ChatItem } from '../ui/types.ts';
+import type { ChatImage } from '../protocol/images.ts';
 
 /** Items kept per feed: the newest ones. */
 export const CAP = 200;
@@ -70,12 +71,6 @@ const docOf = <T extends JsonObject>(view: ConversationView, token: Conversation
   view.docs[token.definition.kind] as Readonly<T> | undefined;
 
 /** An agent input entry's sender and text: a report (`agents.report`) or a message (`agents.message`). */
-function reportOf(entry: EntryRecord): { from: string; text: string } | undefined {
-  const { data } = entry;
-  if (!isRecord(data) || typeof data.text !== 'string') return undefined;
-  const from = entry.kind === REPORT_KIND ? data.name : entry.kind === MESSAGE_KIND ? data.from : undefined;
-  return typeof from === 'string' ? { from, text: data.text } : undefined;
-}
 
 /** A conversation's feed; also tracks its busy, queued, and agent state for the status line. */
 export class ConversationFeed implements ChatFeed {
@@ -201,8 +196,8 @@ export class ConversationFeed implements ChatFeed {
 
   /** A committed entry's items. A streamed answer keeps the ids its partial had. */
   private entry(entry: EntryRecord): void {
-    const report = reportOf(entry);
-    if (report) return this.push({ kind: 'report', id: `e${entry.id}`, ...report });
+    const input = agentInputOf(entry);
+    if (input) return this.push({ kind: 'report', id: `e${entry.id}`, from: input.from, text: input.text });
     (entry.model ?? []).forEach((message, m) => {
       const id = m === 0 ? `e${entry.id}` : `e${entry.id}.${m}`;
       if (message.role === 'user') this.push(withImages({ kind: 'user', id, text: textOf(message.content) }, imagesOf(message.content)));

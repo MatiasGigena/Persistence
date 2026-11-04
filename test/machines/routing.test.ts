@@ -12,8 +12,8 @@ import { AgentRouteDoc, RoutingDoc, RunRouteDoc, SubmissionRouteDoc, type Routin
 import { settleAgents } from '../../src/runtime/recovery.ts';
 import { TURN_HEAD } from '../../src/memory/extension.ts';
 import { openInstance, transcript, type Instance } from '../../src/runtime/runtime.ts';
-import type { MachineTarget } from '../../src/ui/types.ts';
-import { createUiSession } from '../../src/ui/session.ts';
+import type { MachineTarget } from '../../src/protocol/machines.ts';
+import { createUiSession } from '../../src/host/session.ts';
 import { call, router, say, type Turn } from '../fixtures/agents-instance.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 
@@ -40,7 +40,7 @@ function recorder() {
 }
 
 async function submit(instance: Instance, text: string, id: string, target?: MachineTarget) {
-  const submission = await instance.submit(text, id, target);
+  const submission = await instance.submit(text, { requestId: id, target });
   const settled = await submission.wait(instance.context);
   assert.equal(settled.status, 'done', JSON.stringify(settled));
   return submission;
@@ -74,7 +74,7 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     } }, seen));
     const instance = await openInstance({ ...options, ...catalog, ...recorded, allowTools: true });
     try {
-      await assert.rejects(instance.submit('fake server cwd', 'fake-host', { machineId: 'server', cwd: '/not-the-host-cwd', label: 'server' }), /destination mismatch/i);
+      await assert.rejects(instance.submit('fake server cwd', { requestId: 'fake-host', target: { machineId: 'server', cwd: '/not-the-host-cwd', label: 'server' } }), /destination mismatch/i);
       await submit(instance, 'remote', 'remote-1', laptop);
       assert.deepEqual(recorded.calls.map(each => each.target), [laptop]);
       assert.equal(recorded.calls[0]?.name, 'read');
@@ -172,11 +172,11 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     const catalog = offlineModels([async () => { started.resolve(); await release.promise; return say('done'); }]);
     let instance = await openInstance({ ...options, ...catalog, ...recorded });
     try {
-      const pending = await instance.submit('first', 'first', laptop);
+      const pending = await instance.submit('first', { requestId: 'first', target: laptop });
       await started.promise;
-      await assert.rejects(instance.submit('second', 'reserved', other), /busy/i);
-      await assert.rejects(instance.submit('host', 'host-busy'), /busy/i);
-      await assert.rejects(instance.submit('second', 'reserved', laptop), /destination mismatch/i);
+      await assert.rejects(instance.submit('second', { requestId: 'reserved', target: other }), /busy/i);
+      await assert.rejects(instance.submit('host', { requestId: 'host-busy' }), /busy/i);
+      await assert.rejects(instance.submit('second', { requestId: 'reserved', target: laptop }), /destination mismatch/i);
       const state = await instance.harness.snapshot(SubmissionRouteDoc, instance.root.id, 'request:reserved', instance.context);
       assert.deepEqual(state?.target, other);
       release.resolve();
@@ -185,8 +185,8 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     const reopened = offlineModels([say('retry done')]);
     instance = await openInstance({ ...options, ...reopened, ...recorded });
     try {
-      await assert.rejects(instance.submit('second', 'reserved', laptop), /destination mismatch/i);
-      await assert.rejects(instance.submit('first', 'first', { ...laptop, cwd: '/changed' }), /destination mismatch/i);
+      await assert.rejects(instance.submit('second', { requestId: 'reserved', target: laptop }), /destination mismatch/i);
+      await assert.rejects(instance.submit('first', { requestId: 'first', target: { ...laptop, cwd: '/changed' } }), /destination mismatch/i);
       await submit(instance, 'second', 'reserved', other);
       assert.equal(reopened.faux.state.callCount, 1);
     } finally { await instance.close(); }
@@ -201,7 +201,7 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     const ui = await createUiSession(instance, { model: catalog.model, thinkingLevel: 'off', allowTools: false });
     const attempts = [{ text: 'one', id: 'one', target: laptop }, { text: 'two', id: 'two', target: other }];
     try {
-      const results = await Promise.allSettled(attempts.map(each => ui.send(each.text, each.id, false, each.target)));
+      const results = await Promise.allSettled(attempts.map(each => ui.send(each.text, { requestId: each.id, target: each.target })));
       await started.promise;
       assert.equal(results.filter(each => each.status === 'fulfilled').length, 1);
       const refused = results.find(each => each.status === 'rejected');
@@ -209,10 +209,10 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
       assert.match(refused.reason.message, /busy/i);
       const accepted = attempts[results.findIndex(each => each.status === 'fulfilled')];
       assert.ok(accepted);
-      await ui.send(accepted.text, accepted.id, true, accepted.target);
-      await assert.rejects(ui.send('same-target steer', 'same-steer', true, accepted.target), /steer.*busy routed run/i);
-      await assert.rejects(ui.send('mixed-target steer', 'mixed-steer', true, accepted.target === laptop ? other : laptop), /busy routed run/i);
-      await assert.rejects(ui.send('host follow-up', 'host-follow-up'), /busy/i);
+      await ui.send(accepted.text, { requestId: accepted.id, steer: true, target: accepted.target });
+      await assert.rejects(ui.send('same-target steer', { requestId: 'same-steer', steer: true, target: accepted.target }), /steer.*busy routed run/i);
+      await assert.rejects(ui.send('mixed-target steer', { requestId: 'mixed-steer', steer: true, target: accepted.target === laptop ? other : laptop }), /busy routed run/i);
+      await assert.rejects(ui.send('host follow-up', { requestId: 'host-follow-up' }), /busy/i);
       const inspection = await instance.harness.inspect(instance.context);
       assert.equal(inspection.submissions.length, 1);
       assert.equal(inspection.submissions[0]?.status, 'placed');
@@ -250,10 +250,10 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     ]);
     const instance = await openInstance({ ...options, ...catalog, ...recorded, allowTools: true });
     try {
-      const pending = await instance.submit('first', 'first', laptop);
+      const pending = await instance.submit('first', { requestId: 'first', target: laptop });
       await started.promise;
       // Even a host caller bypassing normal busy rejection cannot mix two persisted destinations.
-      await assert.rejects(instance.submit('second', 'second', other), /busy/i);
+      await assert.rejects(instance.submit('second', { requestId: 'second', target: other }), /busy/i);
       await instance.root.submit({ type: 'input', content: 'second', requestId: 'second', whenBusy: 'steer' }, instance.context);
       release.resolve();
       await pending.wait(instance.context);
@@ -481,7 +481,7 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     try {
       await submit(instance, 'setup', 'setup', other);
       await settleAgents(instance, { intervalMs: 1 });
-      const pending = await instance.submit('hold', 'hold', laptop);
+      const pending = await instance.submit('hold', { requestId: 'hold', target: laptop });
       await started.promise;
       const inbox = await instance.harness.watchDoc(InboxDoc, instance.root.id, instance.context);
       assert.ok(inbox);
@@ -573,7 +573,7 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     const catalog = offlineModels(router({ Pi: ({ last }) => last ? say('done') : call(['write', { path: 'never-host.txt', content: 'remote only' }]) }));
     const instance = await openInstance({ ...options, ...catalog, dispatcher, allowTools: true });
     try {
-      const pending = await instance.submit('write', 'offline', laptop);
+      const pending = await instance.submit('write', { requestId: 'offline', target: laptop });
       await started.promise;
       await assert.rejects(access(join(options.cwd, 'never-host.txt')));
       assert.equal((await pending.status(instance.context)).status, 'placed');
@@ -608,7 +608,7 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
         entry: { kind: 'agents.report', data: { name: 'Old', text: 'report' } } }, instance.context);
       await report.wait(instance.context);
       assert.match(await errors(instance), /no pinned machine destination/);
-      await assert.rejects(instance.submit('retroactive route', 'agents:unmapped', laptop), /already exists without a pinned machine/);
+      await assert.rejects(instance.submit('retroactive route', { requestId: 'agents:unmapped', target: laptop }), /already exists without a pinned machine/);
       const agents = await instance.harness.snapshot(AgentsDoc, instance.context);
       const id = agents?.agents.Old?.conversationId;
       assert.ok(id);

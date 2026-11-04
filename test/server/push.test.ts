@@ -8,7 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
-import { isObject } from '../../src/memory/util.ts';
+import { isRecord } from '../../src/protocol/util.ts';
 import type { PushSubscriptionJson } from '../../src/protocol/messages.ts';
 import {
   InvalidSubscription, createPush, encryptPayload, isPushServiceEndpoint, topicOf, vapidJwt,
@@ -132,7 +132,7 @@ describe('subscriptions', () => {
     await push.subscribe({ endpoint: 'https://web.push.apple.com/c', keys: keys() }, 'tablet');
     assert.equal(await push.forgetDevice('phone'), 2);
     const stored: unknown = JSON.parse(await readFile(join(dir, 'serve', 'push.json'), 'utf8'));
-    assert.ok(isObject(stored) && isObject(stored.subscriptions));
+    assert.ok(isRecord(stored) && isRecord(stored.subscriptions));
     assert.deepEqual(Object.keys(stored.subscriptions), ['https://web.push.apple.com/c']);
     await rm(dir, { recursive: true, force: true });
   });
@@ -179,7 +179,7 @@ describe('sending', () => {
     }));
     const stored = async (): Promise<string[]> => {
       const json: unknown = JSON.parse(await readFile(join(dir, 'serve', 'push.json'), 'utf8'));
-      return isObject(json) && isObject(json.subscriptions) ? Object.keys(json.subscriptions) : [];
+      return isRecord(json) && isRecord(json.subscriptions) ? Object.keys(json.subscriptions) : [];
     };
     return { dir, push, agents, stored };
   }
@@ -200,7 +200,7 @@ describe('sending', () => {
       assert.ok(match?.[1] && match[2]);
       assert.equal(match[2], push.publicKey);
       const claims = checkJwt(match[1], push.publicKey);
-      assert.ok(isObject(claims));
+      assert.ok(isRecord(claims));
       assert.equal(claims.aud, origin);
       assert.equal(claims.sub, 'mailto:pi-durable@box.tailnet.ts.net');
       assert.deepEqual(JSON.parse(decrypt(request.body, agent.ecdh, agent.auth)), { title: 'Pi answered', body: 'Here is the plan.', tag: 'pi' });
@@ -216,7 +216,7 @@ describe('sending', () => {
     assert.ok(request && agent);
     assert.ok(request.body.length <= 4096);
     const payload: unknown = JSON.parse(decrypt(request.body, agent.ecdh, agent.auth));
-    assert.ok(isObject(payload) && typeof payload.body === 'string' && payload.body.endsWith('…'));
+    assert.ok(isRecord(payload) && typeof payload.body === 'string' && payload.body.endsWith('…'));
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -319,7 +319,7 @@ function checkJwt(jwt: string, publicKey: string): unknown {
 
 function createPrivateKeyOf(text: string): KeyObject {
   const jwk: unknown = JSON.parse(text);
-  assert.ok(isObject(jwk) && typeof jwk.x === 'string' && typeof jwk.y === 'string' && typeof jwk.d === 'string');
+  assert.ok(isRecord(jwk) && typeof jwk.x === 'string' && typeof jwk.y === 'string' && typeof jwk.d === 'string');
   return createPrivateKey({ key: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, d: jwk.d }, format: 'jwk' });
 }
 

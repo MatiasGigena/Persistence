@@ -5,6 +5,7 @@ import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { PeerLink, PushNotifier } from '../../src/server/link.ts';
 import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import { NotFound } from '../../src/ui/errors.ts';
 
 export class FakeFeed implements ChatFeed {
   list: ChatItem[];
@@ -51,7 +52,7 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
     get chat() { return this.root; },
     status: () => status,
     onStatus(listener) { statusListeners.add(listener); return () => { statusListeners.delete(listener); }; },
-    send(text, requestId, steer, _target, images) {
+    send(text, { requestId, steer, images } = {}) {
       calls.push(`send ${text} ${requestId ?? '-'}${steer ? ' steer' : ''}${images?.length ? ` images:${images.map(i => i.mimeType).join(',')}` : ''}`);
       return Promise.resolve();
     },
@@ -63,7 +64,7 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
       if ('name' in target && target.name === 'Coder') return Promise.reject(new Error('Coder is a standing agent; remove it from the roster first.'));
       const hit = status.agents.filter(agent => agent.archivedAt === undefined
         && ('name' in target ? agent.name.toLowerCase() === target.name.toLowerCase() : agent.role === 'main' && agent.name !== 'Coder'));
-      if ('name' in target && !hit.length) return Promise.reject(new Error(`No agent named ${target.name}.`));
+      if ('name' in target && !hit.length) return Promise.reject(new NotFound(`No agent named ${target.name}.`));
       const archivedAt = Date.now();
       set({ agents: status.agents.map(agent => hit.includes(agent) ? { ...agent, archivedAt } : agent) });
       return Promise.resolve(hit.map(agent => agent.name));
@@ -71,7 +72,7 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
     restoreAgent(name) {
       calls.push(`restore ${name}`);
       const hit = status.agents.find(agent => agent.name.toLowerCase() === name.toLowerCase());
-      if (!hit) return Promise.reject(new Error(`No agent named ${name}.`));
+      if (!hit) return Promise.reject(new NotFound(`No agent named ${name}.`));
       if (hit.archivedAt === undefined) return Promise.reject(new Error(`${hit.name} is not archived.`));
       set({ agents: status.agents.map(agent => agent === hit ? { name: agent.name, role: agent.role, parent: agent.parent, busy: agent.busy } : agent) });
       return Promise.resolve([hit.name]);
@@ -81,7 +82,7 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
       return Promise.resolve(agents.get(name.toLowerCase()));
     },
     memoryView: () => Promise.resolve(lines),
-    zoom(id, n) { return id === 0 ? Promise.resolve(`zoom ${id}+${n}`) : Promise.reject(new Error(`No line ${id}+${n}.`)); },
+    zoom(id, n) { return id === 0 ? Promise.resolve(`zoom ${id}+${n}`) : Promise.reject(new NotFound(`No line ${id}+${n}.`)); },
     models: () => Promise.resolve(models),
     setModel(provider, id) {
       return provider === 'faux' ? Promise.resolve() : Promise.reject(new Error(`Unknown model ${provider}/${id}`));

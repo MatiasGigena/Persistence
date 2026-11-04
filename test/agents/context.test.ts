@@ -146,7 +146,7 @@ describe('agent context (offline, host wiring)', { concurrency: false, timeout: 
       assert.deepEqual(reports, [['Big', 'looked']]);
       assert.ok((await entries(instance, ROOT_CONVERSATION_ID)).some((entry) => JSON.stringify(entry.model ?? []).includes('noted')));
       // zoom("Big") still gives the whole chat, marking the cut.
-      const chat = await agentTranscript(instance.harness, 'Big', instance.context);
+      const chat = await agentTranscript(instance.harness, instance.context, 'Big');
       assert.match(chat, /\d+\|note: the context was compacted here/);
       assert.ok(chat.includes(huge));
     } finally {

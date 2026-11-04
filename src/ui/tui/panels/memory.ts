@@ -7,14 +7,14 @@ import { NARROW } from '../theme.ts';
 import type { MemoryStats, UiSession, ViewLine } from '../../types.ts';
 import { clean, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
+import { errorMessage } from '../../../protocol/util.ts';
+import { parseMessage, parseZoom } from '../../text.ts';
 
 /** Shown while a level's lines or a message are on their way. */
 export const LOADING = 'Loading…';
 
 /** What a level shows: lines, still loading, or why they failed. */
 type Loaded<T> = { readonly state: 'loading' } | { readonly state: 'done'; readonly value: T } | { readonly state: 'failed'; readonly error: string };
-
-const failure = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** Opens the memory panel over the chat; resolves when it closes and the editor has focus again. */
 export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme): Promise<void> {
@@ -28,7 +28,7 @@ export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme)
     loading = true;
     session.memoryView().then(
       lines => { view = { state: 'done', value: lines }; },
-      (error: unknown) => { if (view.state !== 'done') view = { state: 'failed', error: failure(error) }; },
+      (error: unknown) => { if (view.state !== 'done') view = { state: 'failed', error: errorMessage(error) }; },
     ).finally(() => {
       loading = false;
       tui.requestRender();
@@ -70,7 +70,7 @@ export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme)
     let loaded: Loaded<T> = { state: 'loading' };
     promise.then(
       value => { loaded = { state: 'done', value }; },
-      (error: unknown) => { loaded = { state: 'failed', error: failure(error) }; },
+      (error: unknown) => { loaded = { state: 'failed', error: errorMessage(error) }; },
     ).finally(() => tui.requestRender());
     return () => loaded;
   }
@@ -114,18 +114,3 @@ export function viewRows(lines: readonly ViewLine[], theme: PanelTheme): Row[] {
   });
 }
 
-/** The two lines `zoom(id, n > 1)` returns, as `id+n|text`. Lines that do not parse are skipped. */
-export function parseZoom(out: string): ViewLine[] {
-  return out.split('\n').flatMap(line => {
-    const m = /^(\d+)\+(\d+)\|(.*)$/.exec(line);
-    return m ? [{ id: Number(m[1]), n: Number(m[2]), text: m[3] ?? '' }] : [];
-  });
-}
-
-/** `zoom(id, 1)`: `id+1|kind: text`, or `id+1 (page …)|…` for a long message, whose page note is kept. */
-export function parseMessage(out: string): { note: string | undefined; body: string } {
-  const bar = out.indexOf('|');
-  if (bar < 0) return { note: undefined, body: out };
-  const head = out.slice(0, bar), paren = head.indexOf(' (');
-  return { note: paren < 0 ? undefined : head.slice(paren + 1), body: out.slice(bar + 1) };
-}

@@ -3,10 +3,12 @@ import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
-import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
-import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui, statusText } from '../../src/ui/tui/app.ts';
-import type { AttachedLink, LinkState, TuiInfo } from '../../src/ui/tui/app.ts';
-import { ChatView, clean, TOOL_PREVIEW, TOOL_PREVIEW_NARROW, toolSummary } from '../../src/ui/tui/chat.ts';
+import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui } from '../../src/ui/tui/app.ts';
+import { statusText } from '../../src/ui/text.ts';
+import type { TuiInfo } from '../../src/ui/tui/app.ts';
+import { ChatView, clean, TOOL_PREVIEW, TOOL_PREVIEW_NARROW } from '../../src/ui/tui/chat.ts';
+import { toolSummary } from '../../src/ui/text.ts';
 import { Footer, footerText, SPIN_FAST, SPIN_SLOW, STEP_WIDTH, spinnerInterval } from '../../src/ui/tui/footer.ts';
 import type { FooterStatus } from '../../src/ui/tui/footer.ts';
 import { theme } from '../../src/ui/tui/theme.ts';
@@ -116,11 +118,19 @@ class FakeTerminal implements Terminal {
 
 const plain = (lines: readonly string[]): string[] => lines.map(line => stripTerminalSequences(line).trimEnd());
 
+/** Polls `check` instead of sleeping a fixed time, so a loaded machine only makes a test slower. */
+async function until(check: () => boolean, what: string, wait = (): Promise<unknown> => delay(20)): Promise<void> {
+  for (const end = Date.now() + 5_000; !check(); await wait()) if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
+}
+
+/** Input is handled synchronously but drawn on a later tick: output past `mark` means the frame after the input is drawn. */
+const drawn = (terminal: FakeTerminal, mark: number): Promise<void> => until(() => terminal.output.length > mark, 'a frame after the input');
+
 /** Starts the TUI on a fake terminal; returns it with the promise of its exit. */
 async function startTui(session: FakeSession, signal?: AbortSignal, terminal = new FakeTerminal(),
   extra: Partial<TuiInfo> = {}): Promise<{ terminal: FakeTerminal; done: Promise<void> }> {
   const done = runTui(session, { cwd: process.cwd(), terminal, env: {}, ...signal ? { signal } : {}, ...extra });
-  await delay(30);
+  await until(() => /tools o(n|ff)/.test(terminal.text()) || terminal.stopped, 'the first frame');
   return { terminal, done };
 }
 
@@ -259,8 +269,7 @@ test('Enter sends, Esc aborts, Ctrl+D exits and restores the terminal', async ()
   terminal.type('hello', '\r');
   assert.deepEqual(session.sent, ['hello']);
   terminal.type('\x1b');
-  await delay(80);
-  assert.equal(session.aborts, 1);
+  await until(() => session.aborts === 1, 'the abort');
   terminal.type('x', '\x04');
   terminal.type('\x15', '\x04');
   await done;
@@ -272,17 +281,15 @@ test('slash commands dispatch, and Ctrl+C twice exits', async () => {
   const { terminal, done } = await startTui(session);
   terminal.type('/status', '\r');
   terminal.type('/nope', '\r');
-  await delay(30);
+  await until(() => /Unknown command \/nope/.test(terminal.text()), 'both replies');
   assert.match(terminal.text(), /model faux\/model-1 · thinking high · tools off/);
   assert.match(terminal.text(), /Unknown command \/nope/);
   terminal.type('/agents', '\r');
-  await delay(30);
-  assert.match(terminal.text(), /No agents yet/);
+  await until(() => /No agents yet/.test(terminal.text()), 'the agents panel');
   terminal.type('\x1b'); // Esc closes the panel, not Pi's run.
-  await delay(80);
-  assert.equal(session.aborts, 0);
   terminal.type('after panel', '\r');
-  assert.deepEqual(session.sent, ['after panel']);
+  assert.deepEqual(session.sent, ['after panel'], 'the editor has focus back, so the Esc was handled');
+  assert.equal(session.aborts, 0);
   assert.equal(session.sent.some(text => text.startsWith('/')), false, 'commands are not sent to Pi');
   terminal.type('\x03', '\x03');
   await done;
@@ -303,8 +310,9 @@ test('a line that starts with a path is sent to Pi, not taken as a command', asy
   assert.equal(isCommand('/tmp/x.log'), false);
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
+  const mark = terminal.output.length;
   terminal.type('/etc/hosts is empty, why?', '\r');
-  await delay(30);
+  await drawn(terminal, mark);
   assert.deepEqual(session.sent, ['/etc/hosts is empty, why?']);
   assert.doesNotMatch(terminal.text(), /Unknown command/);
   terminal.type('/exit', '\r');
@@ -316,25 +324,28 @@ test('a message that was not sent says so, and ↑ brings it back to the editor'
   session.send = () => Promise.reject(new Error('the link is down'));
   const { terminal, done } = await startTui(session);
   terminal.type('my long message', '\r');
-  await delay(30);
+  await until(() => /Not sent/.test(terminal.text()), 'the failure');
   assert.match(terminal.text(), /Not sent: the link is down \(↑ brings the message back\)/);
   terminal.type('\x1b[A', '\r');
-  await delay(30);
+  await until(() => (terminal.text().match(/Not sent/g) ?? []).length > 1, 'the second failure');
   assert.equal((terminal.text().match(/Not sent: the link is down/g) ?? []).length, 2, '↑ then Enter resends it');
   terminal.type('/exit', '\r');
   await done;
 });
 
-test('the first Ctrl+C says in the footer that a second one quits, until the second would no longer count', async () => {
+test('the first Ctrl+C says in the footer that a second one quits, until the second would no longer count', async t => {
   const session = new FakeSession();
   const { terminal, done } = await startTui(session, undefined, new FakeTerminal(40, 15));
   const footer = (): string => terminal.screen().find(row => row.includes('tools off')) ?? '';
   assert.doesNotMatch(footer(), /ctrl\+c again/);
+  // Mock time from here: both the 1 s window and the renderer's frame timer run on it, so each poll ticks it.
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+  const tick = async (): Promise<void> => { t.mock.timers.tick(20); await new Promise(resolve => setImmediate(resolve)); };
   terminal.type('draft', '\x03');
-  await delay(30);
+  await until(() => /ctrl\+c again/.test(footer()), 'the hint', tick);
   assert.match(footer(), /ctrl\+c again to quit/, 'kept on a phone-width footer');
-  await delay(1100);
-  assert.doesNotMatch(footer(), /ctrl\+c again/);
+  t.mock.timers.tick(1_000);
+  await until(() => !/ctrl\+c again/.test(footer()), 'the hint to expire', tick);
   assert.equal(terminal.stopped, false);
   terminal.type('\x03', '\x03');
   await done;
@@ -344,10 +355,6 @@ test('the first Ctrl+C says in the footer that a second one quits, until the sec
 test('/effort NAME sets the effort; /effort alone opens the picker on the current level, and Enter takes the highlighted one', async () => {
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
-  // Polls, so a loaded machine only makes the test slower.
-  const until = async (check: () => boolean, what: string) => {
-    for (const end = Date.now() + 5_000; !check(); await delay(20)) if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
-  };
   terminal.type('/effort LOW', '\r');
   await until(() => /Effort: low \(from the next request; saved as default\)/.test(terminal.text()), 'the notice');
   assert.equal(session.status().thinkingLevel, 'low', 'any case');
@@ -368,7 +375,7 @@ test('the header and footer follow status changes, and tools on is in the warnin
   const { terminal, done } = await startTui(session);
   terminal.output = '';
   session.update({ model: 'faux/model-2', toolsEnabled: true });
-  await delay(30);
+  await until(() => /tools on/.test(terminal.text()) && terminal.output.includes(theme.warning('tools on')), 'the new status');
   assert.match(terminal.text(), /faux\/model-2/);
   assert.match(terminal.text(), /tools on/);
   assert.ok(terminal.output.includes(theme.warning('tools on')), 'tools on is yellow');
@@ -493,11 +500,12 @@ test('the footer marks a chat scrolled up from its end, until it is back at the 
     const { terminal, done } = await startTui(new FakeSession(items), undefined, new FakeTerminal(columns, 12), { backlog: 30 });
     const footer = (): string => terminal.screen().find(row => row.includes('tools off')) ?? assert.fail(terminal.screen().join('\n'));
     assert.ok(!footer().includes(mark), footer());
+    const marked = (): boolean => terminal.screen().some(row => row.includes('tools off') && row.includes(mark));
     terminal.type('\x1b[5~');
-    await delay(30);
+    await until(marked, 'the mark');
     assert.ok(footer().includes(mark), footer());
     terminal.type('\x1b[6~', '\x1b[6~', '\x1b[6~');
-    await delay(30);
+    await until(() => !marked(), 'the mark to go');
     assert.ok(!footer().includes(mark), footer());
     terminal.type('\x04');
     await done;
@@ -534,7 +542,7 @@ test('on a phone the header is hidden, the screen fits, and the editor stays sma
     assert.equal(first[0]?.startsWith('Pi · faux/model-1'), columns >= 60, first.join('\n'));
     terminal.type('/help', '\r');
     for (let i = 1; i <= 9; i++) terminal.type(`line ${i}`, '\n');
-    await delay(30);
+    await until(() => terminal.screen().some(row => row.includes('line 9')), 'the typed lines');
     const screen = terminal.screen();
     fits(screen, columns);
     assert.ok(screen.some(row => row.includes('tools off')), screen.join('\n'));
@@ -553,19 +561,19 @@ test('/stop interrupts Pi, as Esc does', async () => {
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
   terminal.type('/stop', '\r');
-  await delay(10);
+  await until(() => /Nothing to stop/.test(terminal.text()), 'the idle notice');
   assert.equal(session.aborts, 1);
   assert.deepEqual(session.sent, [], '/stop is not sent to Pi');
   assert.match(terminal.text(), /Nothing to stop: Pi is idle\./);
   session.update({ agents: [{ name: 'Scout', role: 'main', parent: 'Pi', busy: true }] });
   terminal.type('/stop', '\r');
-  await delay(10);
+  await until(() => /Pi is idle;/.test(terminal.text()), 'the agents notice');
   assert.match(terminal.text(), /Pi is idle; 1 agent is working: \/stop all stops them\./);
   session.update({ busy: true });
   const mark = terminal.output.length;
   terminal.type('/stop', '\r');
   terminal.type('\x1b');
-  await delay(80);
+  await drawn(terminal, mark);
   assert.equal(session.aborts, 4);
   assert.doesNotMatch(stripTerminalSequences(terminal.output.slice(mark)), /Pi is idle|Nothing to stop/, 'silent while Pi works');
   terminal.type('/exit', '\r');
@@ -576,13 +584,13 @@ test('/stop all stops Pi and every agent; /stop Name stops one agent', async () 
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
   terminal.type('/stop all', '\r');
-  await delay(10);
+  await until(() => /Stopped Ada\./.test(terminal.text()), 'Ada stopped');
   assert.equal(session.aborts, 1);
   terminal.type('/stop Bob', '\r');
-  await delay(10);
+  await until(() => /Stopped Bob\./.test(terminal.text()), 'Bob stopped');
   assert.equal(session.aborts, 1, 'a named stop leaves Pi running');
   terminal.type('/stop ghost', '\r');
-  await delay(10);
+  await until(() => /No agent named ghost\./.test(terminal.text()), 'the unknown name');
   assert.deepEqual(session.stopped, [undefined, 'Bob', 'ghost']);
   assert.match(terminal.text(), /Stopped Ada\./);
   assert.match(terminal.text(), /Stopped Bob\./);
@@ -590,7 +598,7 @@ test('/stop all stops Pi and every agent; /stop Name stops one agent', async () 
   assert.doesNotMatch(terminal.text(), /Agents:/, 'no list when there are no agents');
   session.update({ agents: [{ name: 'Ada', role: 'main', parent: 'Pi', busy: false }, { name: 'Bob', role: 'sub', parent: 'Ada', busy: true }] });
   terminal.type('/stop ghost', '\r');
-  await delay(10);
+  await until(() => /Agents: Ada, Bob\./.test(terminal.text()), 'the agent list');
   assert.match(terminal.text(), /No agent named ghost\. Agents: Ada, Bob\./);
   assert.deepEqual(session.sent, []);
   terminal.type('/exit', '\r');
@@ -607,16 +615,17 @@ test('Ctrl+D and Ctrl+C twice ask first only while Pi or an agent works', async 
   session.update({ busy: true });
   const { terminal, done } = await startTui(session);
   terminal.type('\x04');
-  await delay(30);
+  await until(() => /Exit anyway\?/.test(terminal.text()), 'the question');
   assert.match(terminal.text(), /Pi or agents are working\. Exit anyway\?/);
   assert.ok(EXIT_QUESTION.includes('Work resumes on the next launch.'));
+  const answered = terminal.output.length;
   terminal.type('n');
-  await delay(30);
+  await drawn(terminal, answered); // the frame that hides the question, after the answer settled
   assert.equal(terminal.stopped, false, 'any key but y keeps the chat open');
   session.update({ busy: false, agents: [{ name: 'Scout', role: 'main', parent: 'Pi', busy: true }] });
   const mark = terminal.output.length;
   terminal.type('\x03', '\x03');
-  await delay(30);
+  await until(() => /Exit anyway\?/.test(stripTerminalSequences(terminal.output.slice(mark))), 'the second question');
   assert.match(stripTerminalSequences(terminal.output.slice(mark)), /Exit anyway\?/, 'a busy agent asks too');
   terminal.type('y');
   await done;
@@ -625,7 +634,7 @@ test('Ctrl+D and Ctrl+C twice ask first only while Pi or an agent works', async 
 
 /** An attached TUI's link to a server, which the test moves between states. */
 class FakeLink implements AttachedLink {
-  private current: LinkState = 'open';
+  private current: LinkState = 'ready';
   private readonly listeners = new Set<() => void>();
   state(): LinkState { return this.current; }
   onChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -637,7 +646,7 @@ test('host notices show in the chat, and the TUI unsubscribes on exit', async ()
   const session = new FakeSession();
   const { terminal, done } = await startTui(session);
   session.notify('Memory: compaction failed', 'warn');
-  await delay(30);
+  await until(() => /compaction failed/.test(terminal.text()), 'the notice');
   assert.match(terminal.text(), /! Memory: compaction failed/);
   terminal.type('/exit', '\r');
   await done;
@@ -650,7 +659,7 @@ test('attached: Ctrl+D detaches at once even while Pi works, and /help and /exit
   session.update({ busy: true });
   const { terminal, done } = await startTui(session, undefined, new FakeTerminal(), { attached: link });
   terminal.type('/help', '\r');
-  await delay(30);
+  await until(() => /keep working on the server/.test(terminal.text()), 'the help');
   assert.match(terminal.text(), /\/exit +detach \(ctrl\+d when empty\)/);
   assert.match(terminal.text(), /keep working on the server after you detach/);
   assert.equal(commands(true).find(c => c.name === 'exit')?.description, 'Detach; the server keeps working');
@@ -666,12 +675,12 @@ test('attached: the footer says reconnecting… while the link is down, and a cl
   const { terminal, done } = await startTui(session, undefined, new FakeTerminal(40, 15), { attached: link });
   assert.doesNotMatch(terminal.text(), /reconnecting/);
   link.set('reconnecting');
-  await delay(30);
+  await until(() => terminal.screen().some(row => row.includes('tools off') && row.includes('reconnecting')), 'the reconnecting footer');
   const footer = terminal.screen().find(row => row.includes('tools off'));
   assert.match(footer ?? '', /reconnecting…/, 'kept on a phone-width footer');
   terminal.output = '';
-  link.set('open');
-  await delay(30);
+  link.set('ready');
+  await until(() => terminal.screen().some(row => row.includes('tools off') && !row.includes('reconnecting')), 'the ready footer');
   assert.doesNotMatch(terminal.screen().find(row => row.includes('tools off')) ?? '', /reconnecting/);
   link.set('closed');
   await done;

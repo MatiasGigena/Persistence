@@ -22,7 +22,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-… pi-durable --model anthropic/claude-sonnet-5-
 
 ## Switching models
 
-In the terminal UI, `/model` switches Pi's model without a relaunch (`src/ui/session.ts`, `src/runtime/models.ts`).
+In the terminal UI, `/model` switches Pi's model without a relaunch (`src/host/session.ts`, `src/runtime/models.ts`).
 
 - **The list** holds the models worth picking, not the whole catalog: every `claude-cli` model, the current provider's
   models, `openai-codex/…`, `openai/…` only when it has credentials, and `anthropic/…`. Dated snapshots

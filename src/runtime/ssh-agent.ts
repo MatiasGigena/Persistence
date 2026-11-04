@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { errorMessage } from '../protocol/util.ts';
 
 export interface SshAgent {
   /** For SSH_AUTH_SOCK. */
@@ -16,8 +17,8 @@ export interface SshAgent {
 /** A Unix socket path's limit on Linux, in bytes. */
 const MAX_SOCKET = 107;
 
-/** Why `command` failed: ENOENT as not installed, else its last stderr line. */
-function run(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<string | undefined> {
+/** Runs `command`; resolves with why it failed (ENOENT as not installed, else its last stderr line), or undefined. */
+function runFailure(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<string | undefined> {
   return new Promise(done => {
     // detached: no controlling terminal, so a key's passphrase prompt fails instead of taking over the user's.
     const child = spawn(command, args, { env, detached: true, stdio: ['ignore', 'ignore', 'pipe'], timeout: 10_000 });
@@ -38,7 +39,7 @@ export async function startSshAgent(keys: readonly string[], warn: (message: str
   if (!keys.length) return undefined;
   let dir: string;
   try { dir = await mkdtemp(join(env.XDG_RUNTIME_DIR || '/tmp', 'pi-ssh-')); } catch (error) {
-    warn(`Pi's SSH agent is off: ${error instanceof Error ? error.message : String(error)}`);
+    warn(`Pi's SSH agent is off: ${errorMessage(error)}`);
     return undefined;
   }
   const socket = join(dir, 'agent');
@@ -75,7 +76,7 @@ export async function startSshAgent(keys: readonly string[], warn: (message: str
   for (const key of keys) {
     const notAdded = `PI_DURABLE_SSH_KEYS: ${key} is not in Pi's SSH agent`;
     if (!existsSync(key)) { warn(`${notAdded}: there is no such file.`); continue; }
-    const why = await run('ssh-add', ['-q', '--', key], addEnv);
+    const why = await runFailure('ssh-add', ['-q', '--', key], addEnv);
     // ssh-add asks for a passphrase it cannot get ("Enter passphrase for …"); say so plainly, and only then.
     if (why) warn(/passphrase/i.test(why) ? `${notAdded}: it has a passphrase, which nothing can ask for here. Use a key without one.` : `${notAdded} (${why}).`);
   }

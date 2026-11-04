@@ -228,21 +228,21 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
       assert.equal(await execute(instance, 'last_message', { name: 'Coder' }, await mint()), 'Coder is idle. Last message:\nTests added.');
 
       // zoom("Coder") is the current session; "Coder#n" any, 1 the oldest.
-      const current = await agentTranscript(instance.harness, 'Coder', context);
+      const current = await agentTranscript(instance.harness, context, 'Coder');
       assert.match(current, /^session 2 of 2 \(current\)\n\n0\|note: .*\n\n1\|user: \[from Pi\] Task two\.\n\n2\|Coder: Two done\./);
-      assert.equal(await agentTranscript(instance.harness, 'coder#2', context), current);
-      const oldest = await agentTranscript(instance.harness, 'Coder#1', context);
+      assert.equal(await agentTranscript(instance.harness, context, 'coder#2'), current);
+      const oldest = await agentTranscript(instance.harness, context, 'Coder#1');
       assert.match(oldest, /^session 1 of 2\n\n0\|note: .*\n\n1\|user: \[from Pi\] Task one\.\n\n2\|Coder: One done\.$/);
-      assert.equal(await agentTranscript(instance.harness, 'Coder#1', context, 1), oldest, 'a short chat is one page');
-      assert.equal(await agentTranscript(instance.harness, 'Coder#3', context), 'No session 3: Coder has 2 sessions.');
-      assert.equal(await agentTranscript(instance.harness, 'Coder#0', context), 'No session 0: Coder has 2 sessions.');
+      assert.equal(await agentTranscript(instance.harness, context, 'Coder#1', 1), oldest, 'a short chat is one page');
+      assert.equal(await agentTranscript(instance.harness, context, 'Coder#3'), 'No session 3: Coder has 2 sessions.');
+      assert.equal(await agentTranscript(instance.harness, context, 'Coder#0'), 'No session 0: Coder has 2 sessions.');
 
       // An ad-hoc agent has no delegate and no session line.
       await ask('lead');
       await settle(instance);
       const lead = await record(instance, 'Lead');
       assert.deepEqual(await offered(instance, lead.conversationId), ['last_message', 'list_agents', 'send_message', 'spawn_agent', 'stop_agent']);
-      assert.match(await agentTranscript(instance.harness, 'Lead', context), /^0\|note: /);
+      assert.match(await agentTranscript(instance.harness, context, 'Lead'), /^0\|note: /);
       assert.equal(lead.past, undefined);
     } finally {
       await instance.close();

@@ -1,15 +1,9 @@
-// The contract between the host's state (src/ui/session.ts) and its clients: the terminal UI (src/ui/tui/), and
+// The contract between the host's state (src/host/session.ts) and its clients: the terminal UI (src/ui/tui/), and
 // over the wire protocol (src/protocol/) the attached TUI and the web app. The session knows pi-durable, memory and
-// agents; clients know only these types. This file imports nothing, so the browser can type-check against it.
-
-/**
- * An image a message or tool result carries: base64 `data` of a `mimeType` in IMAGE_TYPES (src/protocol/images.ts).
- * On the wire, `data` is empty when the image is too large to send (LIMITS.image); clients then show a placeholder.
- */
-export interface ChatImage {
-  readonly mimeType: string;
-  readonly data: string;
-}
+// agents; clients know only these types. It imports only types from src/protocol/ (images, machine targets), which
+// has no Node or DOM imports either, so the browser can type-check against it.
+import type { ChatImage } from '../protocol/images.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 
 /** One block of a conversation, in order. Streaming blocks are updated in place by `id`. */
 export type ChatItem =
@@ -111,10 +105,16 @@ export interface ChatFeed {
 }
 
 /** Immutable execution destination; machineId "server" is reserved for the host. */
-export interface MachineTarget {
-  readonly machineId: string;
-  readonly cwd: string;
-  readonly label: string;
+/** What a send carries besides its text; every field is optional, and the same object crosses every layer. */
+export interface SendOptions {
+  /** A client's id for the send: a repeat with the same id is admitted once. */
+  readonly requestId?: string;
+  /** Deliver to a busy Pi between its steps, instead of after its run. */
+  readonly steer?: boolean;
+  /** The machine and folder its tools run in; the server's own when omitted. */
+  readonly target?: MachineTarget;
+  /** Images that go to the model with the text. */
+  readonly images?: readonly ChatImage[];
 }
 
 /** The shared chat contract. Every method may reject; none waits for a model answer. */
@@ -130,7 +130,7 @@ export interface UiSession {
    * dedup), so a client may resend after losing the answer to a reconnect. `images` go to the model with the text;
    * the text may then be empty. Rejects when Pi's model takes no images, rather than dropping them.
    */
-  send(text: string, requestId?: string, steer?: boolean, target?: MachineTarget, images?: readonly ChatImage[]): Promise<void>;
+  send(text: string, options?: SendOptions): Promise<void>;
   /** Interrupts Pi's running work (Esc). Durable work stays resumable. */
   abort(): Promise<void>;
   /**
@@ -140,8 +140,8 @@ export interface UiSession {
   stopAgents(name?: string): Promise<readonly string[]>;
   /**
    * Archives one agent (with a main agent's sub agents), or every ad-hoc main agent: their work stops, and they are
-   * deleted a day later unless restored. Resolves with the names archived; rejects with a readable refusal (a
-   * standing agent, an unknown or already archived one).
+   * deleted a day later unless restored. Resolves with the names archived; an agent already archived keeps its time
+   * and is among them. Rejects with a readable refusal for a standing agent, and NotFound for an unknown one.
    */
   archiveAgents(target: ArchiveTarget): Promise<readonly string[]>;
   /** Restores an archived agent (with a main agent's sub agents). Resolves with the names restored; rejects readably. */
@@ -177,4 +177,14 @@ export interface UiSession {
    * Returns an unsubscribe function.
    */
   onNotice(listener: (text: string, level: NoticeLevel) => void): () => void;
+}
+
+/** The state of an attached TUI's link to the server: up, down and retrying, or closed for good. */
+export type LinkState = 'ready' | 'reconnecting' | 'closed';
+
+/** An attached TUI's link to the server (src/client/), as the TUI sees it. */
+export interface AttachedLink {
+  state(): LinkState;
+  /** Called after any change to `state()`. Returns an unsubscribe function. */
+  onChange(listener: () => void): () => void;
 }

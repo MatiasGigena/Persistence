@@ -31,6 +31,10 @@ export interface StandingAgent {
 /** Standing agents by name. */
 export type Roster = Readonly<Record<string, StandingAgent>>;
 
+/** The roster entry named `name`, ignoring case as every agent lookup does. */
+export const rosterEntry = (roster: Roster, name: string): StandingAgent | undefined =>
+  Object.entries(roster).find(([each]) => each.toLowerCase() === name.toLowerCase())?.[1];
+
 /** The built-in roster, used when settings.json has no `agents` key. */
 export const DEFAULT_ROSTER: Roster = {
   Coder: { model: { provider: 'claude-cli', modelId: 'opus' }, thinkingLevel: 'medium', tools: ['coding'] },

@@ -199,14 +199,14 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
       assert.ok(seen.some((turn) => turn.who === 'Pi' && turn.user === '[Lead]\nA finished.\n\nFull chat: zoom("Lead")'));
 
       // Transcript rendering for zoom(): upstream's `i|kind: text` lines, inputs from their entries, no view preamble.
-      const zoom = await agentTranscript(harness, 'B', context);
+      const zoom = await agentTranscript(harness, context, 'B');
       assert.match(zoom, /^0\|note: the first message also held Pi's view at the spawn \(not shown\)\n\n1\|user: \[from Lead\] Do part B\.\n\n/);
       assert.match(zoom, /\n\n\d+\|user: \[from A\] hello from A\n\n\d+\|B: B got hello\./);
       assert.doesNotMatch(zoom, /<view>/);
-      const leadChat = await agentTranscript(harness, 'Lead', context);
+      const leadChat = await agentTranscript(harness, context, 'Lead');
       assert.match(leadChat, /\d+\|tool: spawn_agent\(\{"name":"B","task":"Do part B\."\}\)\n\n\d+\|echo: spawn_agent: Started sub agent B\./);
       assert.match(leadChat, /\d+\|user: \[A\] A done\./);
-      assert.match(await agentTranscript(harness, 'Pi', context), /\d+\|tool: spawn_agent\(\{"name":"Lead"/);
+      assert.match(await agentTranscript(harness, context, 'Pi'), /\d+\|tool: spawn_agent\(\{"name":"Lead"/);
     } finally {
       await instance.close();
     }
@@ -363,16 +363,16 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
       const { harness, root, context } = instance;
       await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context);
       await settle(instance);
-      const whole = await agentTranscript(harness, 'Long', context);
+      const whole = await agentTranscript(harness, context, 'Long');
       assert.ok(whole.length > 60_000 && whole.length < 90_000, String(whole.length));
-      const pages = [1, 2, 3].map((page) => agentTranscript(harness, 'long', context, page));
+      const pages = [1, 2, 3].map((page) => agentTranscript(harness, context, 'long', page));
       const [one, two, three] = await Promise.all(pages);
       assert.match(one ?? '', /\n\[page 1 of 3; go on with page 2\]$/);
       assert.match(two ?? '', /\n\[page 2 of 3; go on with page 3\]$/);
       const body = (page: string | undefined) => (page ?? '').replace(/\n\[page \d of 3; go on with page \d\]$/, '');
       assert.ok([one, two].every((page) => body(page).length <= TRANSCRIPT_PAGE && body(page).endsWith('\n')));
       assert.equal(body(one) + body(two) + body(three), whole);
-      assert.equal(await agentTranscript(harness, 'Long', context, 4), 'No page 4: Long\'s chat has 3.');
+      assert.equal(await agentTranscript(harness, context, 'Long', 4), 'No page 4: Long\'s chat has 3.');
     } finally {
       await instance.close();
     }

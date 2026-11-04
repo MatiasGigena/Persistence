@@ -1,9 +1,8 @@
 import { defineTool } from '@earendil-works/pi-durable';
 import type { Extension, ToolRegistration } from '@earendil-works/pi-durable';
-import { arr, obj, opt, type Schema, type Static, str, union } from '@earendil-works/pi-schema';
+import { arr, obj, opt, type Static, str, union } from '@earendil-works/pi-schema';
+import { literal } from './schema.ts';
 
-/** A string literal as TypeBox wrote it (`type` and `const`), so the tool's JSON Schema stays as it was. */
-const literal = <const V extends string>(value: V): Schema<V> => ({ type: 'string', const: value });
 
 const value = str({ minLength: 1 });
 const parameters = obj({

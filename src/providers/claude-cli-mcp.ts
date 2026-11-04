@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { isRecord } from '../protocol/util.ts';
 
 /**
  * Stub stdio MCP server for the claude-cli provider: `node claude-cli-mcp.ts TOOLS.json`. It lists Pi's tools so
@@ -9,7 +10,6 @@ import { createInterface } from 'node:readline';
 const DEFERRED = 'deferred to host';
 
 type Json = Record<string, unknown>;
-const isJson = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isList = (value: unknown): value is unknown[] => Array.isArray(value);
 
 /** JSON-RPC 2.0, as far as this server reads and writes it. A request without an id is a notification. */
@@ -26,7 +26,7 @@ type Response = { jsonrpc: '2.0'; id: Id } & ({ result: Result } | { error: { co
 function parseRequest(line: string): Request | undefined {
   let message: unknown;
   try { message = JSON.parse(line); } catch { return undefined; }
-  if (!isJson(message)) return undefined;
+  if (!isRecord(message)) return undefined;
   const { id, method, params } = message;
   return { id: typeof id === 'string' || typeof id === 'number' || id === null ? id : undefined, method, params };
 }
@@ -35,10 +35,10 @@ const file = process.argv[2];
 if (!file) throw new Error('usage: node claude-cli-mcp.ts TOOLS.json');
 const list: unknown = JSON.parse(readFileSync(file, 'utf8'));
 if (!isList(list)) throw new Error(`${file}: not a list of tools`);
-const tools: McpTool[] = list.filter(isJson).map(({ name, description, parameters }) => ({ name, description, inputSchema: parameters }));
+const tools: McpTool[] = list.filter(isRecord).map(({ name, description, parameters }) => ({ name, description, inputSchema: parameters }));
 const send = (response: Response) => process.stdout.write(`${JSON.stringify(response)}\n`);
 const methods: Partial<Record<string, (params: unknown) => Result>> = {
-  initialize: params => ({ protocolVersion: isJson(params) && typeof params.protocolVersion === 'string' ? params.protocolVersion : '2025-06-18',
+  initialize: params => ({ protocolVersion: isRecord(params) && typeof params.protocolVersion === 'string' ? params.protocolVersion : '2025-06-18',
     capabilities: { tools: {} }, serverInfo: { name: 'pi', version: '1.0.0' } }),
   ping: () => ({}),
   'tools/list': () => ({ tools }),

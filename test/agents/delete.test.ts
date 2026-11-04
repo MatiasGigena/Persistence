@@ -12,6 +12,7 @@ import {
 } from '../../src/agents/index.ts';
 import { type AgentsInstance, call, openAgents, router, say } from '../fixtures/agents-instance.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
+import { NotFound } from '../../src/ui/errors.ts';
 
 async function temporary(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-delete-'));
@@ -75,9 +76,10 @@ describe('delete_agent (offline)', { concurrency: false, timeout: 60_000 }, () =
       assert.equal(await execute('delete_agent', { name: 'S' }, lead), 'Only Pi can delete agents.');
       assert.equal(await execute('delete_agent', { name: 'pi' }), 'Pi cannot be deleted.');
       assert.equal(await execute('delete_agent', { name: 'nobody' }), 'No agent named nobody. The agents are Lead, S.');
-      await assert.rejects(agentTranscript(harness, 'Laed', context), { message: 'No agent named Laed. The agents are Lead, S.' });
-      assert.deepEqual(await deleteAgent(harness, context, 'lead', { Lead: ROSTER.Coder! }),
-        { error: 'Lead is a standing agent; it can be deleted only after it leaves the roster.' });
+      await assert.rejects(agentTranscript(harness, context, 'Laed'), { message: 'No agent named Laed. The agents are Lead, S.' });
+      await assert.rejects(deleteAgent(harness, context, 'lead', { Lead: ROSTER.Coder! }),
+        { message: 'Lead is a standing agent; it can be deleted only after it leaves the roster.' });
+      await assert.rejects(deleteAgent(harness, context, 'nobody'), (error: unknown) => error instanceof NotFound);
       assert.deepEqual((await listAgents(harness, context)).map((agent) => agent.name).sort(), ['Lead', 'S']);
 
       assert.equal(await execute('delete_agent', { name: 'lead' }),
@@ -85,14 +87,14 @@ describe('delete_agent (offline)', { concurrency: false, timeout: 60_000 }, () =
       assert.deepEqual(await listAgents(harness, context), []);
       const registry = await harness.snapshot(AgentsDoc, context);
       assert.deepEqual(registry?.deleted, { S: [sub], Lead: [lead] });
-      assert.match(await agentTranscript(harness, 'S', context), /^S was deleted; its chat is kept\n\n.*\|S: S idles\./s);
-      assert.match(await agentTranscript(harness, 'Lead', context), /Lead was deleted/);
+      assert.match(await agentTranscript(harness, context, 'S'), /^S was deleted; its chat is kept\n\n.*\|S: S idles\./s);
+      assert.match(await agentTranscript(harness, context, 'Lead'), /Lead was deleted/);
       assert.equal(await execute('send_message', { to: 'Lead', text: 'x' }), 'No agent named Lead. There are none.');
       assert.equal(await execute('delete_agent', { name: 'Lead' }), 'No agent named Lead. There are none.');
       const again = await (await root.submit({ type: 'input', content: 'again' }, context)).wait(context);
       assert.equal(again.status, 'done');
       await settle(instance);
-      assert.doesNotMatch(await agentTranscript(harness, 'Lead', context), /was deleted/, 'a live agent wins over a deleted name');
+      assert.doesNotMatch(await agentTranscript(harness, context, 'Lead'), /was deleted/, 'a live agent wins over a deleted name');
     } finally {
       await instance.close();
     }
@@ -111,12 +113,11 @@ describe('delete_agent (offline)', { concurrency: false, timeout: 60_000 }, () =
       const { harness, root, context } = instance;
       await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context);
       await started.promise;
-      const refused = await deleteAgent(harness, context, 'Lead');
-      assert.ok('error' in refused && /\bS\b.* busy; stop_agent Lead first/.test(refused.error), deleteText(refused));
+      await assert.rejects(deleteAgent(harness, context, 'Lead'), /\bS\b.* busy; stop_agent Lead first/);
       assert.equal((await listAgents(harness, context)).length, 2);
       await stopAgents(harness, context, 'Lead');
       await settle(instance);
-      assert.deepEqual(await deleteAgent(harness, context, 'Lead'), { deleted: ['S', 'Lead'] });
+      assert.deepEqual(await deleteAgent(harness, context, 'Lead'), ['S', 'Lead']);
       assert.deepEqual(await listAgents(harness, context), []);
     } finally {
       await instance.close();

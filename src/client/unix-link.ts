@@ -7,6 +7,7 @@ import { CloseCode } from '../protocol/messages.ts';
 import type { Bye, ClientMessage, Op, RequestOf, ServerMessage, Welcome } from '../protocol/messages.ts';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
 import { PROTOCOL } from '../protocol/version.ts';
+import { errorMessage } from '../protocol/util.ts';
 
 /** One connection's message channel, whatever carries it. */
 export interface Channel {
@@ -80,7 +81,7 @@ export function unixConnector(path: string): Connector {
  * while it retries after a drop, `closed` for good (a final `bye`, a foreign socket, or `close()`). A welcomed
  * connection's `bye` 1000 is final unless `reconnectNormal` is set; 4000 and 4001 are always final.
  */
-export type LinkStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
+export type LinkStatus = 'connecting' | 'ready' | 'reconnecting' | 'closed';
 
 export interface LinkOptions {
   readonly connect: Connector;
@@ -106,7 +107,7 @@ const FINAL: ReadonlySet<number> = new Set([CloseCode.normal, CloseCode.version,
 /** Why a connection attempt failed; `final` means do not retry. */
 class Failed extends Error {
   readonly final: boolean;
-  constructor(message: string, final: boolean) { super(message); this.final = final; }
+  constructor(message: string, final: boolean, options?: ErrorOptions) { super(message, options); this.final = final; }
 }
 
 /** One connection attempt and, once welcomed, the live connection. */
@@ -176,7 +177,7 @@ export class ClientLink {
   /** Sends on the open connection; false when there is none. */
   send(message: Outgoing): boolean {
     const channel = this.current?.welcomed ? this.current.channel : undefined;
-    if (!channel || this.status !== 'open') return false;
+    if (!channel || this.status !== 'ready') return false;
     channel.send(JSON.stringify(message));
     return true;
   }
@@ -212,7 +213,7 @@ export class ClientLink {
     try { channel = await this.options.connect(events); } catch (error) {
       if (this.current === connection) this.current = undefined;
       if (error instanceof ForeignSocket) throw error;
-      throw new Failed(error instanceof Error ? error.message : String(error), false);
+      throw new Failed(errorMessage(error), false, { cause: error });
     }
     if (this.current !== connection) {
       channel.close();
@@ -247,7 +248,7 @@ export class ClientLink {
       connection.welcomed = true;
       this.wait = this.options.retry?.first ?? 250;
       this.startTicker(connection);
-      this.setStatus('open');
+      this.setStatus('ready');
       connection.hello.resolve(message);
     }
     for (const listener of [...this.messageListeners]) listener(message);

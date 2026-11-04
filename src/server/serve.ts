@@ -6,14 +6,15 @@ import { randomBytes } from 'node:crypto';
 import { format } from 'node:util';
 import type { Models } from '@earendil-works/pi-ai';
 import type { Config } from '../host/config.ts';
-import { errorMessage, isRecord, statePaths, VERSION } from '../host/config.ts';
+import { statePaths, VERSION } from '../host/config.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 import { CloseCode } from '../protocol/messages.ts';
 import { resumeInstance } from '../runtime/recovery.ts';
 import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
 import { openInstance } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
-import { createUiSession } from '../ui/session.ts';
-import type { UiSessionHandle } from '../ui/session.ts';
+import { createUiSession } from '../host/session.ts';
+import type { UiSessionHandle } from '../host/session.ts';
 import { Devices } from './auth.ts';
 import { backup } from './backup.ts';
 import { Hub } from './hub.ts';
@@ -130,10 +131,7 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
  */
 async function resume(instance: Instance, log: (line: string) => void, signal: AbortSignal): Promise<void> {
   try {
-    const inspection = await instance.harness.inspect(instance.context);
-    if (!inspection.tasks.length && !inspection.submissions.length) return;
-    log(`resuming ${inspection.tasks.length} pending task(s)`);
-    await resumeInstance(instance);
+    await resumeInstance(instance, { onResume: tasks => log(`resuming ${tasks} pending task(s)`) });
   } catch (error) {
     if (!signal.aborted) log(`resuming pending work failed: ${errorMessage(error)}`);
   }

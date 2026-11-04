@@ -19,7 +19,8 @@ dependencies, and its protocol code (`src/protocol/`) is plain, erasable TypeScr
   until the file's mtime or size changes), as `text/javascript`; the browser loads them as ES modules. `src/protocol/` is served the same
   way, so the browser runs the exact parser and mirror the server tests.
 - `src/web/tsconfig.json` (lib DOM) and `src/web/sw/tsconfig.json` (lib WebWorker) type-check them; `npm run check`
-  runs both. `src/ui/types.ts` imports nothing, so they resolve it without Node types.
+  runs both. `src/ui/types.ts` imports nothing but types from `src/protocol/` (ADR 0036), so they resolve it without
+  Node types.
 - Markdown uses `marked`, already installed through pi-tui (18.0.11), pinned as a direct dependency and served
   from `node_modules`. The WebSocket server uses `ws` (8.22.0, already installed), pinned likewise.
 - A strict Content-Security-Policy: `default-src 'self'`, no inline scripts but `index.html`'s import map (allowed

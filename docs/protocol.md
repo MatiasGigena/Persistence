@@ -121,7 +121,8 @@ stops them; the checks hold only together. The server host is assumed to have on
 - The web app calls `/api/me` before opening `/ws`: a browser cannot read why an upgrade failed, and the app must
   tell "pair this device" from "offline".
 - **App files** ([src/server/static.ts](../src/server/static.ts), ADR [0020](decisions/0020-web-client-without-build.md)):
-  `src/web/` at `/` (`/` is `index.html`), `src/protocol/` at `/protocol/`, `src/ui/types.ts` at `/ui/types.ts`, and
+  `src/web/` at `/` (`/` is `index.html`), `src/protocol/` at `/protocol/`, `src/ui/types.ts` and `src/ui/text.ts` under `/ui/` (no other file of
+  `src/ui/`), and
   marked's ESM build at `/vendor/marked.esm.js` (with its source map). So `src/web/x.ts` imports
   `../protocol/messages.ts` as in the source tree, and `marked` through an import map in `index.html`. Served
   extensions: `.html .ts .js .css .json .map .webmanifest .svg .png .ico .woff2`; never dot-files or `tsconfig.json`.
@@ -447,7 +448,7 @@ There is no session resumption: every connection starts from `hello` and gets th
 | `bad_request` | Malformed message or params; `tools.set` enabling without `confirm`; empty `send`. |
 | `unknown_op` | The server does not know the op. |
 | `not_found` | No such agent, feed, memory line or device. |
-| `forbidden` | Not for this peer: `admin.*` from the web, `push.*` from the socket, tools when the remote policy is `off`. |
+| `forbidden` | Not for this peer: `admin.*`, `machine.register` and `machine.set` from the web, `push.*` from the socket, tools when the remote policy is `off`. |
 | `failed` | The op ran and failed; `message` says why, readably. |
 | `unavailable` | Not now: the server is shutting down, or the memory is not open. Retrying later may work. |
 | `version` | A request before `hello`. |

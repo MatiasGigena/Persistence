@@ -11,7 +11,7 @@ import { CloseCode, LIMITS } from '../../src/protocol/messages.ts';
 import type { ServerMessage } from '../../src/protocol/messages.ts';
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
-import { adminRequest, NoServer } from '../../src/server/admin.ts';
+import { adminRequest, NoServer } from '../../src/client/admin.ts';
 import { Hub } from '../../src/server/hub.ts';
 import { lineSplitter, listenUnix } from '../../src/server/transport-unix.ts';
 import { fakeSession } from '../fixtures/server-fakes.ts';

@@ -1,5 +1,5 @@
-// The web app's files (ADR 0020): src/web/ at `/`, src/protocol/ at `/protocol/`, src/ui/types.ts at
-// `/ui/types.ts`, and marked's ESM build at `/vendor/`. TypeScript is type-stripped at request time.
+// The web app's files (ADR 0020): src/web/ at `/`, src/protocol/ at `/protocol/`, src/ui/types.ts and src/ui/text.ts
+// under `/ui/`, and marked's ESM build at `/vendor/`. TypeScript is type-stripped at request time.
 import { createHash } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
@@ -7,7 +7,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { errorCode } from '../host/config.ts';
+import { errorCode } from '../protocol/util.ts';
 
 /** Where each URL prefix is served from. */
 export interface StaticRoots {
@@ -15,8 +15,8 @@ export interface StaticRoots {
   readonly web: string;
   /** `/protocol/`: src/protocol/. */
   readonly protocol: string;
-  /** `/ui/types.ts`: the one file of src/ui/ the browser may need. */
-  readonly uiTypes: string;
+  /** `/ui/`: src/ui/, of which only UI_FILES are served. */
+  readonly ui: string;
   /** `/vendor/`: marked's lib/ directory; only its ESM build and source map are served. */
   readonly marked: string;
 }
@@ -25,10 +25,12 @@ const SRC = fileURLToPath(new URL('..', import.meta.url));
 export const DEFAULT_ROOTS: StaticRoots = {
   web: join(SRC, 'web'),
   protocol: join(SRC, 'protocol'),
-  uiTypes: join(SRC, 'ui', 'types.ts'),
+  ui: join(SRC, 'ui'),
   marked: fileURLToPath(new URL('../../node_modules/marked/lib', import.meta.url)),
 };
 const VENDOR = new Set(['marked.esm.js', 'marked.esm.js.map']);
+/** The files of src/ui/ the browser loads: the contract's types and the wording both front ends share. */
+const UI_FILES = new Set(['types.ts', 'text.ts']);
 
 /** The extensions served, and their types; anything else is 404. */
 const TYPES: ReadonlyMap<string, string> = new Map([
@@ -99,8 +101,10 @@ export async function resolveFile(roots: StaticRoots, pathname: string): Promise
   const parts = path.slice(1).split('/');
   if (parts.some(part => part === '' || part.startsWith('.')) || HIDDEN.has(parts.at(-1) ?? '')) return undefined;
   let root: string, file: string;
-  if (path === '/ui/types.ts') [root, file] = [roots.uiTypes, roots.uiTypes];
-  else if (parts[0] === 'protocol') [root, file] = [roots.protocol, resolve(roots.protocol, ...parts.slice(1))];
+  if (parts[0] === 'ui') {
+    if (parts.length !== 2 || !UI_FILES.has(parts[1] ?? '')) return undefined;
+    [root, file] = [roots.ui, resolve(roots.ui, ...parts.slice(1))];
+  } else if (parts[0] === 'protocol') [root, file] = [roots.protocol, resolve(roots.protocol, ...parts.slice(1))];
   else if (parts[0] === 'vendor') {
     if (parts.length !== 2 || !VENDOR.has(parts[1] ?? '')) return undefined;
     [root, file] = [roots.marked, resolve(roots.marked, ...parts.slice(1))];
@@ -187,7 +191,7 @@ async function servedFiles(roots: StaticRoots): Promise<string[]> {
     return files.flat();
   };
   const [web, protocol] = await Promise.all([walk(roots.web), walk(roots.protocol)]);
-  return [...web, ...protocol, roots.uiTypes, ...[...VENDOR].map(name => join(roots.marked, name))];
+  return [...web, ...protocol, ...[...UI_FILES].map(name => join(roots.ui, name)), ...[...VENDOR].map(name => join(roots.marked, name))];
 }
 
 /**

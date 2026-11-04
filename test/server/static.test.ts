@@ -19,8 +19,8 @@ const INDEX = `<!doctype html><title>t</title><script type="importmap">${IMPORT_
 async function fixture(t: TestContext): Promise<StaticRoots & { folder: string }> {
   const folder = await mkdtemp(join(tmpdir(), 'pi-durable-static-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
-  const roots = { folder, web: join(folder, 'web'), protocol: join(folder, 'protocol'), uiTypes: join(folder, 'ui', 'types.ts'), marked: join(folder, 'marked') };
-  for (const dir of [roots.web, join(roots.web, 'panels'), roots.protocol, join(folder, 'ui'), roots.marked]) await mkdir(dir, { recursive: true });
+  const roots = { folder, web: join(folder, 'web'), protocol: join(folder, 'protocol'), ui: join(folder, 'ui'), marked: join(folder, 'marked') };
+  for (const dir of [roots.web, join(roots.web, 'panels'), roots.protocol, roots.ui, roots.marked]) await mkdir(dir, { recursive: true });
   await Promise.all([
     writeFile(join(roots.web, 'index.html'), INDEX),
     writeFile(join(roots.web, 'main.ts'), "import type { X } from '../protocol/version.ts';\nconst n: number = 1;\nexport const x = (a: X): X => a;\n"),
@@ -31,7 +31,9 @@ async function fixture(t: TestContext): Promise<StaticRoots & { folder: string }
     writeFile(join(roots.web, 'run.sh'), 'echo hi'),
     writeFile(join(roots.web, 'enum.ts'), 'enum E { A }\n'),
     writeFile(join(roots.protocol, 'version.ts'), 'export type X = number;\nexport const PROTOCOL: number = 1;\n'),
-    writeFile(roots.uiTypes, 'export type Y = string;\n'),
+    writeFile(join(roots.ui, 'types.ts'), 'export type Y = string;\n'),
+    writeFile(join(roots.ui, 'text.ts'), 'export const z = 1 as number;\n'),
+    writeFile(join(roots.ui, 'session.ts'), 'export const host = 1;\n'),
     writeFile(join(roots.marked, 'marked.esm.js'), 'export const marked = 1;\n'),
     writeFile(join(roots.marked, 'marked.umd.js'), 'nope'),
     writeFile(join(folder, 'secret.ts'), 'export const secret = 1;\n'),
@@ -71,6 +73,8 @@ test('TypeScript is type-stripped to JavaScript; the shell and other files carry
   assert.match((await get('/panels/a.ts')).body, /export const a = 1\s*;/);
   assert.match((await get('/protocol/version.ts')).body, /export const PROTOCOL\s*= 1;/);
   assert.equal((await get('/ui/types.ts')).status, 200);
+  assert.match((await get('/ui/text.ts')).body, /export const z = 1\s*;/);
+  assert.equal((await get('/ui/session.ts')).status, 404, 'only the listed ui files are served');
   assert.equal((await get('/vendor/marked.esm.js')).headers['content-type'], 'text/javascript; charset=utf-8');
   assert.equal((await get('/styles.css')).headers['content-type'], 'text/css; charset=utf-8');
 
@@ -117,7 +121,7 @@ test('traversal, symlinks out of a root, hidden files and unlisted extensions ar
   const roots = await fixture(t);
   const get = await serve(t, roots);
   for (const path of ['/../secret.ts', '/%2e%2e/secret.ts', '/..%2fsecret.ts', '/panels/../../secret.ts', '/protocol/../../secret.ts',
-    '/protocol/%2e%2e%2fsecret.ts', '/link.ts', '/.env', '/tsconfig.json', '/run.sh', '/vendor/marked.umd.js', '/vendor/../secret.ts',
+    '/protocol/%2e%2e%2fsecret.ts', '/link.ts', '/.env', '/tsconfig.json', '/run.sh', '/vendor/marked.umd.js', '/vendor/../secret.ts', '/ui/../secret.ts', '/ui/%2e%2e%2fsecret.ts',
     '/%00.ts', '/..\\secret.ts', '/%E0%A4%A.ts', '/panels/', '//etc/passwd', '/missing.ts']) {
     const { status, body } = await get(path);
     assert.equal(status, 404, path);

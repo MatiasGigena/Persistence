@@ -3,7 +3,7 @@
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
 import type { SessionStatus } from '../types.ts';
-import { activeAgents } from './panels/agents.ts';
+import { activeAgents, size } from '../text.ts';
 import { NARROW } from './theme.ts';
 import type { Theme } from './theme.ts';
 
@@ -17,9 +17,6 @@ export const SPIN_SLOW = 250;
 export function spinnerInterval(env: Readonly<Record<string, string | undefined>>, width: number): number {
   return env['SSH_CONNECTION'] || width < NARROW ? SPIN_SLOW : SPIN_FAST;
 }
-
-const size = (bytes: number): string => bytes < 1024 ? `${bytes} B`
-  : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 /**
  * What the footer reads of a SessionStatus: of the agents, only whether each is busy and archived (archived ones are

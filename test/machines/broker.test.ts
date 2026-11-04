@@ -5,7 +5,7 @@ import { BACKGROUND_CONTEXT, withCancel } from '@earendil-works/chord/context';
 import type { MachineCall, MachineCancel, MachineToolResult } from '../../src/protocol/machines.ts';
 import { MachineBroker } from '../../src/server/machines.ts';
 import type { MachinePeer } from '../../src/server/machines.ts';
-import type { MachineTarget } from '../../src/ui/types.ts';
+import type { MachineTarget } from '../../src/protocol/machines.ts';
 
 const LAPTOP: MachineTarget = { machineId: 'laptop', label: 'Laptop', cwd: '/home/me/project' };
 const VPS: MachineTarget = { machineId: 'vps', label: 'VPS', cwd: '/srv/project' };

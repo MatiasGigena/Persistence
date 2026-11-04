@@ -7,7 +7,7 @@ import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, o
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { errorCode } from '../host/config.ts';
+import { errorCode, errorMessage } from '../protocol/util.ts';
 
 /** How long backups are kept: older stamped directories are deleted after each backup. */
 export const KEEP_MS = 14 * 24 * 60 * 60 * 1000;
@@ -104,15 +104,19 @@ export async function backup(source: BackupSource, exclusive: Exclusive, { out, 
       path = join(root, `${stamp(now)}-${n}`);
     }
   }
+  let bytes: number;
   try {
-    const bytes = await exclusive(database => snapshotInto(database, source, path));
+    bytes = await exclusive(database => snapshotInto(database, source, path));
     fsyncPath(root);
-    await prune(root, { now: now.getTime() });
-    return { path, bytes };
   } catch (error) {
     await rm(path, { recursive: true, force: true });
     throw error;
   }
+  // The snapshot is whole from here: a failure to delete old ones must not take it with them.
+  try { await prune(root, { now: now.getTime() }); } catch (error) {
+    throw new Error(`Backup written to ${path}, but deleting backups older than 14 days failed: ${errorMessage(error)}`, { cause: error });
+  }
+  return { path, bytes };
 }
 
 /**

@@ -13,8 +13,8 @@ import { listAgents, REPORT_KIND } from '../../src/agents/index.ts';
 import { parseArgs, resolveOptions } from '../../src/host/config.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
-import { createUiSession } from '../../src/ui/session.ts';
-import type { UiSessionHandle } from '../../src/ui/session.ts';
+import { createUiSession } from '../../src/host/session.ts';
+import type { UiSessionHandle } from '../../src/host/session.ts';
 import type { ChatFeed, ChatItem } from '../../src/ui/types.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 import type { OfflineModels } from '../fixtures/faux-model.ts';
@@ -129,7 +129,7 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     const image = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUg==' };
     let seen: TranscriptContext | undefined;
     const { session } = await open(t, [(context) => { seen = context; return fauxAssistantMessage('a screenshot'); }]);
-    await session.send('what is this?', undefined, false, undefined, [image]);
+    await session.send('what is this?', { images: [image] });
     const user = await until(() => find(session.chat, 'user'), 'the user item', session.chat);
     assert.deepEqual(user, { kind: 'user', id: user.id, text: 'what is this?', images: [image] });
     await until(() => find(session.chat, 'assistant', item => item.text === 'a screenshot'), 'the answer', session.chat);
@@ -146,7 +146,7 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     const instance = await openInstance({ databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools: false, models, model });
     const other = await createUiSession(instance, { model, thinkingLevel: 'high', allowTools: false }, { refreshMs: 50 });
     t.after(async () => { await other.close(); await instance.close(); await rm(cwd, { recursive: true, force: true }); });
-    await assert.rejects(other.send('look', undefined, false, undefined, [image]), /does not take images; nothing was sent/);
+    await assert.rejects(other.send('look', { images: [image] }), /does not take images; nothing was sent/);
     assert.equal(find(other.chat, 'user'), undefined, 'nothing was admitted');
   });
 
@@ -245,7 +245,7 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     ]);
     await session.send('what day is it?');
     await until(() => session.status().busy, 'busy');
-    await session.send('in UTC, please', 'steer-1', true);
+    await session.send('in UTC, please', { requestId: 'steer-1', steer: true });
     release();
     await idle(session);
     await until(() => find(session.chat, 'assistant', item => item.text === 'noted, in UTC'), 'the answer', session.chat);
@@ -507,22 +507,22 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
 
   test('a retried image send (lost acknowledgement) dedups even after a switch to a model without images', async (t) => {
     const { session, provider } = await openSighted(t);
-    await session.send('look', 'img-1', false, undefined, [shot]);
+    await session.send('look', { requestId: 'img-1', images: [shot] });
     await until(() => answers(session) === 1, 'the answer', session.chat);
     await session.setModel(provider, 'blind');
     // The same request ID: already admitted, so the retry resolves and nothing is admitted twice.
-    await session.send('look', 'img-1', false, undefined, [shot]);
+    await session.send('look', { requestId: 'img-1', images: [shot] });
     await idle(session);
     assert.equal(users(session), 1);
     // A new request with images is still refused.
-    await assert.rejects(session.send('again', 'img-2', false, undefined, [shot]), /does not take images/);
+    await assert.rejects(session.send('again', { requestId: 'img-2', images: [shot] }), /does not take images/);
     assert.equal(users(session), 1);
   });
 
   test('an image send during a switch to a model without images waits for it, then refuses', async (t) => {
     const { session, provider } = await openSighted(t);
     const switched = session.setModel(provider, 'blind');
-    const sent = session.send('look', 'img-during', false, undefined, [shot]);
+    const sent = session.send('look', { requestId: 'img-during', images: [shot] });
     await switched;
     await assert.rejects(sent, /does not take images; nothing was sent/);
     await idle(session);
@@ -535,7 +535,7 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     const { session, provider } = await openSighted(t, async () => { await gate; return fauxAssistantMessage('first'); });
     await session.send('one');
     await until(() => session.status().busy, 'busy');
-    await session.send('look', 'img-queued', false, undefined, [shot]);
+    await session.send('look', { requestId: 'img-queued', images: [shot] });
     await until(() => session.status().queued === 1, 'one queued');
     await assert.rejects(session.setModel(provider, 'blind'), /queued message has images/);
     assert.equal(session.status().model, `${provider}/sees`);
@@ -567,7 +567,7 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     const refused = assert.rejects(switched, /queued message has images/);
     await until(() => checking, 'credentials pending');
     // A different caller can admit input without going through this UI session's serial queue.
-    await instance.submit('look', 'img-auth-pending', undefined, false, [shot]);
+    await instance.submit('look', { requestId: 'img-auth-pending', images: [shot] });
     await until(() => session.status().queued === 1, 'one queued');
     releaseAuth();
     await refused;

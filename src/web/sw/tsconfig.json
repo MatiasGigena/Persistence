@@ -10,6 +10,7 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "strict": true,
+    "noUnusedLocals": true,
     "noImplicitAny": true,
     "useUnknownInCatchVariables": true,
     "noUncheckedIndexedAccess": true,
@@ -17,5 +18,5 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true
   },
-  "files": ["../sw.ts"]
+  "files": ["shell.ts", "../sw.ts"]
 }

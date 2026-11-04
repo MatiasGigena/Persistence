@@ -3,13 +3,16 @@ import { InboxDoc } from '@earendil-works/pi-durable';
 import type { AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { archiveAgents, listAgents, restoreAgent, stopAgents } from '../agents/index.ts';
-import { errorMessage, isThinkingLevel, updateSettings } from '../host/config.ts';
-import type { Config } from '../host/config.ts';
+import { updateSettings } from './config.ts';
+import { isThinkingLevel } from '../runtime/thinking.ts';
+import { errorMessage } from '../protocol/util.ts';
+import type { Config } from './config.ts';
 import { start } from '../memory/view.ts';
 import { imagesProblem, modelChooser, thinkingLevels } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
-import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from './types.ts';
+import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
+import { NotFound, Unavailable } from '../ui/errors.ts';
 
 /**
  * The launch choices the status line falls back on until Pi's stored agent says otherwise; `setModel()` saves to
@@ -147,17 +150,17 @@ export async function createUiSession(
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },
-    send(text, requestId, steer, target, images) {
+    send(text, options = {}) {
       // Through the switching queue: while setModel() configures Pi and syncs its agents, chosenModel is not yet the
       // model Pi uses, so the image check and the admission wait for the switch to finish.
       return serially(async () => {
-        if (images?.length && !await admitted(requestId)) {
+        if (options.images?.length && !await admitted(options.requestId)) {
           const problem = imagesProblem(instance.models, currentModel());
           if (problem) throw new Error(problem);
         }
         // Standalone keeps follow-up/steering; routed admission pins the target and explicitly rejects busy runs. An
         // admitted request ID returns its first submission (dedup), after the route check.
-        await instance.submit(text, requestId, target, steer, images);
+        await instance.submit(text, options);
       });
     },
     async abort() {
@@ -187,8 +190,9 @@ export async function createUiSession(
     },
     memoryView: () => Promise.resolve(memoryLines(instance)),
     async zoom(id, n) {
-      if (!memory) throw new Error('Memory is not open (inspection only).');
-      return memory.zoom(id, n);
+      if (!memory) throw new Unavailable('Memory is not open (inspection only).');
+      // Memory.zoom throws only for a line or message the log does not have.
+      try { return memory.zoom(id, n); } catch (error) { throw new NotFound(errorMessage(error), { cause: error }); }
     },
     models: () => chooser.list(currentModel()),
     setModel(provider, id) {
@@ -206,7 +210,7 @@ export async function createUiSession(
         refresh();
         if (!config.settingsPath) return;
         try { await updateSettings(config.settingsPath, { model }); } catch (error) {
-          throw new Error(`Switched to ${provider}/${id}, but saving it as the default failed: ${errorMessage(error)}`);
+          throw new Error(`Switched to ${provider}/${id}, but saving it as the default failed: ${errorMessage(error)}`, { cause: error });
         }
       });
     },
@@ -232,7 +236,7 @@ export async function createUiSession(
         refresh();
         if (!config.settingsPath) return;
         try { await updateSettings(config.settingsPath, { thinkingLevel: level }); } catch (error) {
-          throw new Error(`Effort set to ${level}, but saving it as the default failed: ${errorMessage(error)}`);
+          throw new Error(`Effort set to ${level}, but saving it as the default failed: ${errorMessage(error)}`, { cause: error });
         }
       });
     },

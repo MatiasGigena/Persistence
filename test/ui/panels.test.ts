@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
 import { stripTerminalSequences, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, OverlayHandle, OverlayOptions, Terminal } from '@earendil-works/pi-tui';
-import { activeAgents, adhocAgents, archivedAgents, deletionText, openAgentsPanel } from '../../src/ui/tui/panels/agents.ts';
+import { openAgentsPanel } from '../../src/ui/tui/panels/agents.ts';
+import { activeAgents, adhocAgents, archivedAgents, deletionText } from '../../src/ui/text.ts';
 import { confirm } from '../../src/ui/tui/panels/frame.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
-import { openMemoryPanel, parseMessage, parseZoom } from '../../src/ui/tui/panels/memory.ts';
+import { openMemoryPanel } from '../../src/ui/tui/panels/memory.ts';
+import { parseMessage, parseZoom } from '../../src/ui/text.ts';
 import type { AgentStatus, ArchiveTarget, ChatFeed, ChatItem, MemoryStats, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
 
 const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b' };

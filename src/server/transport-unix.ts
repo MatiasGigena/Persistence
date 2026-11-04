@@ -4,10 +4,11 @@ import { chmod, lstat, unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import type { Server, Socket } from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
-import { errorCode } from '../host/config.ts';
+import { errorCode } from '../protocol/util.ts';
 import { ErrorCode, LIMITS } from '../protocol/messages.ts';
 import type { Bye, ErrorResponse } from '../protocol/messages.ts';
 import type { PeerHub, PeerLink } from './link.ts';
+import { peerInbox } from './link.ts';
 
 /** How long a closing link waits for its peer to read the `bye` before cutting it off. */
 const CLOSE_GRACE_MS = 1_000;
@@ -44,24 +45,16 @@ export function lineSplitter(max: number, line: (text: string) => void, tooLong:
 
 /** A connected socket as a PeerLink. */
 function socketLink(socket: Socket): PeerLink {
-  let deliver: ((text: string) => void) | undefined;
-  let closed: (() => void) | undefined;
-  const early: string[] = [];
-  let gone = false, ending = false;
+  const inbox = peerInbox();
+  let ending = false;
   const write = (text: string): void => { if (!ending && !socket.destroyed) socket.write(`${text}\n`); };
-  socket.on('data', lineSplitter(LIMITS.clientMessage, text => {
-    if (deliver) deliver(text);
-    else early.push(text);
-  }, () => {
+  socket.on('data', lineSplitter(LIMITS.clientMessage, text => inbox.received(text), () => {
     const answer: ErrorResponse = { t: 'res', id: -1, ok: false,
       error: { code: ErrorCode.badRequest, message: `A message may be at most ${LIMITS.clientMessage} characters.` } };
     write(JSON.stringify(answer));
   }));
   socket.on('error', () => socket.destroy());
-  socket.on('close', () => {
-    gone = true;
-    closed?.();
-  });
+  socket.on('close', () => inbox.ended());
   return {
     peer: 'socket',
     who: 'socket',
@@ -76,14 +69,8 @@ function socketLink(socket: Socket): PeerLink {
       // A peer that stopped reading never lets `end` finish.
       setTimeout(() => socket.destroy(), CLOSE_GRACE_MS).unref();
     },
-    onMessage(listener) {
-      deliver = listener;
-      for (const text of early.splice(0)) listener(text);
-    },
-    onClose(listener) {
-      if (gone) queueMicrotask(listener);
-      else closed = listener;
-    },
+    onMessage: inbox.onMessage,
+    onClose: inbox.onClose,
   };
 }
 

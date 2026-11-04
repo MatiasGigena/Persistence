@@ -10,6 +10,7 @@ import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEven
   Message, Model, Provider, SimpleStreamOptions, SystemMessage, TextContent, ThinkingLevel, TranscriptContext,
   Usage } from '@earendil-works/pi-ai';
 import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 
 // Claude through the unmodified official `claude` CLI in print mode, signed in with the user's own login
 // (docs/models.md, ADR 0010). Claude only proposes tool calls: Pi's tools are listed by a stub MCP server that runs
@@ -79,23 +80,21 @@ type CliEvent =
   | { type: 'result'; subtype?: string; is_error: boolean; result?: string; errors?: string[]; api_error_status?: number;
     stop_reason?: string; usage?: ApiUsage };
 
-type Json = Record<string, unknown>;
-const isJson = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isList = (value: unknown): value is unknown[] => Array.isArray(value);
 // JSON.parse yields JSON values only, so a parsed object is a JsonObject.
-const isJsonObject = (value: unknown): value is JsonObject => isJson(value);
+const isJsonObject = (value: unknown): value is JsonObject => isRecord(value);
 const str = (value: unknown) => typeof value === 'string' ? value : undefined;
 const num = (value: unknown) => typeof value === 'number' ? value : undefined;
 const parseJson = (text: string): unknown => JSON.parse(text);
 
 function parseUsage(value: unknown): ApiUsage | undefined {
-  if (!isJson(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   return { input_tokens: num(value.input_tokens), output_tokens: num(value.output_tokens),
     cache_read_input_tokens: num(value.cache_read_input_tokens), cache_creation_input_tokens: num(value.cache_creation_input_tokens) };
 }
 
 function parseBlock(value: unknown): ApiContentBlock | undefined {
-  if (!isJson(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const { type } = value;
   if (type === 'text' || type === 'thinking' || type === 'redacted_thinking') return { type };
   if (type === 'tool_use') return { type, id: str(value.id) ?? '', name: str(value.name) ?? '' };
@@ -103,7 +102,7 @@ function parseBlock(value: unknown): ApiContentBlock | undefined {
 }
 
 function parseDelta(value: unknown): ApiDelta | undefined {
-  if (!isJson(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const { type } = value;
   if (type === 'text_delta' && typeof value.text === 'string') return { type, text: value.text };
   if (type === 'thinking_delta' && typeof value.thinking === 'string') return { type, thinking: value.thinking };
@@ -113,24 +112,24 @@ function parseDelta(value: unknown): ApiDelta | undefined {
 }
 
 function parseStreamEvent(value: unknown): ApiStreamEvent | undefined {
-  if (!isJson(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const { type } = value, index = num(value.index);
   if (type === 'message_start') {
-    const message = isJson(value.message) ? { id: str(value.message.id), usage: parseUsage(value.message.usage) } : undefined;
+    const message = isRecord(value.message) ? { id: str(value.message.id), usage: parseUsage(value.message.usage) } : undefined;
     return { type, message };
   }
   if (type === 'content_block_start' && index !== undefined) return { type, index, content_block: parseBlock(value.content_block) };
   if (type === 'content_block_delta' && index !== undefined) return { type, index, delta: parseDelta(value.delta) };
   if (type === 'content_block_stop' && index !== undefined) return { type, index };
   if (type === 'message_delta') {
-    return { type, delta: isJson(value.delta) ? { stop_reason: str(value.delta.stop_reason) } : undefined, usage: parseUsage(value.usage) };
+    return { type, delta: isRecord(value.delta) ? { stop_reason: str(value.delta.stop_reason) } : undefined, usage: parseUsage(value.usage) };
   }
   if (type === 'message_stop') return { type };
   return undefined;
 }
 
 function parseCliEvent(value: unknown): CliEvent | undefined {
-  if (!isJson(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const { type } = value;
   if (type === 'system') {
     if (value.subtype === 'init') return { type, subtype: 'init', model: str(value.model) };
@@ -141,7 +140,7 @@ function parseCliEvent(value: unknown): CliEvent | undefined {
   if (type === 'assistant') return { type, message: value.message };
   if (type === 'rate_limit_event') {
     const info = value.rate_limit_info;
-    return { type, rate_limit_info: isJson(info)
+    return { type, rate_limit_info: isRecord(info)
       ? { status: str(info.status), resetsAt: num(info.resetsAt), rateLimitType: str(info.rateLimitType) } : undefined };
   }
   if (type === 'result') {
@@ -458,7 +457,7 @@ function streamClaude(model: Model<Api>, context: TranscriptContext, options: Si
       // The prompt goes on stdin, not argv, so its length is not limited by the OS; stream-json carries its images.
       proc.stdin.end(renderInput(messages));
     } catch (error) {
-      finish({ error: `claude-cli: ${error instanceof Error ? error.message : String(error)}` });
+      finish({ error: `claude-cli: ${errorMessage(error)}` });
     }
   });
   return stream;
@@ -481,7 +480,7 @@ export function claudeAuthStatus({ bin, env, timeoutMs = 10_000 }: ClaudeAuthSta
     child.on('close', () => {
       let status: unknown;
       try { status = parseJson(out); } catch { return settle(undefined); }
-      settle(isJson(status) ? { loggedIn: Boolean(status.loggedIn), authMethod: str(status.authMethod) } : undefined);
+      settle(isRecord(status) ? { loggedIn: Boolean(status.loggedIn), authMethod: str(status.authMethod) } : undefined);
     });
   });
 }

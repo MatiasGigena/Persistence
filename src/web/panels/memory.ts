@@ -1,8 +1,10 @@
 // Memory: Pi's memory view, one row per line. A line zooms into its two halves, and a single message (n = 1) opens
 // whole; breadcrumbs lead back up. The top level reloads when the memory's counters change while it is open.
 import { el } from '../chat-view.ts';
-import { errorText, lineLabel, memoryHeader, parseMessage, parseZoom } from '../format.ts';
-import { RequestError } from '../link.ts';
+import { lineLabel, memoryHeader } from '../format.ts';
+import { parseMessage, parseZoom } from '../../ui/text.ts';
+import { errorMessage } from '../../protocol/util.ts';
+import { RequestError } from '../../protocol/request-error.ts';
 import type { ViewLine } from '../../protocol/messages.ts';
 import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
@@ -70,8 +72,8 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
           },
           // A failed reload keeps the lines shown; with none yet, its error shows instead.
           (error: unknown) => {
-            if (error instanceof RequestError && error.code === 'lost') retry = true;
-            if (loaded) same = true; else state.textContent = errorText(error);
+            if (error instanceof RequestError && error.code === 'disconnected') retry = true;
+            if (loaded) same = true; else state.textContent = errorMessage(error);
           },
         ).finally(() => {
           loading = false;
@@ -141,9 +143,9 @@ function messageView(ctx: PanelContext, line: ViewLine): View {
             fadeIn(text);
           },
           (error: unknown) => {
-            retry = error instanceof RequestError && error.code === 'lost';
+            retry = error instanceof RequestError && error.code === 'disconnected';
             text.replaceChildren();
-            note.textContent = errorText(error);
+            note.textContent = errorMessage(error);
             note.classList.add('is-error');
             note.hidden = false;
             fadeIn(note);

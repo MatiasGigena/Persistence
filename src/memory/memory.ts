@@ -5,10 +5,9 @@ import type { ModelRef } from '@earendil-works/pi-durable';
 import { leafTask, mergeTask, PLACEHOLDER, PROMPT, tooLong } from './prompt.ts';
 import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
 import type { CompactionMessage, Reasoning, Summarizer, SummarizerModels } from './summarizer.ts';
-import {
-  appendJson, atomicWrite, bytes, CAP, cleanLine, clip, cutBytes, cutLine, errorMessage, flat, formatDate, hash, isObject,
-  localDay, NODE, split,
-} from './util.ts';
+import { bytes, CAP, cleanLine, clip, cutBytes, cutLine, flat, formatDate, hash, localDay, NODE, split } from './util.ts';
+import { appendJson, atomicWrite } from '../runtime/files.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 import { cut, end, key, name, parentOf, start, View } from './view.ts';
 import type { Pos } from './view.ts';
 
@@ -114,9 +113,9 @@ function readJsonl(dir: string, warn: (message: string) => void): unknown[] {
   return out;
 }
 
-const isRecord = (r: unknown): r is MemoryRecord => isObject(r) && Number.isSafeInteger(r.i) && typeof r.text === 'string'
+const isMemoryRecord = (r: unknown): r is MemoryRecord => isRecord(r) && Number.isSafeInteger(r.i) && typeof r.text === 'string'
   && isKind(r.kind) && typeof r.size === 'number' && typeof r.date === 'string' && (r.src === undefined || typeof r.src === 'string');
-const isNode = (n: unknown): n is Pos & { text: string } => isObject(n) && Number.isSafeInteger(n.l) && Number.isSafeInteger(n.i)
+const isNode = (n: unknown): n is Pos & { text: string } => isRecord(n) && Number.isSafeInteger(n.l) && Number.isSafeInteger(n.i)
   && typeof n.text === 'string';
 /** view.json's `[l, i]` pairs. */
 function pairs(x: unknown): Pos[] {
@@ -135,34 +134,41 @@ function pairs(x: unknown): Pos[] {
  * background. One process owns a directory (see openMemory).
  */
 export class Memory {
-  dir: string;
-  warn: (message: string) => void;
-  jobs: number;
-  lead: number;
-  retryMs: number;
-  tooLongRetries: number;
-  summarize: Summarizer;
-  log: MemoryRecord[] = [];
-  bySrc = new Map<string, number>();
-  tree = new Map<string, TreeNode>();
-  sizes = new Map<string, number>();
-  listeners = new Set<() => void>();
-  inFlight = new Map<string, Promise<void>>();
-  failed = new Map<string, Pos>();
-  controller = new AbortController();
-  compactionPrompt: CompactionPrompt | undefined = undefined;
-  lastError: string | undefined = undefined;
-  closing = false;
-  closed = false;
-  scheduled = false;
-  retryTimer: NodeJS.Timeout | undefined = undefined;
-  view: View;
-  cview: View;
-  leafNext = 0;
-  leafOpen = 0;
-  retryLeaves: Pos[] = [];
-  instant: Pos[] = [];
-  merges = new Heap<Pos>(mergeOrder);
+  private dir: string;
+  private warn: (message: string) => void;
+  private jobCount: number;
+  private lead: number;
+  private retryMs: number;
+  private tooLongRetries: number;
+  private summarize: Summarizer;
+  readonly log: MemoryRecord[] = [];
+  private bySrc = new Map<string, number>();
+  readonly tree = new Map<string, TreeNode>();
+  private sizes = new Map<string, number>();
+  private listeners = new Set<() => void>();
+  private inFlight = new Map<string, Promise<void>>();
+  private failed = new Map<string, Pos>();
+  private controller = new AbortController();
+  private compactionPrompt: CompactionPrompt | undefined = undefined;
+  private error: string | undefined = undefined;
+  private closing = false;
+  private closed = false;
+  private scheduled = false;
+  private retryTimer: NodeJS.Timeout | undefined = undefined;
+  private mainView: View;
+  private cview: View;
+  private leafNext = 0;
+  private leafOpen = 0;
+  private retryLeaves: Pos[] = [];
+  private instant: Pos[] = [];
+  private merges = new Heap<Pos>(mergeOrder);
+
+  /** Pi's view: the tree lines tiling the log that the next request sees. */
+  get view(): View { return this.mainView; }
+  /** How many compaction calls may run at once. */
+  get jobs(): number { return this.jobCount; }
+  /** The last compaction failure's message; cleared once a success leaves no failed call. */
+  get lastError(): string | undefined { return this.error; }
 
   constructor(dir: string, {
     summarize, models, model, compactionModel, reasoning, maxTokens, tooLongRetries = 1,
@@ -171,7 +177,7 @@ export class Memory {
   }: MemoryOptions = {}) {
     this.dir = dir;
     this.warn = warn;
-    this.jobs = jobs;
+    this.jobCount = jobs;
     this.lead = lead;
     this.retryMs = retryMs;
     this.tooLongRetries = tooLongRetries;
@@ -179,7 +185,7 @@ export class Memory {
       ? createPiAiSummarizer({ models, model: compactionModel ?? defaultCompactionModel(model, models), reasoning, maxTokens })
       : async () => { throw new Error('unii: no summarizer configured (pass summarize or models)'); });
     const sizeOf = (p: Pos): number => this.lineSize(p), built = (p: Pos): boolean => this.tree.has(key(p));
-    this.view = new View({ ...view, sizeOf, built });
+    this.mainView = new View({ ...view, sizeOf, built });
     this.cview = new View({ ...compactionView, sizeOf, built });
     for (const sub of ['main', 'tree']) mkdirSync(join(dir, sub), { recursive: true, mode: 0o700 });
     this.load();
@@ -188,8 +194,8 @@ export class Memory {
 
   // ---------------------------------------------------------------- load and save
 
-  load(): void {
-    const records = readJsonl(join(this.dir, 'main'), this.warn).filter(isRecord).sort((a, b) => a.i - b.i);
+  private load(): void {
+    const records = readJsonl(join(this.dir, 'main'), this.warn).filter(isMemoryRecord).sort((a, b) => a.i - b.i);
     records.forEach((r, n) => {
       if (r.i !== n) throw new Error(`unii: log in ${this.dir} is not contiguous at ${n} (found ${r.i}); refusing to open`);
       this.log.push(r);
@@ -202,7 +208,7 @@ export class Memory {
     }
     if (!this.loadViews(T)) {
       // First open (or an unreadable view.json): fold the log once. From then on the view is saved and never rebuilt.
-      for (const v of [this.view, this.cview]) { v.parts = []; v.shrinking = false; }
+      for (const v of [this.mainView, this.cview]) { v.parts = []; v.shrinking = false; }
       for (let i = 0; i < T; i++) this.grow(i);
     }
     this.save();
@@ -215,21 +221,21 @@ export class Memory {
     for (const n of this.tree.values()) this.readyParent(n);
   }
 
-  loadViews(T: number): boolean {
+  private loadViews(T: number): boolean {
     const file = join(this.dir, 'view.json');
     if (!existsSync(file)) return false;
     try {
       const saved: unknown = JSON.parse(readFileSync(file, 'utf8'));
-      if (!isObject(saved)) throw new Error('not an object');
+      if (!isRecord(saved)) throw new Error('not an object');
       const lists = [saved.view, saved.cview], shrinking = saved.shrinking;
-      [this.view, this.cview].forEach((v, n) => {
+      [this.mainView, this.cview].forEach((v, n) => {
         v.parts = pairs(lists[n]).flatMap(p => this.down(p));
         v.shrinking = Array.isArray(shrinking) && Boolean(shrinking[n]);
         const last = v.parts.at(-1), at = last ? end(last) : 0;
         if (!v.tiles(at) || at > T) throw new Error('does not tile the log');
       });
       // The log may be ahead of view.json after a crash: add the missing lines as they would have come.
-      for (let i = end(this.view.parts.at(-1) ?? { l: 0, i: -1 }); i < T; i++) this.grow(i);
+      for (let i = end(this.mainView.parts.at(-1) ?? { l: 0, i: -1 }); i < T; i++) this.grow(i);
       return this.cview.tiles(T);
     } catch (error) {
       this.warn(`unii: view.json unreadable (${errorMessage(error)}); folding the log again`);
@@ -238,29 +244,29 @@ export class Memory {
   }
 
   /** A saved line whose node is missing (a tree line lost in a crash) opens into its halves, down to built nodes. */
-  down(p: Pos): Pos[] {
+  private down(p: Pos): Pos[] {
     if (p.l <= 0 || this.tree.has(key(p))) return [p];
     return [{ l: p.l - 1, i: 2 * p.i }, { l: p.l - 1, i: 2 * p.i + 1 }].flatMap(c => this.down(c));
   }
 
-  save(): void {
+  private save(): void {
     atomicWrite(join(this.dir, 'view.json'), JSON.stringify({
-      view: this.view.parts.map(p => [p.l, p.i]),
+      view: this.mainView.parts.map(p => [p.l, p.i]),
       cview: this.cview.parts.map(p => [p.l, p.i]),
-      shrinking: [this.view.shrinking, this.cview.shrinking],
+      shrinking: [this.mainView.shrinking, this.cview.shrinking],
     }));
   }
 
   /** Message i joins both views. */
-  grow(i: number): void {
-    this.view.append(i);
+  private grow(i: number): void {
+    this.mainView.append(i);
     this.cview.append(i);
     this.refit(i + 1, true);
   }
 
   /** Both views run their own sawtooth (UniiChat Memory.ts `fit`); between messages only whole batches land. */
   refit(T = this.log.length, atMessage = false): void {
-    this.view.fit(T, atMessage);
+    this.mainView.fit(T, atMessage);
     this.cview.fit(T, atMessage);
   }
 
@@ -307,7 +313,8 @@ export class Memory {
 
   /**
    * Log a subagent's report as a `work` message as Pi sees it (upstream Call.ts `report_text`, Apache-2.0):
-   * `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with a `session`. Plug into the agents extension's `onReport`.
+   * `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with a `session`. The `uniichat` extension calls it
+   * for each `agents.report` entry Pi's next request sees.
    * `id` keys it (pass the same `id` as `data.id` of the report's input entry so neither path logs it twice);
    * without one, the same name and text are logged once.
    */
@@ -328,9 +335,9 @@ export class Memory {
 
   // ---------------------------------------------------------------- reads
 
-  text(p: Pos): string | undefined { return this.tree.get(key(p))?.text; }
+  private text(p: Pos): string | undefined { return this.tree.get(key(p))?.text; }
   renderLine(p: Pos): string { const text = this.text(p); return text === undefined ? PLACEHOLDER_LINE(p) : `${name(p)}|${flat(text)}`; }
-  lineSize(p: Pos): number {
+  private lineSize(p: Pos): number {
     const k = key(p);
     if (!this.tree.has(k)) return bytes(PLACEHOLDER_LINE(p)) + 1;
     let size = this.sizes.get(k);
@@ -340,21 +347,21 @@ export class Memory {
 
   /** The view of messages [0, k) in <chat> tags; k defaults to now. Also the first message of a subagent. */
   render(k = this.log.length): string {
-    const parts = k >= this.log.length ? this.view.parts : cut(this.view.parts, k);
+    const parts = k >= this.log.length ? this.mainView.parts : cut(this.mainView.parts, k);
     return `<chat>\n${parts.map(p => `${this.renderLine(p)}\n`).join('')}</chat>`;
   }
 
   /** Whether every view line before message k is summarized. */
   ready(k = this.log.length): boolean {
-    return (k >= this.log.length ? this.view.parts : cut(this.view.parts, k)).every(p => this.tree.has(key(p)));
+    return (k >= this.log.length ? this.mainView.parts : cut(this.mainView.parts, k)).every(p => this.tree.has(key(p)));
   }
 
   /**
    * Where a turn's new messages [from, T) go whole from (adapted from UniiChat Memory.ts `whole`, Apache-2.0): the
    * first id from which the messages to the end fit in `limit` bytes; the last message always goes whole. The ones
-   * before it (a huge paste's first parts) belong in the view: render(k) and say(k, T).
+   * before it (a huge paste's first parts) belong in the view: render(k) and joinedText(k, T).
    */
-  whole(from: number, limit = this.view.hi): number {
+  firstWhole(from: number, limit = this.mainView.hi): number {
     let k = this.log.length, size = 0;
     for (; k > from; k--) {
       size += this.at(k - 1).size;
@@ -364,7 +371,7 @@ export class Memory {
   }
 
   /** Messages [a, b) as one text: a split text's parts rejoined, separate messages a blank line apart. */
-  say(a: number, b = this.log.length): string {
+  joinedText(a: number, b = this.log.length): string {
     return this.log.slice(a, b).map((r, n) => (n > 0 && !/#\d+$/.test(r.src ?? '') ? '\n\n' : '') + r.text).join('');
   }
 
@@ -440,14 +447,14 @@ export class Memory {
   // ---------------------------------------------------------------- events
 
   onChange(fn: () => void): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
-  emit(): void { for (const fn of this.listeners) { try { fn(); } catch (error) { this.warn(`unii: listener failed: ${errorMessage(error)}`); } } }
+  private emit(): void { for (const fn of this.listeners) { try { fn(); } catch (error) { this.warn(`unii: listener failed: ${errorMessage(error)}`); } } }
 
   /** Status: messages, unbuilt leaves, calls in flight, failed nodes, last error. */
   status(): MemoryStatus {
     let built = 0;
     for (let i = 0; i < this.log.length; i++) if (this.tree.has(`0/${i}`)) built++;
     return { messages: this.log.length, unsummarized: this.log.length - built, active: this.inFlight.size,
-      failed: this.failed.size, lastError: this.lastError, viewBytes: this.view.bytes, viewLines: this.view.parts.length };
+      failed: this.failed.size, lastError: this.error, viewBytes: this.mainView.bytes, viewLines: this.mainView.parts.length };
   }
 
   // ---------------------------------------------------------------- the compactor (recipe §4)
@@ -459,26 +466,26 @@ export class Memory {
    * Compact with `summarize` from now on, at most `jobs` calls at once (e.g. after the turn model changed). Calls in
    * flight finish with the summarizer they started with; lowering `jobs` only delays new calls.
    */
-  setSummarizer(summarize: Summarizer, jobs = this.jobs): void {
+  setSummarizer(summarize: Summarizer, jobs = this.jobCount): void {
     this.summarize = summarize;
-    this.jobs = jobs;
+    this.jobCount = jobs;
     this.schedule();
   }
 
-  schedule(): void {
+  private schedule(): void {
     if (this.scheduled || this.closing) return;
     this.scheduled = true;
     queueMicrotask(() => { this.scheduled = false; this.pump(); });
   }
 
-  leafSource(i: number): string { const r = this.at(i); return `${r.kind}: ${r.text}`; }
+  private leafSource(i: number): string { const r = this.at(i); return `${r.kind}: ${r.text}`; }
   /** A merge's source: its halves, each flat, one per line (UniiChat Memory.ts `source`). */
-  joined(p: Pos): string { return `${flat(this.text({ l: p.l - 1, i: 2 * p.i }) ?? '')}\n${flat(this.text({ l: p.l - 1, i: 2 * p.i + 1 }) ?? '')}`; }
-  source(p: Pos): string { return p.l === 0 ? this.leafSource(p.i) : this.joined(p); }
-  busy(p: Pos): boolean { const k = key(p); return this.tree.has(k) || this.inFlight.has(k) || this.failed.has(k); }
+  private joined(p: Pos): string { return `${flat(this.text({ l: p.l - 1, i: 2 * p.i }) ?? '')}\n${flat(this.text({ l: p.l - 1, i: 2 * p.i + 1 }) ?? '')}`; }
+  private source(p: Pos): string { return p.l === 0 ? this.leafSource(p.i) : this.joined(p); }
+  private busy(p: Pos): boolean { const k = key(p); return this.tree.has(k) || this.inFlight.has(k) || this.failed.has(k); }
 
   /** Node n is built: queue its parent once its sibling is built too. */
-  readyParent(n: Pos): void {
+  private readyParent(n: Pos): void {
     if (!this.tree.has(key({ l: n.l, i: n.i ^ 1 }))) return;
     const p = parentOf(n);
     if (this.busy(p)) return;
@@ -486,7 +493,7 @@ export class Memory {
     else this.merges.push(p);
   }
 
-  pump(): void {
+  private pump(): void {
     if (this.closing) return;
     let changed = false;
     for (let progressed = true; progressed;) {
@@ -494,29 +501,29 @@ export class Memory {
       for (let p = this.instant.pop(); p; p = this.instant.pop()) {
         if (!this.tree.has(key(p))) { this.finish(p, this.joined(p)); progressed = changed = true; }
       }
-      while (this.retryLeaves.length && this.inFlight.size < this.jobs) {
+      while (this.retryLeaves.length && this.inFlight.size < this.jobCount) {
         const p = this.retryLeaves.shift();
-        if (p && !this.busy(p)) this.call(p);
+        if (p && !this.busy(p)) this.startCompaction(p);
       }
       // Leaves and merges in the order the messages came; a leaf that fits takes no call, so it never waits for one.
       for (;;) {
         while (this.leafNext < this.log.length && this.tree.has(`0/${this.leafNext}`)) this.leafNext++;
         for (let top = this.merges.peek(); top && this.busy(top); top = this.merges.peek()) this.merges.pop();
         const merge = this.merges.peek(), leaf = this.leafNext < this.log.length && this.leafOpen < this.lead;
-        const slot = this.inFlight.size < this.jobs;
-        if (merge && slot && (!leaf || end(merge) <= this.leafNext)) { this.merges.pop(); this.call(merge); continue; }
+        const slot = this.inFlight.size < this.jobCount;
+        if (merge && slot && (!leaf || end(merge) <= this.leafNext)) { this.merges.pop(); this.startCompaction(merge); continue; }
         if (!leaf) break;
         const p = { l: 0, i: this.leafNext }, source = this.leafSource(p.i), free = bytes(source) <= NODE;
         if (!free && !slot) break;
         this.leafNext++;
         this.leafOpen++;
-        if (free) { this.finish(p, source); progressed = changed = true; } else this.call(p);
+        if (free) { this.finish(p, source); progressed = changed = true; } else this.startCompaction(p);
       }
     }
     if (changed) { this.save(); this.emit(); }
   }
 
-  finish(p: Pos, text: string): void {
+  private finish(p: Pos, text: string): void {
     const k = key(p);
     if (this.tree.has(k)) return;
     const node: TreeNode = { l: p.l, i: p.i, text, size: bytes(flat(text)) };
@@ -528,17 +535,17 @@ export class Memory {
     this.refit(this.log.length, false);
   }
 
-  call(p: Pos): void {
+  private startCompaction(p: Pos): void {
     const k = key(p);
     const run = this.compact(p).then(line => {
       if (this.controller.signal.aborted) return;
       this.finish(p, line);
-      if (!this.failed.size) this.lastError = undefined;
+      if (!this.failed.size) this.error = undefined;
       this.save();
     }).catch((error: unknown) => {
       if (this.controller.signal.aborted) return;
-      this.lastError = errorMessage(error);
-      this.warn(`unii: compaction ${name(p)} failed: ${this.lastError}`);
+      this.error = errorMessage(error);
+      this.warn(`unii: compaction ${name(p)} failed: ${this.error}`);
       this.failed.set(k, p);
       clearTimeout(this.retryTimer);
       this.retryTimer = setTimeout(() => { this.retryFailed(); this.schedule(); }, this.retryMs);
@@ -551,7 +558,7 @@ export class Memory {
     this.inFlight.set(k, run);
   }
 
-  retryFailed(): void {
+  private retryFailed(): void {
     for (const p of this.failed.values()) {
       if (p.l === 0) this.retryLeaves.push(p);
       else this.merges.push(p);
@@ -561,7 +568,7 @@ export class Memory {
   }
 
   /** The compaction view up to node p: built lines ending at p (a leaf) or at its last message (a merge). */
-  compactionContext(p: Pos): string {
+  private compactionContext(p: Pos): string {
     const boundary = p.l === 0 ? start(p) : end(p), lines: string[] = [];
     for (const q of this.cview.parts) {
       if (end(q) > boundary || !this.tree.has(key(q))) break;
@@ -576,7 +583,7 @@ export class Memory {
    * shortest is kept and the harness cuts it to size. An answer with no line (a refusal) makes the node its source,
    * clipped; any other failure throws, and the node is tried again later.
    */
-  async compact(p: Pos): Promise<string> {
+  private async compact(p: Pos): Promise<string> {
     let task;
     const source = this.source(p);
     if (p.l === 0) {
@@ -613,7 +620,7 @@ export class Memory {
   }
 
   /** A node the model answered without a line: its source's first 512 bytes, flat (UniiChat Memory.ts `cut`). */
-  clipped(p: Pos, source: string, why: string): string {
+  private clipped(p: Pos, source: string, why: string): string {
     this.warn(`unii: compaction ${name(p)}: ${why}; its node is its source, clipped`);
     return cutBytes(flat(source), NODE);
   }

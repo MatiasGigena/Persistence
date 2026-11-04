@@ -150,7 +150,7 @@ describe('archived agents (offline)', { concurrency: false, timeout: 60_000 }, (
       assert.ok(listed.includes('- Pi (session agent)') && !listed.includes('Lead') && !listed.includes('Sub'), listed);
 
       // zoom still reads an archived agent.
-      assert.match(await agentTranscript(harness, 'Lead', context), /0\|user: \[from Pi\] Plan\./);
+      assert.match(await agentTranscript(harness, context, 'Lead'), /0\|user: \[from Pi\] Plan\./);
 
       // Restoring a sub of an archived main is refused; restoring the main restores both.
       await assert.rejects(restoreAgent(harness, context, 'Sub'), { message: 'Sub\'s main agent Lead is archived; restore Lead.' });
@@ -299,13 +299,13 @@ describe('archived agents (offline)', { concurrency: false, timeout: 60_000 }, (
       assert.deepEqual(Object.keys(await registryOf(instance)), ['Other']);
       assert.deepEqual(await purgeArchived(harness, context, T0 + ARCHIVE_TTL_MS), [], 'a second sweep finds nothing');
       // As after delete_agent: zoom still reads the chat, and nothing else knows the name.
-      assert.match(await agentTranscript(harness, 'Lead', context), /^Lead was deleted; its chat is kept\n/);
+      assert.match(await agentTranscript(harness, context, 'Lead'), /^Lead was deleted; its chat is kept\n/);
       assert.match(await execute(instance, 'send_message', { to: 'Lead', text: 'Hi.' }), /^No agent named Lead\. There are none\.$/);
       // The name is free again: a new Lead, with a new conversation and a new sub.
       await ask(instance, 'spawn Lead');
       assert.deepEqual(await visible(instance), ['Lead', 'Sub']);
       assert.notEqual(await idOf(instance, 'Lead'), old);
-      assert.equal((await agentTranscript(harness, 'Lead', context)).match(/\|user: \[from Pi\] Plan\./g)?.length, 1, 'only the new chat');
+      assert.equal((await agentTranscript(harness, context, 'Lead')).match(/\|user: \[from Pi\] Plan\./g)?.length, 1, 'only the new chat');
       assert.deepEqual(await purgeArchived(harness, context, T0 + 1000 + ARCHIVE_TTL_MS), ['Other']);
     } finally {
       await instance.close();

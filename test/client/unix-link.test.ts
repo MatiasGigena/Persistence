@@ -157,7 +157,7 @@ test('bye 1012 reconnects with backoff to the restarted server; bye 4001 closes 
   await delay(100);
   assert.equal(link.state(), 'reconnecting', 'still retrying while nothing listens');
   listening = await listenFake(fake, path);
-  await until(() => session.attached.state() === 'open', 'reconnected');
+  await until(() => session.attached.state() === 'ready', 'reconnected');
   assert.equal(session.welcome()?.boot, fake.boot);
   const peer = fake.peers().at(-1) ?? assert.fail('no peer');
   peer.close(CloseCode.unauthorized, 'revoked');
@@ -199,7 +199,7 @@ test('reconnectNormal retries normal bye with backoff and a fresh hello; explici
   assert.equal(wire.peers.length, 1);
   t.mock.timers.tick(1);
   await flush();
-  assert.equal(link.state(), 'open');
+  assert.equal(link.state(), 'ready');
   assert.equal(wire.peers.length, 2);
   assert.equal(wire.sent.filter(text => text.includes('"t":"hello"')).length, 2);
   link.close();
@@ -256,7 +256,7 @@ test('backoff doubles from the first wait to the cap, and resets after a welcome
   const link = new ClientLink({ connect, client: 'test', retry: { first: 40, max: 160 }, random: () => 0.5 });
   await link.start();
   fake.peers()[0]?.drop();
-  await until(() => link.state() === 'open' && times.length === 6, 'the reconnect', 5000);
+  await until(() => link.state() === 'ready' && times.length === 6, 'the reconnect', 5000);
   const gaps = times.slice(1).map((time, k) => time - (times[k] ?? 0));
   // Waits: 40, 80, 160, 160, 160 (the drop to the first retry, then each failure to the next).
   for (const [k, wait] of [40, 80, 160, 160, 160].entries()) {

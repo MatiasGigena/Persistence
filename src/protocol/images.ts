@@ -1,6 +1,13 @@
 // Images on the wire and in the chat: the accepted types, their magic bytes, and the size caps. Shared by Node
 // (server, tools) and the browser (web composer), so no Node or DOM imports.
-import type { ChatImage } from '../ui/types.ts';
+/**
+ * An image a message or tool result carries: base64 `data` of a `mimeType` in IMAGE_TYPES below.
+ * On the wire, `data` is empty when the image is too large to send (LIMITS.image); clients then show a placeholder.
+ */
+export interface ChatImage {
+  readonly mimeType: string;
+  readonly data: string;
+}
 
 /** The image types Persistence accepts: what the model providers take. */
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
