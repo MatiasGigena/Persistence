@@ -306,7 +306,8 @@ export class Memory {
 
   /**
    * Log a subagent's report as a `work` message as Pi sees it (upstream Call.ts `report_text`, Apache-2.0):
-   * `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with a `session`. Plug into the agents extension's `onReport`.
+   * `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with a `session`. The `uniichat` extension calls it
+   * for each `agents.report` entry Pi's next request sees.
    * `id` keys it (pass the same `id` as `data.id` of the report's input entry so neither path logs it twice);
    * without one, the same name and text are logged once.
    */

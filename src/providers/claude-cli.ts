@@ -80,7 +80,6 @@ type CliEvent =
   | { type: 'result'; subtype?: string; is_error: boolean; result?: string; errors?: string[]; api_error_status?: number;
     stop_reason?: string; usage?: ApiUsage };
 
-type Json = Record<string, unknown>;
 const isList = (value: unknown): value is unknown[] => Array.isArray(value);
 // JSON.parse yields JSON values only, so a parsed object is a JsonObject.
 const isJsonObject = (value: unknown): value is JsonObject => isRecord(value);

@@ -71,7 +71,8 @@ Give each test its own temporary data directory.
 - Erasable syntax only: no `enum`, `namespace`, or parameter properties. Import with
   `.ts` specifiers, and types with `import type`.
 - No `any`, written or inferred, and no `@ts-ignore`, `@ts-expect-error`, or
-  `@ts-nocheck`. tsc (strict) and typescript-eslint (`no-unsafe-*`) enforce both.
+  `@ts-nocheck`. tsc (strict) and typescript-eslint (`no-unsafe-*`) enforce both;
+  tsc also refuses unused locals and imports (`noUnusedLocals`).
 - Parse external data (JSON, IPC, process arguments) as `unknown` and narrow it.
   Cast only what is genuinely known, and say why.
 - Use Node built-ins and the pinned `@earendil-works/*` packages. Add a dependency

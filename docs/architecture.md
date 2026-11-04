@@ -277,6 +277,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/providers/claude-cli.ts` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
 | `src/providers/claude-cli-mcp.ts` | Stub stdio MCP server that lists Pi's tools to the CLI and runs none |
 | `src/providers/anthropic.ts` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
+| `src/agents/entries.ts` | `REPORT_KIND`, `MESSAGE_KIND` and `agentInputOf`: the agents' input entries and the one decoder of their data, read by the memory, the UI and the terminal host |
 | `src/agents/roster.ts` | The standing agents' roster: `DEFAULT_ROSTER`, the kit names (`KITS`), agent name rules; no pi-durable imports, so `config.ts` parses settings.json's `agents` with it |
 | `src/tools/browser.ts` | `createBrowserExtension`: the `browser` extension's eight `browser_*` tools, a headless Chromium and persistent profile per key (`keyOf`: the agent's name, from the host), one queue and a 60 s timeout per operation, URL redaction, `close()` |
 | `src/tools/autoreview.ts` | `createAutoreviewExtension`: dedicated skill-helper invocation, fixed P0–P2; guarded local shell or pinned connector execution, no raw commands or isolation overrides |

@@ -5,7 +5,7 @@ import {
   TuiAltScreen, VStack,
 } from '@earendil-works/pi-tui';
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
-import type { ChatItem, SessionStatus, UiSession } from '../types.ts';
+import type { ChatItem, UiSession } from '../types.ts';
 import { ChatView } from './chat.ts';
 import { statusText, toolSummary } from '../text.ts';
 import type { NoticeLevel } from './chat.ts';

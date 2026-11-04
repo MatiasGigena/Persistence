@@ -3,7 +3,6 @@
 // agents, with their deletion time, where Enter restores one. Refusals (a standing agent) show in the header.
 import { Markdown, styleTextWithAnsi, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { MarkdownTheme, TUI } from '@earendil-works/pi-tui';
-import { ARCHIVE_TTL_MS } from '../../../protocol/messages.ts';
 import type { AgentStatus, ChatFeed, ChatItem, UiSession } from '../../types.ts';
 import { activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText, toolSummary } from '../../text.ts';
 import { clean, confirm, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';

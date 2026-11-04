@@ -8,7 +8,7 @@ export { isKind, JOBS, KINDS, Memory, openMemory } from './memory.ts';
 export type {
   AppendInput, Budget, CompactionPrompt, Kind, MemoryOptions, MemoryRecord, MemoryStatus, ReportInput, TreeNode,
 } from './memory.ts';
-export { createUniiExtension, REPORT_KIND } from './extension.ts';
+export { createUniiExtension } from './extension.ts';
 export type { ContextEntries, RequestApi, UniiExtension, UniiExtensionOptions } from './extension.ts';
 export { CompactionRefused, createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
 export type {

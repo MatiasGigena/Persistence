@@ -11,6 +11,7 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "strict": true,
+    "noUnusedLocals": true,
     "noImplicitAny": true,
     "useUnknownInCatchVariables": true,
     "noUncheckedIndexedAccess": true,

@@ -12,7 +12,7 @@ import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { isWork, resumeInstance, settleAgents } from '../runtime/recovery.ts';
 import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts';
-import { listAgents, REPORT_KIND } from '../agents/index.ts';
+import { agentInputOf, listAgents } from '../agents/index.ts';
 import { claudeCliProvider } from '../providers/claude-cli.ts';
 import { backupOffline } from '../server/backup.ts';
 import { formatBytes } from '../server/admin.ts';
@@ -55,9 +55,9 @@ const textContent = (content: Message['content'] | undefined): string => typeof 
 const field = (value: unknown, key: string): unknown => isRecord(value) ? value[key] : undefined;
 
 /** An agent's report as its name and text: what the terminal UI shows, without the note to Pi its model text ends with. */
-function reportOf({ kind, data }: EntryRecord): { name: string; text: string } | undefined {
-  const name = field(data, 'name'), text = field(data, 'text');
-  return kind === REPORT_KIND && typeof name === 'string' && typeof text === 'string' ? { name, text } : undefined;
+function reportOf(entry: EntryRecord): { name: string; text: string } | undefined {
+  const input = agentInputOf(entry);
+  return input?.kind === 'report' ? { name: input.from, text: input.text } : undefined;
 }
 
 async function printHistory(limit?: number): Promise<void> {

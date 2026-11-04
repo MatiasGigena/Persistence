@@ -33,7 +33,7 @@ import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { Access, CatalogModels } from './models.ts';
 import { createMachineRouting } from '../machines/routing.ts';
 import type { RoutingDispatcher } from '../machines/routing.ts';
-import type { ChatImage, MachineTarget, SendOptions } from '../ui/types.ts';
+import type { MachineTarget, SendOptions } from '../ui/types.ts';
 import { userInput } from './models.ts';
 import { errorMessage } from '../protocol/util.ts';
 

@@ -159,7 +159,7 @@ test('an agent feed opens with its snapshot, follows ops, ends, and closes on th
 });
 
 test('a reconnect gets a fresh snapshot, re-opens agent feeds under their new ids, and says the server restarted', async () => {
-  const { server, wire, session, notices, requests } = await attach({ agents: { Bob: [{ kind: 'user', id: 'b1', text: 'x' }] } });
+  const { server, wire, session, notices } = await attach({ agents: { Bob: [{ kind: 'user', id: 'b1', text: 'x' }] } });
   const feed = await session.agentChat('Bob') ?? assert.fail('no feed');
   await until(() => feed.items().length === 1, 'the agent snapshot');
   const states: string[] = [];

@@ -10,10 +10,15 @@ import type {
   AgentChange, ConversationId, Cursor, DocumentReader, EntryId, EntryRecord, Extension, NextTaskState,
   Session, TaskId, TaskOptions, ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
-import { AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, rosterEntry, type StandingAgent } from './roster.ts';
+import {
+  AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, rosterEntry, type StandingAgent,
+} from './roster.ts';
+import { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
 import { NotFound } from '../ui/errors.ts';
 
 export { AGENT_NAME, DEFAULT_ROSTER, isAgentName, isKit, KITS, LOCAL_KITS } from './roster.ts';
+export { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
+export type { AgentInput } from './entries.ts';
 export type { Kit, Roster, StandingAgent } from './roster.ts';
 
 /**
@@ -34,7 +39,7 @@ export type { Kit, Roster, StandingAgent } from './roster.ts';
  * Tool calls that create deliveries are replay-safe and keyed by their tool task ID.
  *
  * Host wiring (src/runtime/runtime.ts):
- *   const Agents = createAgentsExtension({ initialContext, onReport });
+ *   const Agents = createAgentsExtension({ initialContext, roster, onSpawn, onDelivery });
  *   registry.install(Agents);                       // also on inspect-only launches: tasks stay known
  *   agent.extensions = [CodingTools, Agents, ...];  // the root's array selects exactly these
  *   agent.tools = [...(allowTools ? CodingTools.tools : []), ...Agents.tools];  // an array enables exactly these
@@ -51,8 +56,6 @@ export type { Kit, Roster, StandingAgent } from './roster.ts';
  */
 
 export const PI = 'Pi';
-export const REPORT_KIND = 'agents.report';
-export const MESSAGE_KIND = 'agents.message';
 const KEEP_CALLS = 256;
 const KEEP_REPORTED = 32;
 /**
@@ -725,11 +728,9 @@ export async function listAgents(source: DocumentReader, context: Context = BACK
 
 /** An input entry's own text, from its data: `[from X] text` or `[X] text`, never the view preamble. */
 function inputText(entry: EntryRecord): string | undefined {
-  const data = entry.data;
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) return undefined;
-  if (entry.kind === MESSAGE_KIND && typeof data.from === 'string' && typeof data.text === 'string') return `[from ${data.from}] ${data.text}`;
-  if (entry.kind === REPORT_KIND && typeof data.name === 'string' && typeof data.text === 'string') return `[${data.name}] ${data.text}`;
-  return undefined;
+  const input = agentInputOf(entry);
+  if (!input) return undefined;
+  return input.kind === 'message' ? `[from ${input.from}] ${input.text}` : `[${input.from}] ${input.text}`;
 }
 
 /**
@@ -877,7 +878,10 @@ export interface AgentsOptions extends AgentsSetup {
     agent: { readonly name: string; readonly role: AgentRole; readonly parent: string; readonly task: string },
     api: ToolExecutionApi, context: Context,
   ) => string | undefined | Promise<string | undefined>;
-  /** Called after an input from an agent was durably admitted to Pi, at most once per input. */
+  /**
+   * An observer, for tests and embedders: called after an input from an agent was durably admitted to Pi, at most
+   * once per input. The host does not pass one; Pi's memory logs reports from their `agents.report` entries.
+   */
   readonly onReport?: (report: AgentReport) => unknown;
   /** Pin a new agent or delegated task's conversation in the same once-only transaction as its first delivery. */
   readonly onSpawn?: (tx: Tx, parent: ConversationId, child: ConversationId) => Promise<void>;
@@ -895,9 +899,9 @@ export interface AgentsExtension extends Extension {
  * - `initialContext({ name, role, parent, task }, api, context)` returns an optional preamble placed
  *   before a new agent's first task (string, undefined, or a promise of either). `api` is the
  *   spawning tool call's api; read through it, never through the Harness inside a commit.
- * - `onReport({ name, text })` is called after an input from agent `name` was durably admitted to
- *   Pi (a final report or a send_message). At most once per input; the durable record is the
- *   `agents.report` entry itself.
+ * - `onReport({ name, text })`, an observer the host does not use, is called after an input from agent `name` was
+ *   durably admitted to Pi (a final report or a send_message). At most once per input; the durable record is the
+ *   `agents.report` entry itself, which Pi's memory logs.
  * - `childAgent` is an AgentChange applied to every spawned agent after it copies Pi's choices.
  * - `roster` and `kits`: the standing agents and the tool kits (ADR 0027), as `syncAgents()` takes them. The roster
  *   names the standing agents in Pi's role text and adds each one's `instructions` to its own.
