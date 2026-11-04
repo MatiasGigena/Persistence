@@ -258,6 +258,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/ssh-agent.ts` | `startSshAgent`: Pi's own `ssh-agent` with `PI_DURABLE_SSH_KEYS` only, bash's `SSH_AUTH_SOCK` (ADR 0030); started by `openInstance` and by an SSH connector |
 | `src/runtime/recovery.ts` | `resumeInstance` (pending tasks and queued input), `settleAgents` (wait until agents are idle) |
+| `src/runtime/input.ts` | `userInput`: the user message a send becomes (text and images), shared by the runtime and routing |
 | `src/runtime/thinking.ts` | `THINKING` and `isThinkingLevel`: the reasoning efforts the CLI, settings and `/effort` accept |
 | `src/runtime/files.ts` | `atomicWrite` and `appendJson`: fsynced writes for settings, the server's stores and the memory directory |
 | `src/memory/index.ts` | Public exports of the memory |

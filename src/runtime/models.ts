@@ -2,11 +2,10 @@
 // each provider's credentials checked (and the anthropic subscription refused) the same way at launch and in session.
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
-import type { ModelRef, UserInput } from '@earendil-works/pi-durable';
+import type { ModelRef } from '@earendil-works/pi-durable';
 import { THINKING } from './thinking.ts';
 import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
-import type { ChatImage } from '../protocol/images.ts';
 import { errorMessage } from '../protocol/util.ts';
 
 /** What the listing and the checks read of pi-ai's Models (a pi-coding-agent ModelRuntime is one). */
@@ -81,12 +80,6 @@ export function accessProblem({ provider, modelId }: ModelRef, access: Access, a
       : `Checking the credentials for ${provider} timed out.`;
     case 'error': return `Checking the credentials for ${provider} failed: ${access.detail}`;
   }
-}
-
-/** A user message's content: the text alone, or a text block (when not empty) and then the images. */
-export function userInput(text: string, images: readonly ChatImage[] = []): UserInput {
-  if (!images.length) return text;
-  return [...text ? [{ type: 'text' as const, text }] : [], ...images.map(({ mimeType, data }) => ({ type: 'image' as const, mimeType, data }))];
 }
 
 /**

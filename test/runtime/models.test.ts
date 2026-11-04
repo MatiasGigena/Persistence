@@ -12,7 +12,8 @@ import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { claudeCliProvider } from '../../src/providers/claude-cli.ts';
-import { imagesProblem, modelChooser, userInput } from '../../src/runtime/models.ts';
+import { imagesProblem, modelChooser } from '../../src/runtime/models.ts';
+import { userInput } from '../../src/runtime/input.ts';
 import type { ModelOption } from '../../src/runtime/models.ts';
 
 const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.ts', import.meta.url));

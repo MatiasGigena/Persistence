@@ -8,5 +8,10 @@ export const isRecord = (x: unknown): x is Record<string, unknown> => typeof x =
 /** An error's message, or the thrown value as text. */
 export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
+/** A value of the wrong shape, from a parser that narrows `unknown`; its message names the field. */
+export class ShapeError extends Error {
+  override readonly name = 'ShapeError';
+}
+
 /** A Node system error's `code` (`ENOENT`, `EADDRINUSE`…), or undefined for anything else. */
 export const errorCode = (error: unknown): unknown => error instanceof Error && 'code' in error ? error.code : undefined;

@@ -35,7 +35,7 @@ import { createMachineRouting } from '../machines/routing.ts';
 import type { RoutingDispatcher } from '../machines/routing.ts';
 import type { SendOptions } from '../ui/types.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
-import { userInput } from './models.ts';
+import { userInput } from './input.ts';
 import { errorMessage } from '../protocol/util.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.

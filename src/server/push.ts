@@ -9,7 +9,8 @@ import type { ServeSettings, StatePaths } from '../host/config.ts';
 import { errorMessage, isRecord } from '../protocol/util.ts';
 import type { PushSubscriptionJson } from '../protocol/messages.ts';
 import type { PushNotifier } from './link.ts';
-import { ShapeError, readJson, writeJson } from './store.ts';
+import { readJson, writeJson } from './store.ts';
+import { ShapeError } from '../protocol/util.ts';
 
 /** RFC 8188 record size we announce; the whole payload is one record. */
 const RECORD_SIZE = 4096;
