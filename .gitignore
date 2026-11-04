@@ -14,3 +14,7 @@ auth.json
 .agents/
 .claude/skills/
 skills-lock.json
+
+# desloppify local state
+.desloppify/
+scorecard.png
