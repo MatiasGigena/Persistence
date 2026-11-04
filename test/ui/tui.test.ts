@@ -53,7 +53,10 @@ class FakeSession implements UiSession {
   send(text: string): Promise<void> { this.sent.push(text); return Promise.resolve(); }
   abort(): Promise<void> { this.aborts++; return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
-  stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
+  stopAgents(name?: string): Promise<readonly string[]> {
+    this.stopped.push(name);
+    return name === 'ghost' ? Promise.reject(new Error('No agent named ghost. The agents are Ada, Bob.')) : Promise.resolve([name ?? 'Ada']);
+  }
   archiveAgents(): Promise<readonly string[]> { return Promise.resolve([]); }
   restoreAgent(): Promise<readonly string[]> { return Promise.resolve([]); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
@@ -594,12 +597,7 @@ test('/stop all stops Pi and every agent; /stop Name stops one agent', async () 
   assert.deepEqual(session.stopped, [undefined, 'Bob', 'ghost']);
   assert.match(terminal.text(), /Stopped Ada\./);
   assert.match(terminal.text(), /Stopped Bob\./);
-  assert.match(terminal.text(), /No agent named ghost\./);
-  assert.doesNotMatch(terminal.text(), /Agents:/, 'no list when there are no agents');
-  session.update({ agents: [{ name: 'Ada', role: 'main', parent: 'Pi', busy: false }, { name: 'Bob', role: 'sub', parent: 'Ada', busy: true }] });
-  terminal.type('/stop ghost', '\r');
-  await until(() => /Agents: Ada, Bob\./.test(terminal.text()), 'the agent list');
-  assert.match(terminal.text(), /No agent named ghost\. Agents: Ada, Bob\./);
+  assert.match(terminal.text(), /No agent named ghost\. The agents are Ada, Bob\./, 'the session\'s refusal, as it worded it');
   assert.deepEqual(session.sent, []);
   terminal.type('/exit', '\r');
   await done;

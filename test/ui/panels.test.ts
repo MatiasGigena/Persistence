@@ -76,7 +76,10 @@ class FakeSession implements UiSession {
   send(): Promise<void> { return Promise.resolve(); }
   abort(): Promise<void> { return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
-  stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
+  stopAgents(name?: string): Promise<readonly string[]> {
+    this.stopped.push(name);
+    return name === 'ghost' ? Promise.reject(new Error('No agent named ghost. The agents are Ada, Bob.')) : Promise.resolve([name ?? 'Ada']);
+  }
   /** Archive and restore calls, as `name` or `adhoc`; Coder is standing and refused. */
   readonly archiveCalls: string[] = [];
   readonly standing = new Set(['Coder']);

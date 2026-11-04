@@ -229,7 +229,7 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   before admission, and a repeat ID cannot change destination, even if its original admission was rejected.
   See [Machine routing and execution](#machine-routing-and-execution).
 - **`abort`**, **`stopAgents`**: as the session's `abort` and `stopAgents`; `names` lists the agents stopped,
-  sub agents first, and is empty for an unknown name.
+  sub agents first. An unknown name is refused with `not_found`, as `agents.archive` and `agents.restore` refuse it.
 - **`agents.archive`** is `UiSession.archiveAgents` (ADR 0034). Its params are exactly one of `{name}` (a
   nonempty string, case-insensitive) and `{adhoc: true}` (every main agent that is not a standing one); anything else
   is `bad_request`. It stops the agents' work and records `archivedAt`; archiving a main agent archives its sub

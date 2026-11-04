@@ -504,12 +504,12 @@ export type AgentsStopper = DocumentReader & {
  * Stop agent `name` and its sub agents, or every agent without a name (upstream UniiChat's stop of all work); Pi is
  * not touched. Sub agents go first, since a sub's report would otherwise wake its stopped main again. Each agent's
  * every conversation is stopped, a standing agent's past sessions too. A stopped run reports nothing. Returns the
- * names stopped, `name` last; an unknown name stops nothing.
+ * names stopped, `name` last; rejects with NotFound for an unknown name, as archive and restore do.
  */
 export async function stopAgents(source: AgentsStopper, context: Context, name?: string): Promise<string[]> {
   const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
   const found = name === undefined ? undefined : find(agents, name);
-  if (name !== undefined && !found) return [];
+  if (name !== undefined && !found) throw new NotFound(noAgent(agents, name));
   const chosen = found ? Object.keys(agents).filter((each) => agents[each]?.parent === found.name || each === found.name) : Object.keys(agents);
   return stopNamed(source, context, agents, chosen);
 }
@@ -518,13 +518,11 @@ export async function stopAgents(source: AgentsStopper, context: Context, name?:
 async function stopNamed(source: AgentsStopper, context: Context, agents: Readonly<Record<string, AgentRecord>>,
   names: readonly string[]): Promise<string[]> {
   const chosen = names.flatMap((each): [string, AgentRecord][] => { const agent = agents[each]; return agent ? [[each, agent]] : []; });
-  const order = [...chosen.filter(([, agent]) => agent.role === 'sub'), ...chosen.filter(([, agent]) => agent.role === 'main')];
+  const groups = (['sub', 'main'] as const).map(role => chosen.filter(([, agent]) => agent.role === role));
   // Each group's agents stop together, every session at once; the subs are stopped before any main is.
   const abort = async (id: ConversationId) => { await (await source.conversation(id, context))?.abort(context); };
-  for (const role of ['sub', 'main'] as const) {
-    await Promise.all(chosen.filter(([, agent]) => agent.role === role).flatMap(([, agent]) => sessionsOf(agent).map(abort)));
-  }
-  return order.map(([each]) => each);
+  for (const group of groups) await Promise.all(group.flatMap(([, agent]) => sessionsOf(agent).map(abort)));
+  return groups.flat().map(([each]) => each);
 }
 
 /** A deleted agent's kept conversations, as a record `agentTranscript` reads; undefined if no such name was deleted. */
@@ -767,7 +765,7 @@ export async function agentTranscript(
   const index = number === undefined ? sessions.length : Number(number);
   const conversationId = sessions[index - 1];
   if (conversationId === undefined || index < 1) {
-    return `No session ${number}: ${agent.name} has ${sessions.length === 1 ? '1 session' : `${sessions.length} sessions`}.`;
+    throw new NotFound(`No session ${number}: ${agent.name} has ${sessions.length === 1 ? '1 session' : `${sessions.length} sessions`}.`);
   }
   // A standing agent's (or any with past sessions) transcript says which session it is.
   const header = [
@@ -810,7 +808,7 @@ export async function agentTranscript(
   let end = pageEnd(all, 0, TRANSCRIPT_PAGE);
   const ends = [end];
   while (end < all.length) ends.push(end = pageEnd(all, end, TRANSCRIPT_PAGE));
-  if (!Number.isSafeInteger(page) || page < 1 || page > ends.length) return `No page ${page}: ${agent.name}'s chat has ${ends.length}.`;
+  if (!Number.isSafeInteger(page) || page < 1 || page > ends.length) throw new NotFound(`No page ${page}: ${agent.name}'s chat has ${ends.length}.`);
   const body = all.slice(ends[page - 2] ?? 0, ends[page - 1]);
   return page < ends.length ? `${body}\n[page ${page} of ${ends.length}; go on with page ${page + 1}]` : body;
 }

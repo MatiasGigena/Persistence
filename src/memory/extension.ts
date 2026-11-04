@@ -11,6 +11,7 @@ import type { Memory, ReportInput } from './memory.ts';
 import { PROMPT } from './prompt.ts';
 import { CAP, clip, formatDate, hash } from './util.ts';
 import { agentInputOf } from '../agents/entries.ts';
+import { NotFound } from '../protocol/errors.ts';
 
 // Adapted from UniiChat's Server.ts HEAD (Apache-2.0): a turn's head, as a compaction's is "Compaction:", so the one
 // prompt tells the two apart.
@@ -145,7 +146,7 @@ function headed(content: UserMessage['content']): (TextContent | ImageContent)[]
  * `name` ('uniichat').
  */
 export function createUniiExtension({
-  memory, isRoot = id => id === ROOT_CONVERSATION_ID, resolveAgentChat = async () => 'unknown agent', atWork,
+  memory, isRoot = id => id === ROOT_CONVERSATION_ID, resolveAgentChat = name => Promise.reject(new NotFound(`No agent named ${name}.`)), atWork,
   settleMs = 8_000, prevBytes = 16_000, now = () => new Date(), name = 'uniichat',
 }: UniiExtensionOptions): UniiExtension {
   const open = (): Memory => {

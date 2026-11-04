@@ -12,7 +12,7 @@ import { imagesProblem, modelChooser, thinkingLevels } from '../runtime/models.t
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
 import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../protocol/session.ts';
-import { NotFound, Unavailable } from '../protocol/errors.ts';
+import { Unavailable } from '../protocol/errors.ts';
 
 /**
  * The launch choices the status line falls back on until Pi's stored agent says otherwise; `setModel()` saves to
@@ -191,8 +191,7 @@ export async function createUiSession(
     memoryView: () => Promise.resolve(memoryLines(instance)),
     async zoom(id, n) {
       if (!memory) throw new Unavailable('Memory is not open (inspection only).');
-      // Memory.zoom throws only for a line or message the log does not have.
-      try { return memory.zoom(id, n); } catch (error) { throw new NotFound(errorMessage(error), { cause: error }); }
+      return memory.zoom(id, n);
     },
     models: () => chooser.list(currentModel()),
     setModel(provider, id) {

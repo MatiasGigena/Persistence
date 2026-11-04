@@ -317,7 +317,7 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
       const { harness, root, context } = instance;
       await (await root.submit({ type: 'input', content: 'go' }, context)).wait(context);
       await started.promise;
-      assert.deepEqual(await stopAgents(harness, context, 'nobody'), []);
+      await assert.rejects(stopAgents(harness, context, 'nobody'), { name: 'NotFound', message: /^No agent named nobody\./ });
       assert.deepEqual(await stopAgents(harness, context), ['S', 'Lead']);
       await settle(instance);
       assert.deepEqual((await listAgents(harness, context)).filter((agent) => agent.busy), []);
@@ -372,7 +372,7 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
       const body = (page: string | undefined) => (page ?? '').replace(/\n\[page \d of 3; go on with page \d\]$/, '');
       assert.ok([one, two].every((page) => body(page).length <= TRANSCRIPT_PAGE && body(page).endsWith('\n')));
       assert.equal(body(one) + body(two) + body(three), whole);
-      assert.equal(await agentTranscript(harness, context, 'Long', 4), 'No page 4: Long\'s chat has 3.');
+      await assert.rejects(agentTranscript(harness, context, 'Long', 4), { name: 'NotFound', message: 'No page 4: Long\'s chat has 3.' });
     } finally {
       await instance.close();
     }

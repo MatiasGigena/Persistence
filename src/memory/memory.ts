@@ -7,6 +7,7 @@ import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel } from 
 import type { CompactionMessage, Reasoning, Summarizer, SummarizerModels } from './summarizer.ts';
 import { bytes, CAP, cleanLine, clip, cutLine, flat, formatDate, hash, localDay, NODE, split } from './util.ts';
 import { appendJson, atomicWrite } from '../runtime/files.ts';
+import { NotFound } from '../protocol/errors.ts';
 import { cutBytes, errorMessage, isRecord } from '../protocol/util.ts';
 import { cut, end, key, name, parentOf, start, View } from './view.ts';
 import type { Pos } from './view.ts';
@@ -329,7 +330,7 @@ export class Memory {
   /** Message i of the log; throws when there is none. */
   at(i: number): MemoryRecord {
     const record = this.log[i];
-    if (!record) throw new Error(`No message ${i}.`);
+    if (!record) throw new NotFound(`No message ${i}.`);
     return record;
   }
 
@@ -389,17 +390,17 @@ export class Memory {
 
   /**
    * zoom(id, n): line id+n opened into its two halves; n = 1 gives message id whole, a text over PAGE characters in
-   * pages. Bad arguments throw with the tree's roots, where any zoom can start (UniiChat Memory.ts `zoom`).
+   * pages. Bad arguments throw NotFound with the tree's roots, where any zoom can start (UniiChat Memory.ts `zoom`).
    */
   zoom(id: number, n = 1, page = 1): string {
     const T = this.log.length;
     if (!Number.isSafeInteger(id) || id < 0 || !Number.isSafeInteger(n) || n < 1 || (n & (n - 1)) !== 0 || id % n !== 0 || id + n > T) {
-      throw new Error(`No line ${id}+${n}: n is a power of 2, id a multiple of n, and id+n at most ${T}. The tree's roots: ${roots(T).map(name).join(', ') || 'none'}.`);
+      throw new NotFound(`No line ${id}+${n}: n is a power of 2, id a multiple of n, and id+n at most ${T}. The tree's roots: ${roots(T).map(name).join(', ') || 'none'}.`);
     }
     if (n === 1) {
       const record = this.at(id), pages = split(record.text, PAGE);
       const body = pages[page - 1];
-      if (!Number.isSafeInteger(page) || body === undefined) throw new Error(`Message ${id} has ${pages.length} page(s).`);
+      if (!Number.isSafeInteger(page) || body === undefined) throw new NotFound(`Message ${id} has ${pages.length} page(s).`);
       const head = pages.length === 1 ? `${id}+1` : `${id}+1 (page ${page} of ${pages.length}; zoom(${id}, 1, page) for the others)`;
       return `${head}|${record.kind}: ${body}`;
     }
@@ -412,7 +413,7 @@ export class Memory {
 
   date(id: number): string {
     const record = this.log[id];
-    if (!Number.isSafeInteger(id) || !record) throw new Error(`No message ${id}.`);
+    if (!Number.isSafeInteger(id) || !record) throw new NotFound(`No message ${id}.`);
     return formatDate(record.date);
   }
 
