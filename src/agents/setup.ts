@@ -26,7 +26,7 @@ export interface AgentsSetup {
   /** The standing agents (ADR 0027); none without it. */
   readonly roster?: Roster;
   readonly kits?: ToolKits;
-  /** Each run's tools act on a pinned machine (src/machines/routing.ts), not this one: the agents' instructions say so. */
+  /** Each run's tools act on a pinned machine (src/runtime/routing.ts), not this one: the agents' instructions say so. */
   readonly routed?: boolean;
 }
 

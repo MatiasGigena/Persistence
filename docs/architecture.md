@@ -100,7 +100,8 @@ host only through the session contract, `src/protocol/session.ts`. The wording i
   `browser`, `web_fetch` and `autoreview` kits. `autoreview.ts` exposes only the installed skill helper, always through P2,
   using the guarded/routed bash implementation without offering bash to the Reviewer (ADR 0029). `browser.ts` drives a headless Chromium per agent, shared by all its sessions (Playwright, a
   persistent profile in `chat.unii/browser/<agent name>/`; `browserKey` in `runtime.ts` maps a session to its agent); `web-fetch.ts` fetches a public page as Markdown. Pi has neither.
-- **Machine routing** (`src/machines/routing.ts`): binds request IDs, root runs and agent conversations to
+- **Machine routing** (`src/runtime/routing.ts`; with `src/server/machines.ts`, `src/protocol/machines.ts` and
+  `src/client/machine-executor.ts`, the four machine files): binds request IDs, root runs and agent conversations to
   immutable execution destinations, separately from the re-derived agent configuration. Spawn and standing-agent
   delegation inherit the caller's destination. New agent deliveries atomically inherit their exact source session's
   route, so report-only runs can continue the same task. Busy root sends reject; unmapped/legacy or mixed-machine
@@ -294,7 +295,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/agents/lifecycle.ts` | `stopAgents`, `deleteAgent`, `archiveAgents`, `restoreAgent`, `purgeArchived` |
 | `src/agents/transcript.ts` | `agentTranscript`: an agent's whole chat for `zoom("Name")`, in pages |
 | `src/agents/prompts.ts`, `tools.ts` | The role texts of the agents' prompt section; the agent tools and the guard hook |
-| `src/machines/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |
+| `src/runtime/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |
 | `src/protocol/machines.ts` | Machine targets, registrations, tool calls/results/cancels and JSON narrowing shared by server and connector |
 | `src/protocol/messages.ts` | Wire protocol v4: every message, the op table (`Ops`), item ops, error and close codes, limits |
 | `src/protocol/parse.ts` | `parseClientMessage`, `parseServerMessage`: JSON checked field by field from `unknown` |
