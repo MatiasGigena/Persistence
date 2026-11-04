@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
+import { drawn, until } from '../fixtures/until.ts';
 import { stripTerminalSequences, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, OverlayHandle, OverlayOptions, Terminal } from '@earendil-works/pi-tui';
 import { runTui, TOOLS_QUESTION } from '../../src/ui/tui/app.ts';
@@ -250,22 +250,28 @@ describe('model picker', () => {
 async function startTui(session: FakeSession): Promise<{ terminal: FakeTerminal; done: Promise<void> }> {
   const terminal = new FakeTerminal();
   const done = runTui(session, { cwd: process.cwd(), terminal });
-  await delay(30);
+  await until(() => /tools o(n|ff)/.test(terminal.text()), 'the first frame');
   return { terminal, done };
 }
 
 /** The terminal's output since `mark`, without escape sequences. */
 const since = (terminal: FakeTerminal, mark: number): string => stripTerminalSequences(terminal.output.slice(mark));
 
+/** Types `keys`, then waits for the frame they cause: for a check that nothing happened. */
+async function typeAndDraw(terminal: FakeTerminal, ...keys: string[]): Promise<void> {
+  const mark = terminal.output.length;
+  terminal.type(...keys);
+  await drawn(terminal, mark);
+}
+
 describe('/model and /tools in the chat', () => {
   test('/model opens the picker, Enter switches and says so', async () => {
     const session = new FakeSession();
     const { terminal, done } = await startTui(session);
     terminal.type('/model', KEY.enter);
-    await delay(30);
-    assert.match(terminal.text(), /→ ✓ faux\/a/);
+    await until(() => /→ ✓ faux\/a/.test(terminal.text()), 'the picker');
     terminal.type(KEY.down, KEY.enter);
-    await delay(30);
+    await until(() => /Model: faux\/b/.test(terminal.text()), 'the switch');
     assert.deepEqual(session.modelCalls, ['faux/b']);
     assert.match(terminal.text(), /Model: faux\/b \(from the next message; saved as default\)/);
     terminal.type('/exit', KEY.enter);
@@ -276,10 +282,8 @@ describe('/model and /tools in the chat', () => {
     const session = new FakeSession();
     const { terminal, done } = await startTui(session);
     terminal.type(KEY.ctrlL);
-    await delay(30);
-    assert.match(terminal.text(), /Loading models…|faux\/b/);
-    terminal.type(KEY.esc);
-    await delay(80);
+    await until(() => /Loading models…|faux\/b/.test(terminal.text()), 'the picker');
+    await typeAndDraw(terminal, KEY.esc);
     assert.equal(session.aborts, 0);
     assert.deepEqual(session.modelCalls, []);
     terminal.type('/exit', KEY.enter);
@@ -290,15 +294,14 @@ describe('/model and /tools in the chat', () => {
     const session = new FakeSession();
     const { terminal, done } = await startTui(session);
     terminal.type('/model openrouter/vendor/m-1', KEY.enter);
-    await delay(30);
+    await until(() => /Model: openrouter\/vendor\/m-1/.test(terminal.text()), 'the switch');
     assert.deepEqual(session.modelCalls, ['openrouter/vendor/m-1']);
     assert.match(terminal.text(), /Model: openrouter\/vendor\/m-1 \(from the next message; saved as default\)/);
     assert.doesNotMatch(terminal.text(), /Loading models…/);
 
     session.modelError = new Error('No credentials for cloud.');
     terminal.type('/model cloud/big', KEY.enter);
-    await delay(30);
-    assert.match(terminal.text(), /Model not changed: No credentials for cloud\./);
+    await until(() => /Model not changed: No credentials for cloud\./.test(terminal.text()), 'the refusal');
     assert.ok(terminal.output.includes(appTheme.error('Model not changed: No credentials for cloud.')), 'the notice is red');
 
     terminal.type('/exit', KEY.enter);
@@ -309,17 +312,14 @@ describe('/model and /tools in the chat', () => {
     const session = new FakeSession();
     const { terminal, done } = await startTui(session);
     terminal.type('/model Faux B', KEY.enter);
-    await delay(30);
-    assert.match(terminal.text(), /filter Faux B▏/);
+    await until(() => /filter Faux B▏/.test(terminal.text()), 'the filtered picker');
     assert.doesNotMatch(terminal.text(), /Usage: \/model/);
     terminal.type(KEY.enter);
-    await delay(30);
+    await until(() => session.modelCalls.length === 1, 'the switch');
     assert.deepEqual(session.modelCalls, ['faux/b']);
     terminal.type('/model nope', KEY.enter);
-    await delay(30);
-    assert.match(terminal.text(), /No matches\./);
-    terminal.type(KEY.esc);
-    await delay(80);
+    await until(() => /No matches\./.test(terminal.text()), 'no matches');
+    await typeAndDraw(terminal, KEY.esc);
     assert.deepEqual(session.modelCalls, ['faux/b']);
     terminal.type('/exit', KEY.enter);
     await done;
@@ -329,34 +329,31 @@ describe('/model and /tools in the chat', () => {
     const session = new FakeSession();
     const { terminal, done } = await startTui(session);
     terminal.type('/tools', KEY.enter);
-    await delay(30);
+    await until(() => /Coding tools off\. \/tools on enables/.test(terminal.text()), 'the tools state');
     assert.match(terminal.text(), /Coding tools off\. \/tools on enables read, write, edit and bash for this launch\./);
 
     for (const answer of ['n', KEY.esc, KEY.enter]) {
       const mark = terminal.output.length;
       terminal.type('/tools on', KEY.enter);
-      await delay(30);
-      assert.match(since(terminal, mark), /Enable read\/write\/edit\/bash with your user permissions/);
+      await until(() => /Enable read\/write\/edit\/bash with your user permissions/.test(since(terminal, mark)), 'the question');
       terminal.type(answer);
-      await delay(80);
+      await until(() => /Coding tools stay off\./.test(since(terminal, mark)), 'the answer');
       assert.deepEqual(session.toolCalls, [], `${JSON.stringify(answer)} does not enable`);
-      assert.match(since(terminal, mark), /Coding tools stay off\./);
     }
     assert.equal(session.aborts, 0, 'Esc answered the question, not Pi');
 
+    const asked = terminal.output.length;
     terminal.type('/tools on', KEY.enter);
-    await delay(30);
+    await until(() => /Enable read/.test(since(terminal, asked)), 'the question');
     terminal.type('y');
-    await delay(30);
+    await until(() => /Coding tools on for this launch/.test(terminal.text()), 'tools on');
     assert.deepEqual(session.toolCalls, [true]);
-    assert.match(terminal.text(), /Coding tools on for this launch/);
     assert.ok(terminal.output.includes(appTheme.warning('tools on')), 'the footer warns');
 
     const mark = terminal.output.length;
     terminal.type('/tools Off', KEY.enter);
-    await delay(30);
+    await until(() => /Coding tools off/.test(since(terminal, mark)), 'tools off');
     assert.deepEqual(session.toolCalls, [true, false]);
-    assert.match(since(terminal, mark), /Coding tools off/);
     assert.doesNotMatch(since(terminal, mark), /Enable read/);
     terminal.type('/exit', KEY.enter);
     await done;
@@ -366,7 +363,7 @@ describe('/model and /tools in the chat', () => {
     const session = new FakeSession();
     const { terminal, done } = await startTui(session);
     terminal.type('/help', KEY.enter);
-    await delay(30);
+    await until(() => /\/model {3}pick a model/.test(terminal.text()), 'the help');
     assert.match(terminal.text(), /\/model {3}pick a model \(ctrl\+l\)/);
     assert.match(terminal.text(), /\/tools {3}coding tools: on, off/);
     assert.match(terminal.text(), /\/stop {4}stop Pi \(esc\) · all · Name/);

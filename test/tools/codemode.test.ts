@@ -213,6 +213,7 @@ text(out.join('\\n'));`),
     } finally {
       await instance.close();
     }
+    // A deliberate wait, not a poll: the persisted 300 ms deadline must pass while the chat is closed.
     await new Promise(resolve => setTimeout(resolve, 400));
     const reopened = offlineModels([fauxAssistantMessage('Recovered.')]);
     // A longer default now: the deadline that ends the replay is the persisted one, not this launch's.

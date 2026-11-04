@@ -18,17 +18,11 @@ import { lineSplitter } from '../../src/protocol/lines.ts';
 import { serve } from '../../src/server/serve.ts';
 import { Devices } from '../../src/server/auth.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
+import { until as untilFixture } from '../fixtures/until.ts';
 
 const exec = promisify(execFile);
 
-/** Waits until `done` holds, polling; fails with `what` after `ms`. */
-async function until(done: () => boolean, what: () => string, ms = 15_000): Promise<void> {
-  const start = Date.now();
-  while (!done()) {
-    if (Date.now() - start > ms) throw new Error(`timed out: ${what()}`);
-    await new Promise(resolve => setTimeout(resolve, 20));
-  }
-}
+const until = (done: () => boolean, what: () => string, ms = 15_000): Promise<void> => untilFixture(done, what, { ms });
 
 /** A loopback port nothing listens on just now. */
 async function freePort(): Promise<number> {
