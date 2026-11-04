@@ -5,9 +5,9 @@ import type { ModelRef } from '@earendil-works/pi-durable';
 import { leafTask, mergeTask, PLACEHOLDER, PROMPT, tooLong } from './prompt.ts';
 import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
 import type { CompactionMessage, Reasoning, Summarizer, SummarizerModels } from './summarizer.ts';
-import { bytes, CAP, cleanLine, clip, cutBytes, cutLine, flat, formatDate, hash, localDay, NODE, split } from './util.ts';
+import { bytes, CAP, cleanLine, clip, cutLine, flat, formatDate, hash, localDay, NODE, split } from './util.ts';
 import { appendJson, atomicWrite } from '../runtime/files.ts';
-import { errorMessage, isRecord } from '../protocol/util.ts';
+import { cutBytes, errorMessage, isRecord } from '../protocol/util.ts';
 import { cut, end, key, name, parentOf, start, View } from './view.ts';
 import type { Pos } from './view.ts';
 

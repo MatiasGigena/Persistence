@@ -385,7 +385,7 @@ Directories are created with mode 0700 and files with 0600. `view.json.<pid>.tmp
 | `src/memory/prompt.ts` | The system prompt `PROMPT`, the compaction tasks `leafTask` and `mergeTask`, `tooLong`, the 512-dash `RULER`, the placeholder text; adapted from upstream's `prompt.txt` and `Memory.ts`. |
 | `src/memory/summarizer.ts` | The default pi-ai summarizer, `CompactionRefused` (an answer with no line), and the compaction model choice (`CHEAP_MODELS`, `defaultCompactionModel`). |
 | `src/memory/extension.ts` | The `uniichat` pi-durable extension: the request rewrite, the logging hooks, the `zoom` and `date` tools, the declined compactions. |
-| `src/memory/util.ts` | `NODE`, `CAP`, `clip`, `split`, `cutLine`, `cleanLine`, byte helpers, date formatting, `appendJson`, `atomicWrite`, `errorMessage`, `isObject`. |
+| `src/memory/util.ts` | `NODE`, `CAP`, `clip`, `split`, `cutLine`, `cleanLine`, `bytes`, `flat`, `hash`, date formatting. (`cutBytes` is in `src/protocol/util.ts`.) |
 
 ## Deviations from UniiChat
 

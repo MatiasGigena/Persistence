@@ -295,7 +295,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |
 | `src/protocol/images.ts` | Images on the wire and in the chat: accepted types, magic bytes, size caps |
 | `src/protocol/version.ts` | `PROTOCOL` |
-| `src/protocol/util.ts` | `isRecord`, `errorMessage`, `errorCode`, `ShapeError`: the one copy of each, shared by Node and the browser |
+| `src/protocol/util.ts` | `isRecord`, `errorMessage`, `errorCode`, `cutBytes`, `ShapeError` and the narrowers that throw it (`obj`, `str`, `int`, `list`…): the one copy of each, shared by Node and the browser |
 | `src/protocol/request-error.ts` | `RequestError`: a client request's failure (the server's code, `disconnected` or `timeout`), shared by the Node clients and the web app |
 | `src/client/attach.ts` | `probes`, `connect` (the probe), `attachChat` (the CLI's attach routing), `runAttached` (the TUI on a server, "Detached; the server keeps working."), `serverAnswers` |
 | `src/client/remote-session.ts` | `RemoteSession`: a `UiSession` over a `ServerLink`; mirrors, status, notices, requests, `send` resent with its requestId after a reconnect, agent feeds re-opened; `attached` for `TuiInfo` |

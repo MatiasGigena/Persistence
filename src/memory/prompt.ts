@@ -1,4 +1,5 @@
-import { cutBytes, NODE } from './util.ts';
+import { NODE } from './util.ts';
+import { cutBytes } from '../protocol/util.ts';
 
 export const PLACEHOLDER = '(not summarized yet: zoom it)';
 export const RULER = '-'.repeat(NODE);

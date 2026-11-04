@@ -1,6 +1,6 @@
-// Small value helpers every layer uses: narrowing `unknown` and turning a thrown value into text. Here because
-// src/protocol/ is already Node- and DOM-free and served to the browser, so the server, clients and web app share
-// one copy.
+// Small value helpers every layer uses: narrowing `unknown`, turning a thrown value into text, cutting text to a byte
+// size. Here because src/protocol/ is already Node- and DOM-free and served to the browser, so the server, clients
+// and web app share one copy.
 
 /** A JSON object (not null, not an array), its fields still unknown. */
 export const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -15,6 +15,16 @@ export class ShapeError extends Error {
 
 /** A Node system error's `code` (`ENOENT`, `EADDRINUSE`…), or undefined for anything else. */
 export const errorCode = (error: unknown): unknown => error instanceof Error && 'code' in error ? error.code : undefined;
+
+const utf8 = new TextEncoder();
+const fromUtf8 = new TextDecoder();
+
+/** The longest prefix of `s` within `limit` UTF-8 bytes, never half a character. */
+export function cutBytes(s: string, limit: number): string {
+  const encoded = utf8.encode(s);
+  if (encoded.length <= limit) return s;
+  return fromUtf8.decode(encoded.subarray(0, limit)).replace(/\uFFFD+$/u, '');
+}
 
 // Narrowing helpers for parsers of external JSON (wire messages, the server's files). Each throws a ShapeError
 // naming the field.
