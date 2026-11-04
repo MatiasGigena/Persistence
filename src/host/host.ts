@@ -140,14 +140,85 @@ async function checkModel(models: Models, config: Config, signal: AbortSignal): 
     ? `${problem} (This model was saved by /model in ${config.settingsPath}; pass --model to launch with another.)` : problem);
 }
 
+/** What the plain chat's /help prints; the terminal UI has its own. */
+const PLAIN_HELP = `/history — saved messages
+/agents — spawned agents and whether they are busy
+/status — storage, memory and pending work
+/exit — close without discarding unfinished work
+Agents work in the background; their reports and Pi's replies print as they arrive.
+Here, tools and the model change only by relaunching (--no-tools, --model); the terminal UI has /tools and /model.`;
+
+/** A prompt piped on stdin, whole; rejects when it is empty or over 4 MiB. */
+async function pipedPrompt(): Promise<string> {
+  let prompt = '';
+  for await (const chunk of process.stdin) {
+    prompt += String(chunk);
+    if (prompt.length > 4 * 1024 * 1024) throw new Error('Piped prompt exceeds 4 MiB');
+  }
+  if (!prompt.trim()) throw new Error('Supply a prompt, pipe text, or run in a terminal for interactive chat');
+  return prompt;
+}
+
+/** What the plain chat needs from the launch around it. */
+interface PlainHost {
+  /** The launch is stopping: a signal, or the input closed. */
+  readonly stopping: () => boolean;
+  readonly stop: (signal: NodeJS.Signals) => void;
+  /** Ctrl+D or the end of input: the launch stops, keeping unfinished work. */
+  readonly inputClosed: () => void;
+  /** The readline interface, which a signal closes. */
+  readonly attach: (reader: Interface) => void;
+}
+
+/**
+ * The plain chat (--plain, or stdout not a terminal): readline lines and a few /commands, with Pi's and the agents'
+ * replies printed as they arrive.
+ */
+async function plainChat(opened: Instance, config: Config, host: PlainHost): Promise<void> {
+  console.log(`Pi · one chat that never ends · ${config.model.provider}/${config.model.modelId} (${SOURCE[config.modelSource]})\nDatabase: ${config.databasePath}\nMemory: ${config.memoryDir}`);
+  console.log(`Tools: ${config.allowTools ? 'ENABLED — your user permissions, minus the protected folders (chat state, credentials hidden; system read-only)' : 'OFF (--no-tools was given; relaunch without it to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
+  await printHistory(opened, 6);
+  // A send in progress: its reply prints mid-wait, and the loop prompts once the send returns.
+  let sending = false;
+  const reader = createInterface({ input: process.stdin, output: process.stdout, prompt: 'you> ' });
+  host.attach(reader);
+  const watcher = await watchReplies(opened, () => { if (!sending) reader.prompt(true); });
+  try {
+    // The iterator buffers lines typed or pasted while a command or a send runs; question() would drop them.
+    const lines = reader[Symbol.asyncIterator]();
+    reader.on('SIGINT', () => host.stop('SIGINT'));
+    reader.once('close', () => host.inputClosed());
+    while (!host.stopping()) {
+      reader.prompt();
+      // Closing the reader (Ctrl+D, a signal, shutdown) ends the iterator.
+      const next = await lines.next();
+      if (next.done || host.stopping()) break;
+      const line = next.value.trim();
+      if (!line) continue;
+      if (line === '/exit' || line === '/quit') break;
+      if (line === '/help') console.log(PLAIN_HELP);
+      else if (line === '/history') await printHistory(opened);
+      else if (line === '/agents') await printAgents(opened);
+      else if (line === '/status') await printStatus(opened, config);
+      else if (isCommand(line)) console.error(unknownCommand(line));
+      else {
+        sending = true;
+        try { await send(opened, line, undefined, { print: false }); }
+        catch (error) { if (!host.stopping()) console.error(`pi-durable: ${errorMessage(error)}`); }
+        finally { sending = false; }
+      }
+    }
+  } finally {
+    await watcher.stop();
+    reader.close();
+  }
+}
+
 /** Runs one launch of `config`: its state lives here, not in the module, so the entry below is the only side effect. */
 async function runHost(config: Config): Promise<void> {
   let instance: Instance | undefined;
   let reader: Interface | undefined;
-  let watcher: ConversationWatch | undefined;
   let stopping = false;
-  // A send in progress: its reply prints mid-wait, and the chat loop prompts once the send returns.
-  let sending = false;
   let closing: Promise<void> | undefined;
   const shutdown = new AbortController();
   const close = (): Promise<void> | undefined => closing ??= instance?.close();
@@ -205,57 +276,19 @@ async function runHost(config: Config): Promise<void> {
       return printHistory(opened);
     }
     if (config.prompt !== undefined) return send(opened, config.prompt, config.requestId);
-    if (!process.stdin.isTTY) {
-      let prompt = '';
-      for await (const chunk of process.stdin) {
-        prompt += String(chunk);
-        if (prompt.length > 4 * 1024 * 1024) throw new Error('Piped prompt exceeds 4 MiB');
-      }
-      if (!prompt.trim()) throw new Error('Supply a prompt, pipe text, or run in a terminal for interactive chat');
-      return send(opened, prompt);
-    }
+    if (!process.stdin.isTTY) return send(opened, await pipedPrompt());
     if (process.stdout.isTTY && !config.plain) return chatTui(opened, config, shutdown.signal);
-    console.log(`Pi · one chat that never ends · ${config.model.provider}/${config.model.modelId} (${SOURCE[config.modelSource]})\nDatabase: ${config.databasePath}\nMemory: ${config.memoryDir}`);
-    console.log(`Tools: ${config.allowTools ? 'ENABLED — your user permissions, minus the protected folders (chat state, credentials hidden; system read-only)' : 'OFF (--no-tools was given; relaunch without it to enable)'}\n/help for commands. /exit or Ctrl+C closes; unfinished work remains resumable.\n`);
-    await printHistory(opened, 6);
-    watcher = await watchReplies(opened, () => { if (!sending) reader?.prompt(true); });
-    reader = createInterface({ input: process.stdin, output: process.stdout, prompt: 'you> ' });
-    // The iterator buffers lines typed or pasted while a command or a send runs; question() would drop them.
-    const lines = reader[Symbol.asyncIterator]();
-    reader.on('SIGINT', () => stop('SIGINT'));
-    reader.once('close', () => {
-      if (!stopping) {
-        stopping = true;
-        shutdown.abort(new Error('Terminal input closed'));
-        void close()?.catch(() => {});
-      }
-    });
-    while (!stopping) {
-      reader.prompt();
-      // Closing the reader (Ctrl+D, a signal, shutdown) ends the iterator.
-      const next = await lines.next();
-      if (next.done || stopping) break;
-      const line = next.value.trim();
-      if (!line) continue;
-      if (line === '/exit' || line === '/quit') break;
-      if (line === '/help') console.log('/history — saved messages\n/agents — spawned agents and whether they are busy\n/status — storage, memory and pending work\n/exit — close without discarding unfinished work\nAgents work in the background; their reports and Pi\'s replies print as they arrive.\nHere, tools and the model change only by relaunching (--no-tools, --model); the terminal UI has /tools and /model.');
-      else if (line === '/history') await printHistory(opened);
-      else if (line === '/agents') await printAgents(opened);
-      else if (line === '/status') await printStatus(opened, config);
-      else if (isCommand(line)) console.error(unknownCommand(line));
-      else {
-        sending = true;
-        try { await send(opened, line, undefined, { print: false }); }
-        catch (error) { if (!stopping) console.error(`pi-durable: ${errorMessage(error)}`); }
-        finally { sending = false; }
-      }
-    }
+    return plainChat(opened, config, { stopping: () => stopping, stop, attach: lines => { reader = lines; }, inputClosed: () => {
+      if (stopping) return;
+      stopping = true;
+      shutdown.abort(new Error('Terminal input closed'));
+      void close()?.catch(() => {});
+    } });
   }
 
   try { await main(); }
   catch (error) { if (!stopping) { console.error(`pi-durable: ${errorMessage(error)}`); process.exitCode = 1; } }
   finally {
-    await watcher?.stop();
     reader?.close();
     try { await close(); } catch (error) { console.error(`Closing failed: ${errorMessage(error)}`); process.exitCode = 1; }
     try { cleanupSessionResources(); }
