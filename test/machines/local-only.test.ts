@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Harness, ToolExecutionApi, ToolRegistration } from '@earendil-works/pi-durable';
-import { createMachineRouting } from '../../src/machines/routing.ts';
+import { createMachineRouting } from '../../src/runtime/routing.ts';
 import { whileAllowed } from '../../src/runtime/runtime.ts';
 import { createShowImageExtension } from '../../src/tools/show-image.ts';
 

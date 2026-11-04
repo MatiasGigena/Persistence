@@ -9,7 +9,7 @@ import type {
 import { applyOps } from '../protocol/mirror.ts';
 import type {
   ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, ViewLine,
-} from '../ui/types.ts';
+} from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
 import { errorMessage } from '../protocol/util.ts';

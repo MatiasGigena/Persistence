@@ -2,9 +2,9 @@
 // docs/protocol.md for the messages, and ADR 0020 for why this is plain DOM with no build.
 import { ChatView, el, play } from './chat-view.ts';
 import { announce } from './copy.ts';
-import { guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
+import { guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, formatCodeInput, pairErrorText, shortModel, statusParts } from './format.ts';
 import { activeAgents } from '../ui/text.ts';
-import { errorMessage } from '../protocol/util.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 import { Link } from './link.ts';
 import { RequestError } from '../protocol/request-error.ts';
 import { renderMarkdown } from './markdown.ts';
@@ -16,43 +16,20 @@ import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
 import { syncPush } from './push.ts';
 import { linkStep } from './link-state.ts';
-import { Outbox } from './outbox.ts';
+import { Banner } from './banner.ts';
+import { Composer } from './composer.ts';
+import { load, save, session } from './storage.ts';
 import { freshAlerts, Store } from './store.ts';
-import { AttachmentTray } from './tray.ts';
 import type { Effect } from './store.ts';
-import { IMAGE_LIMITS } from '../protocol/images.ts';
-import type { ChatImage, NoticeLevel } from '../protocol/messages.ts';
+import type { NoticeLevel } from '../protocol/session.ts';
 
 const CLIENT = 'web';
-const DRAFT_KEY = 'pd.draft';
 /** sessionStorage: the value a reload was last made for, so a reload happens once per new value. */
 const RELOAD_KEY = 'pd.reloaded';
 /** sessionStorage: how many images a reload for new files dropped, said once the reloaded app is ready. */
 const LOST_KEY = 'pd.lost-images';
-/** How long after a send the button cannot become stop, so a double tap does not abort what it just sent. */
-const SEND_HUSH_MS = 600;
 /** How long a reload for new files waits for the service worker to revalidate them; past it, a later notice reloads. */
 const SHELL_REFRESH_MS = 5_000;
-
-// ------------------------------------------------------------------------------------------------ storage
-
-function load(storage: () => Storage, key: string): string {
-  try { return storage().getItem(key) ?? ''; } catch { return ''; }
-}
-function save(storage: () => Storage, key: string, value: string): void {
-  try {
-    if (value) storage().setItem(key, value);
-    else storage().removeItem(key);
-  } catch { /* private mode or full: the draft is a convenience only */ }
-}
-const local = (): Storage => localStorage;
-const session = (): Storage => sessionStorage;
-
-/** A short tap of haptic feedback, where the browser has it. */
-function buzz(): void {
-  if (!('vibrate' in navigator)) return;
-  try { navigator.vibrate(8); } catch { /* feedback only */ }
-}
 
 // ------------------------------------------------------------------------------------------------ screens
 
@@ -182,7 +159,7 @@ async function me(): Promise<Me> {
   // Anything else (a 502 from `tailscale serve` while the server restarts): the tailnet is up, so let the socket try.
   if (!response.ok) return { state: 'ok', device: '' };
   const body: unknown = await response.json().catch(() => undefined);
-  const device = typeof body === 'object' && body !== null && 'device' in body && typeof body.device === 'string' ? body.device : '';
+  const device = isRecord(body) && typeof body.device === 'string' ? body.device : '';
   return { state: 'ok', device };
 }
 
@@ -237,7 +214,7 @@ function pairScreen(onPaired: () => void, why = ''): void {
     button.replaceChildren(spinner, 'Pairing…');
   };
   code.addEventListener('input', () => {
-    const next = normalizeCode(code.value);
+    const next = formatCodeInput(code.value);
     if (next !== code.value) code.value = next;
   });
   form.addEventListener('submit', event => {
@@ -247,12 +224,12 @@ function pairScreen(onPaired: () => void, why = ''): void {
     busy(true);
     fetch('/api/pair', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: normalizeCode(code.value), name: name.value.trim() }),
+      body: JSON.stringify({ code: formatCodeInput(code.value), name: name.value.trim() }),
     }).then(
       async response => {
         if (response.ok) { code.value = ''; afterPairing(); return; }
         const body: unknown = await response.json().catch(() => undefined);
-        fail(pairErrorText(response.status, typeof body === 'object' && body !== null && 'error' in body ? body.error : undefined));
+        fail(pairErrorText(response.status, isRecord(body) ? body.error : undefined));
       },
       () => { fail('Cannot reach the server. Check that Tailscale is connected.'); },
     ).finally(() => busy(false));
@@ -263,26 +240,15 @@ function pairScreen(onPaired: () => void, why = ''): void {
 
 function start(): void {
   const store = new Store();
-  const finePointer = matchMedia('(pointer: fine)');
-  const input = byId('input', HTMLTextAreaElement);
-  const composer = byId('composer', HTMLFormElement);
-  const sendButton = byId('send', HTMLButtonElement);
-  const attachButton = byId('attach', HTMLButtonElement);
-  const attachFile = byId('attach-file', HTMLInputElement);
-  const attachments = byId('attachments', HTMLUListElement);
-  const banner = byId('banner', HTMLDivElement);
-  const bannerText = byId('banner-text', HTMLSpanElement);
-  const retry = byId('banner-retry', HTMLButtonElement);
   const jump = byId('jump', HTMLButtonElement);
   const live = byId('live', HTMLDivElement);
   const pulse = byId('pulse', HTMLDivElement);
   const statusLine = byId('status', HTMLDivElement);
   const modelName = byId('model-name', HTMLSpanElement);
 
-  // The jump button and the banner stay in the page and come and go by class, as CSS transitions: a quick toggle
-  // (scrolling about the bottom, a reconnect that lands at once) turns around mid-way instead of restarting.
+  // The jump button stays in the page and comes and goes by class, as a CSS transition: scrolling about the bottom
+  // turns it around mid-way instead of restarting it.
   jump.hidden = false;
-  banner.hidden = false;
   const view = new ChatView(byId('feed', HTMLOListElement), byId('scroller', HTMLDivElement), {
     empty: 'This is your one conversation with Pi. It never resets, and Pi remembers it. Write something to begin.',
     onStuck: stuck => { jump.classList.toggle('is-shown', !stuck); },
@@ -319,131 +285,13 @@ function start(): void {
   const sheet = new Sheet(byId('sheet', HTMLDialogElement));
   const ctx: PanelContext = { store, link, sheet, notice };
 
-  // -------------------------------------------------------------- sending
-
-  const outbox = new Outbox();
-  const deliver = (id: string, text: string, steer: boolean, images: readonly ChatImage[]): void => {
-    link.request('send', { text, requestId: id, ...steer ? { steer } : {}, ...images.length ? { images } : {} }).then(
-      () => { outbox.delete(id); store.admitPending(id); drawSend(); },
-      (error: unknown) => {
-        if (error instanceof RequestError && error.code === 'disconnected') return;
-        outbox.delete(id);
-        drawSend();
-        store.dropPending(id);
-        if (!input.value) { input.value = text; autosize(); saveDraft(); }
-        // The images come back too, merged with any attached meanwhile; what does not fit is said, never dropped silently.
-        const dropped = tray.restore(images);
-        notice(`Not sent: ${errorMessage(error)}`, 'error');
-        if (dropped) {
-          notice(`${dropped} image${dropped === 1 ? '' : 's'} could not go back into the message (at most ${IMAGE_LIMITS.perMessage}); attach ${dropped === 1 ? 'it' : 'them'} again.`, 'warn');
-        }
-      },
-    );
-  };
-  /** Pi is working: a message steers it, and the button stops it while the box is empty. */
-  const busy = (): boolean => store.status?.busy ?? false;
-  /** An abort is in flight: the stop button is disabled until it settles or Pi goes idle, so it is sent once. */
-  let stopping = false;
-  /** Set for SEND_HUSH_MS after a send: a second tap then must not land on stop and withdraw what was just sent. */
-  let hush: ReturnType<typeof setTimeout> | undefined;
-  const abort = (): void => {
-    stopping = true;
-    buzz();
-    drawSend();
-    link.request('abort', {})
-      .catch((error: unknown) => notice(`Interrupt failed: ${errorMessage(error)}`, 'error'))
-      .finally(() => { stopping = false; drawSend(); });
-  };
-  const submit = (): void => {
-    // Before the first load there is nothing to send into: the draft waits in the box (and in storage).
-    if (!loaded) return;
-    const text = input.value.trim();
-    if (!text && !tray.images.length) {
-      if (sendButton.dataset.mode === 'stop' && !sendButton.disabled) abort();
-      return;
-    }
-    buzz();
-    clearTimeout(hush);
-    hush = setTimeout(() => { hush = undefined; drawSend(); }, SEND_HUSH_MS);
-    const steer = busy();
-    const images = tray.take();
-    const id = outbox.add({ text, steer, images });
-    store.addPending(id, text, steer, images);
-    input.value = '';
-    autosize();
-    saveDraft();
-    view.toBottom();
-    deliver(id, text, steer, images);
-  };
-
-  // -------------------------------------------------------------- images to send (ADR 0031)
-
-  const tray = new AttachmentTray(attachments, { notice, onChange: () => drawSend(), onRemove: () => input.focus() });
-  attachButton.addEventListener('click', () => attachFile.click());
-  attachFile.addEventListener('change', () => {
-    tray.attach([...attachFile.files ?? []]);
-    attachFile.value = '';
-  });
-  // A pasted screenshot (or copied image file): attached, not pasted as text.
-  input.addEventListener('paste', event => {
-    const files = [...event.clipboardData?.files ?? []].filter(file => file.type.startsWith('image/'));
-    if (!files.length) return;
-    event.preventDefault();
-    tray.attach(files);
-  });
-  composer.addEventListener('dragover', event => {
-    if ([...event.dataTransfer?.items ?? []].some(item => item.kind === 'file')) event.preventDefault();
-  });
-  composer.addEventListener('drop', event => {
-    const files = [...event.dataTransfer?.files ?? []].filter(file => file.type.startsWith('image/'));
-    if (!files.length) return;
-    event.preventDefault();
-    tray.attach(files);
-  });
-
   // -------------------------------------------------------------- composer
 
-  /**
-   * One button: send, steer while Pi works, and stop while Pi works and the box is empty. Stop never
-   * shows while a send is unadmitted or just after one, and status.busy counts only while the link is ready (it is
-   * stale otherwise); in those cases the button is a disabled send.
-   */
-  const drawSend = (): void => {
-    if (!busy()) stopping = false;
-    const typed = Boolean(input.value.trim()) || tray.images.length > 0;
-    const working = linkReady && busy();
-    const held = outbox.size > 0 || hush !== undefined;
-    const mode = typed ? (working ? 'steer' : 'send') : working && !held ? 'stop' : 'send';
-    sendButton.dataset.mode = mode;
-    sendButton.disabled = mode === 'stop' ? stopping : !typed || tray.reading > 0 || !loaded;
-    const label = mode === 'stop' ? 'Stop Pi' : mode === 'steer' ? 'Steer Pi' : 'Send';
-    sendButton.setAttribute('aria-label', label);
-    sendButton.title = label;
-    input.placeholder = busy() ? 'Steer Pi…' : 'Message Pi';
-  };
-  const autosize = (): void => {
-    input.style.height = 'auto';
-    input.style.height = `${input.scrollHeight}px`;
-    drawSend();
-  };
-  const saveDraft = (): void => save(local, DRAFT_KEY, input.value);
-  input.value = load(local, DRAFT_KEY);
-  autosize();
-  input.addEventListener('input', () => { autosize(); saveDraft(); });
-  // Enter sends only with a keyboard and mouse; on a phone, Enter is a new line and the button sends.
-  input.addEventListener('keydown', event => {
-    if (event.key !== 'Enter' || event.shiftKey || event.isComposing || !finePointer.matches) return;
-    event.preventDefault();
-    // Enter only sends: stopping Pi takes the button (or Esc in the terminal), never a stray keypress.
-    if ((input.value.trim() || tray.images.length) && !tray.reading) submit();
-  });
-  composer.addEventListener('submit', event => {
-    event.preventDefault();
-    const stopTap = sendButton.dataset.mode === 'stop';
-    submit();
-    // A tap on stop must not raise the keyboard.
-    if (!stopTap) input.focus();
-  });
+  const composer = new Composer({
+    form: byId('composer', HTMLFormElement), input: byId('input', HTMLTextAreaElement), send: byId('send', HTMLButtonElement),
+    attach: byId('attach', HTMLButtonElement), attachFile: byId('attach-file', HTMLInputElement),
+    attachments: byId('attachments', HTMLUListElement),
+  }, { link, store, view, notice, loaded: () => loaded, linkReady: () => linkReady });
 
   // -------------------------------------------------------------- header
 
@@ -453,7 +301,7 @@ function start(): void {
     const status = store.status;
     if (!status) return;
     modelName.textContent = `${shortModel(status.model)} · ${status.thinkingLevel}`;
-    drawSend();
+    composer.draw();
     pulse.classList.toggle('is-busy', status.busy || activeAgents(status.agents).some(a => a.busy));
     statusLine.replaceChildren(...statusParts(status).map(part => {
       const opens = part.key === 'agents' ? agentsView : part.key === 'memory' || part.key === 'failed' ? memoryView : undefined;
@@ -482,18 +330,8 @@ function start(): void {
   // -------------------------------------------------------------- link
 
   // A phone that wakes up reconnects in about a second: the banner waits RECONNECT_BANNER_MS, so that is not shown.
-  let bannerTimer: ReturnType<typeof setTimeout> | undefined;
-  let bannerShown = false;
-  const setBanner = (text: string, canRetry: boolean): void => {
-    clearTimeout(bannerTimer);
-    bannerShown = Boolean(text);
-    banner.classList.toggle('is-shown', bannerShown);
-    // Hiding keeps the last text and button, so the banner does not empty out while it slides away.
-    if (!text) return;
-    bannerText.textContent = text;
-    retry.hidden = !canRetry;
-  };
-  retry.addEventListener('click', () => link.poke());
+  const banner = new Banner(byId('banner', HTMLDivElement), byId('banner-text', HTMLSpanElement), byId('banner-retry', HTMLButtonElement),
+    () => link.poke());
 
   // -------------------------------------------------------------- the first load
 
@@ -509,7 +347,7 @@ function start(): void {
   let loadStart = 0;
   const loadTimers: ReturnType<typeof setTimeout>[] = [];
   /** The chat as its skeleton (index.html starts it .is-loading); the composer sized for a draft kept from before. */
-  const showSkeleton = (): void => show('chat', autosize);
+  const showSkeleton = (): void => show('chat', () => composer.autosize());
   /** Applies the loading rule as it stands now: called at its marks and on each change of the link's state. */
   const loading = (): void => {
     const state = link.state;
@@ -517,7 +355,7 @@ function start(): void {
     const step = loadStep(performance.now() - loadStart, state);
     if (step.skeleton) showSkeleton();
     // One line at a time: a newer state's text replaces the one shown, never joins it.
-    if (step.text && !(bannerShown && bannerText.textContent === step.text)) setBanner(step.text, step.retry);
+    if (step.text && !banner.shows(step.text)) banner.set(step.text, step.retry);
   };
   /** The link is ready: the first time, the chat whole and at once; after that, as it was. */
   const reveal = (): void => {
@@ -529,7 +367,7 @@ function start(): void {
       settle();
       app.classList.remove('is-loading');
       view.flush();
-      autosize();
+      composer.autosize();
     };
     if (current !== 'chat') show('chat', fill);
     else if (canTransition) transition('swap', fill);
@@ -541,16 +379,16 @@ function start(): void {
 
   function onState(state: LinkState): void {
     linkReady = state === 'ready';
-    drawSend();
-    const step = linkStep(state, { loaded, wasReady, bannerShown, droppedWith: link.droppedWith, closedBy: link.closedBy, byeReason });
+    composer.draw();
+    const step = linkStep(state, { loaded, wasReady, bannerShown: banner.shown, droppedWith: link.droppedWith, closedBy: link.closedBy, byeReason });
     if (step.disconnect) reopen = [...new Set([...reopen, ...store.disconnect()])];
     wasReady = state === 'ready';
     switch (step.t) {
-      case 'hide-banner': setBanner('', false); return;
+      case 'hide-banner': banner.set('', false); return;
       case 'loading': loading(); return;
       case 'banner':
-        if (step.delayMs) bannerTimer = setTimeout(() => setBanner(step.text, step.retry), step.delayMs);
-        else setBanner(step.text, step.retry);
+        if (step.delayMs) banner.later(step.text, step.retry, step.delayMs);
+        else banner.set(step.text, step.retry);
         return;
       case 'pair':
         sheet.close();
@@ -592,7 +430,7 @@ function start(): void {
           notice(`The app reloaded for an update, and ${one ? 'an image' : `${lostImages} images`} could not be kept; attach ${one ? 'it' : 'them'} again.`, 'warn');
           lostImages = 0;
         }
-        for (const [id, { text, steer, images }] of outbox.entries()) deliver(id, text, steer, images);
+        composer.resend();
         // Warms Chat settings' lists once the page is idle, so the sheet opens filled.
         prefetchSettings(link, store);
         const names = reopen;
@@ -618,12 +456,10 @@ function start(): void {
 
   /** Reloads once for `value`, to run new app files. */
   async function reloadForFiles(value: string): Promise<void> {
-    // Messages not yet admitted would be lost with the page: they go back into the draft.
-    // Their images cannot be kept, nor those attached to the draft: only the text survives a reload, so the reloaded
-    // app says how many went.
-    const kept = outbox.beforeReload(input.value, tray.images.length);
-    if (outbox.size) save(local, DRAFT_KEY, kept.draft);
-    await reloadOnce(value, () => save(session, LOST_KEY, kept.lostImages ? String(kept.lostImages) : ''));
+    // Messages not yet admitted would be lost with the page: they go back into the draft. Their images cannot be kept,
+    // nor those attached to the draft: only the text survives a reload, so the reloaded app says how many went.
+    const lost = composer.beforeReload();
+    await reloadOnce(value, () => save(session, LOST_KEY, lost ? String(lost) : ''));
   }
 
   // The service worker has a newer set of the app's files than this page runs on (sw.ts, `announce`).
@@ -642,7 +478,7 @@ function start(): void {
     // No tailnet: nothing is coming soon, so the skeleton and the reason show at once.
     if (state.state === 'offline') {
       showSkeleton();
-      setBanner(LINK_TEXT.offline.text, LINK_TEXT.offline.retry);
+      banner.set(LINK_TEXT.offline.text, LINK_TEXT.offline.retry);
     }
     link.start();
   }

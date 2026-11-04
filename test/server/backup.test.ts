@@ -25,7 +25,7 @@ test('an online backup of an open chat opens as the same chat', { timeout: 30_00
   const databasePath = join(folder, 'chat.sqlite'), memoryDir = join(folder, 'chat.unii'), settingsPath = join(folder, 'settings.json');
   await writeFile(settingsPath, '{"model":"faux/faux-1"}\n');
   const catalog = offlineModels([fauxAssistantMessage('Three boats.')]);
-  const instance = await openInstance({ databasePath, cwd: folder, ...catalog });
+  const instance = await openInstance({ protection: 'unguarded', databasePath, cwd: folder, ...catalog });
   let path: string, bytes: number;
   try {
     const submission = await instance.root.submit({ type: 'input', content: 'Count the boats.' }, instance.context);
@@ -44,7 +44,7 @@ test('an online backup of an open chat opens as the same chat', { timeout: 30_00
   assert.ok((await readdir(join(path, 'chat.unii'))).includes('main'));
   assert.ok(!(await readdir(join(path, 'chat.unii'))).includes('browser'), 'browser profiles stay out of backups');
 
-  const copy = await openInstance({ databasePath: join(path, 'chat.sqlite'), cwd: folder, ...offlineModels() });
+  const copy = await openInstance({ protection: 'unguarded', databasePath: join(path, 'chat.sqlite'), cwd: folder, ...offlineModels() });
   try {
     const texts = (await transcript(copy.root, copy.context)).flatMap(entry => entry.model ?? [])
       .flatMap(message => typeof message.content === 'string' ? [message.content]

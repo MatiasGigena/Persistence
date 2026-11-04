@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { wireItem } from '../../src/protocol/diff.ts';
 import { IMAGE_LIMITS, imageProblem, restoreImages, sniffBase64, sniffImage, wireImage } from '../../src/protocol/images.ts';
-import type { ChatItem } from '../../src/protocol/messages.ts';
+import type { ChatItem } from '../../src/protocol/session.ts';
 import { chatItem } from '../../src/protocol/parse.ts';
 
 export const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);

@@ -4,10 +4,10 @@ import type { Message, Models, SimpleStreamOptions, Tool, Usage } from '@earendi
 import type { ModelRef } from '@earendil-works/pi-durable';
 
 /** A compaction conversation: the task, then any "Too long" back and forth. */
-export type CompactionMessage = { role: 'user' | 'assistant'; content: string };
+export interface CompactionMessage { role: 'user' | 'assistant'; content: string }
 /** The node being built: level, index, and its `id+n` name. */
-export type CompactionNode = { l: number; i: number; name: string };
-export type SummarizeOptions = { signal?: AbortSignal; tools?: readonly Tool[]; node: CompactionNode };
+export interface CompactionNode { l: number; i: number; name: string }
+export interface SummarizeOptions { signal?: AbortSignal; tools?: readonly Tool[]; node: CompactionNode }
 /**
  * The model answered, but with no line, and asking again would fail alike (a refusal, a safety stop): the node is its
  * source clipped (UniiChat Memory.ts `build`). Any other error is an outage, and the node is tried again.
@@ -24,14 +24,14 @@ export type Summarizer = (systemPrompt: string, messages: readonly CompactionMes
 /** What the default summarizer needs of a pi-ai Models (a pi-coding-agent ModelRuntime is one). */
 export type SummarizerModels = Pick<Models, 'getModel' | 'completeSimple'>;
 export type Reasoning = NonNullable<SimpleStreamOptions['reasoning']>;
-export type PiAiSummarizerOptions = {
+export interface PiAiSummarizerOptions {
   models: SummarizerModels;
   model: ModelRef | undefined;
   reasoning?: Reasoning;
   maxTokens?: number | undefined;
   timeoutMs?: number;
   sessionId?: string;
-};
+}
 
 // Cheapest sensible model per provider in the pinned pi-ai 1.5.0 catalog: gpt-6-luna is $0.10/$0.50 per M tokens
 // (cache read $0.01), against $2/$10 for the host's default gpt-6.1-sol, with the same 272k window and reasoning.

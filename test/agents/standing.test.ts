@@ -21,7 +21,7 @@ const CODING = ['bash', 'edit', 'read', 'write'];
 async function temporary(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-standing-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  return { cwd, databasePath: join(cwd, 'chat.sqlite') };
+  return { cwd, databasePath: join(cwd, 'chat.sqlite'), protection: 'unguarded' as const };
 }
 
 /** One faux provider with a model each for Pi, the standing agents and their subs; `router` answers them all. */

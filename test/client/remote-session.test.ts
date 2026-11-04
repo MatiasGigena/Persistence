@@ -9,7 +9,7 @@ import { CloseCode, ROOT_FEED } from '../../src/protocol/messages.ts';
 import type { ServerMessage } from '../../src/protocol/messages.ts';
 import { Hub } from '../../src/server/hub.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
-import type { ChatItem, NoticeLevel } from '../../src/ui/types.ts';
+import type { ChatItem, NoticeLevel } from '../../src/protocol/session.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
 import { fakeLink, fakeSession } from '../fixtures/server-fakes.ts';
 import type { FakeServerOptions } from '../fixtures/fake-server.ts';

@@ -2,7 +2,8 @@
 // the /status block, zoom output. No DOM, Node or pi-tui, so the terminal UI imports it and the server hands it to
 // the browser at /ui/text.ts (ADR 0020). Rendering (color, width, markup) stays with each front end.
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
-import type { SessionStatus, ViewLine } from './types.ts';
+import { isRecord } from '../protocol/util.ts';
+import type { SessionStatus, ViewLine } from '../protocol/session.ts';
 
 // Control characters other than newline and tab, and terminal escapes, never reach the summary.
 const CONTROL = /\u001b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f]/g;
@@ -23,8 +24,8 @@ const SUMMARY_JSON = 60;
 function field(args: string, key: string): string | undefined {
   try {
     const parsed: unknown = JSON.parse(args);
-    if (typeof parsed !== 'object' || parsed === null) return undefined;
-    const value: unknown = Object.entries(parsed).find(([name]) => name === key)?.[1];
+    if (!isRecord(parsed)) return undefined;
+    const value = parsed[key];
     return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
   } catch {
     const match = new RegExp(`"${key}"\\s*:\\s*(?:"((?:[^"\\\\]|\\\\.)*)|(\\d+))`).exec(args);
@@ -98,11 +99,9 @@ export function deletionText(archivedAt: number, now: number): string {
  * Whether the status marks an agent as standing (ADR 0027). Read structurally, so a status without the field counts
  * every agent as ad-hoc; the server still refuses to archive a standing one.
  */
-const isStanding = (agent: object): boolean => 'standing' in agent && Boolean(agent.standing);
-
 /** The main agents "archive all ad-hoc agents" takes: not archived, not standing. */
-export function adhocAgents<T extends { readonly role: string; readonly archivedAt?: number }>(agents: readonly T[]): T[] {
-  return activeAgents(agents).filter(agent => agent.role === 'main' && !isStanding(agent));
+export function adhocAgents<T extends { readonly role: string; readonly archivedAt?: number; readonly standing?: true }>(agents: readonly T[]): T[] {
+  return activeAgents(agents).filter(agent => agent.role === 'main' && !agent.standing);
 }
 
 /** Asked before archiving one agent; `subs` are its sub agents, which go with it. */
@@ -156,4 +155,12 @@ export function parseMessage(out: string): { note: string | undefined; body: str
   if (bar < 0) return { note: undefined, body: out };
   const head = out.slice(0, bar), paren = head.indexOf(' (');
   return { note: paren < 0 ? undefined : head.slice(paren + 1), body: out.slice(bar + 1) };
+}
+
+/** A size in bytes, readably. */
+export function formatBytes(bytes: number): string {
+  const units = ['bytes', 'KiB', 'MiB', 'GiB'];
+  let value = bytes, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return unit === 0 ? `${value} bytes` : `${value.toFixed(1)} ${units[unit] ?? ''}`;
 }

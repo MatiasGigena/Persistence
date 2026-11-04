@@ -1,8 +1,9 @@
 # Agents
 
 Pi can start background agents, and has a team of standing agents that always exist. Each agent is its own persistent
-pi-durable conversation (a standing agent, one per task), in the same database as Pi. The code is `src/agents/index.ts`
-(the `agents` extension) and `src/agents/roster.ts` (the roster and kit names); the host wiring is in
+pi-durable conversation (a standing agent, one per task), in the same database as Pi. The code is `src/agents/` (the `agents`
+extension: `index.ts` builds it from `registry.ts`, `setup.ts`, `delivery.ts`, `lifecycle.ts`, `transcript.ts`,
+`prompts.ts` and `tools.ts`) and `src/agents/roster.ts` (the roster and kit names); the host wiring is in
 `src/runtime/runtime.ts`. The design is [ADR 0027](decisions/0027-standing-agents.md); archiving and deletion are
 [ADR 0034](decisions/0034-archived-agents.md).
 
@@ -221,7 +222,7 @@ The limits are enforced three times:
 ## Archiving and deletion
 
 The user clears ad-hoc agents away by archiving them ([ADR 0034](decisions/0034-archived-agents.md)); Pi has no tool for
-it. The host calls these functions of `src/agents/index.ts`, each in the one writer:
+it. The host calls these functions of `src/agents/lifecycle.ts` (exported by `src/agents/index.ts`), each in the one writer:
 
 - `archiveAgents(source, context, target, now)`: `target` is `{ name }` or `{ adhoc: true }`. A main agent is archived
   with its sub agents; a sub agent may be archived alone; `{ adhoc: true }` archives every main agent that is not

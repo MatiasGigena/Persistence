@@ -14,7 +14,7 @@ import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { chromium as playwrightChromium } from 'playwright-core';
-import { AgentsDoc, agentTranscript, createAgentsExtension, listAgents, missingKits, purgeArchived, syncAgents } from '../agents/index.ts';
+import { AgentsDoc, agentTranscript, assistantText, createAgentsExtension, listAgents, missingKits, purgeArchived, syncAgents } from '../agents/index.ts';
 import type { AgentRecord, AgentsSetup, Roster, ToolKits } from '../agents/index.ts';
 import { LOCAL_KITS, rosterEntry } from '../agents/roster.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
@@ -26,17 +26,18 @@ import { createShowImageExtension } from '../tools/show-image.ts';
 import { createCodemode } from '../tools/codemode.ts';
 import type { BrowserOptions } from '../tools/browser.ts';
 import { createWebFetchExtension } from '../tools/web-fetch.ts';
-import { GuardedEnv } from './guard.ts';
+import { GuardedEnv, protection as protectionOf, sshKeys as sshKeysOf } from './guard.ts';
 import { startSshAgent } from './ssh-agent.ts';
 import type { Protection } from './guard.ts';
 import { accessProblem, catalogProblem, checkAccess } from './models.ts';
-import type { Access, CatalogModels } from './models.ts';
-import { createMachineRouting } from '../machines/routing.ts';
-import type { RoutingDispatcher } from '../machines/routing.ts';
-import type { SendOptions } from '../ui/types.ts';
+import type { CredentialStatus, CatalogModels } from './models.ts';
+import { createMachineRouting } from './routing.ts';
+import type { MachineRouting, RoutingDispatcher } from './routing.ts';
+import type { SendOptions } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import { userInput } from './input.ts';
-import { errorMessage } from '../protocol/util.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
+import type { Config } from '../config/options.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;
@@ -55,9 +56,12 @@ export interface InstanceOptions {
   readonly thinkingLevel?: ModelThinkingLevel;
   /** Enable the coding tools for this launch. */
   readonly allowTools?: boolean;
-  /** Folders the coding tools may not touch (src/runtime/guard.ts); without it they run unguarded (tests). */
-  readonly protection?: Protection;
-  /** PI_DURABLE_SSH_KEYS: with `protection`, bash's SSH agent holds these keys alone (ADR 0030); default none. */
+  /**
+   * Folders the coding tools may not touch (src/runtime/guard.ts). Required, so a caller cannot run the tools
+   * unguarded by leaving it out: only tests pass 'unguarded', for a bare NodeExecutionEnv.
+   */
+  readonly protection: Protection | 'unguarded';
+  /** PI_DURABLE_SSH_KEYS: with a `protection`, bash's SSH agent holds these keys alone (ADR 0030); default none. */
   readonly sshKeys?: readonly string[];
   /** false inspects: no memory opened, the persisted agent left untouched. */
   readonly configureAgent?: boolean;
@@ -246,7 +250,7 @@ export interface RosterCheckOptions {
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   /** Default: `checkAccess()`. */
-  readonly access?: (provider: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<Access>;
+  readonly access?: (provider: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<CredentialStatus>;
 }
 
 const listed = (names: readonly string[]): string => names.length === 1 ? `Standing agent ${names[0] ?? ''}` : `Standing agents ${names.join(', ')}`;
@@ -287,7 +291,7 @@ export async function rosterWarnings(roster: Roster, {
     }
   }
   const checked = await Promise.all([...byProvider].map(async ([provider, { model, names }]) => {
-    let result: Access;
+    let result: CredentialStatus;
     try { result = await access(provider, { timeoutMs, ...signal ? { signal } : {} }); } catch (error) {
       result = { ok: false, reason: 'error', detail: errorMessage(error) };
     }
@@ -309,6 +313,23 @@ function compactionFor(model: ModelRef | undefined, models: Models): { compactio
  * Open the one persisted root (Pi, the UniiChat chat) without starting interrupted work.
  * Pi's context is its memory view (src/memory); its agents are src/agents.
  */
+/**
+ * The InstanceOptions a launch's Config gives, the same for the terminal host and the server: its paths, model and
+ * roster, the coding tools held to the chat's protected folders, and PI_DURABLE_SSH_KEYS. Each caller adds its own
+ * warning and report handlers (and the server its dispatcher).
+ */
+export function launchOptions(config: Config, models: Models): InstanceOptions {
+  const { databasePath, memoryDir, cwd, model, thinkingLevel, allowTools, roster, chromium, authFile } = config;
+  return { databasePath, memoryDir, cwd, model, thinkingLevel, allowTools, roster, chromium, authFile, models,
+    configureAgent: !config.inspectOnly, protection: protectionOf(config), sshKeys: sshKeysOf() };
+}
+
+/** A runtime report (an `onReport` value) as one line: its error's message, else its own message or kind. */
+export function reportText(report: unknown): string {
+  const field = (value: unknown, key: string): unknown => isRecord(value) ? value[key] : undefined;
+  return String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report');
+}
+
 export async function openInstance({
   databasePath,
   memoryDir = databasePath.replace(/(\.sqlite)?$/, '.unii'),
@@ -335,8 +356,9 @@ export async function openInstance({
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Started even with the tools off: /tools on needs no restart. Inspection runs no tools.
-  const sshAgent = protection && configureAgent ? await startSshAgent(sshKeys, message => onWarning?.(message)) : undefined;
-  const guarded = protection && sshAgent ? { ...protection, sshAgent: sshAgent.socket } : protection;
+  const fence = protection === 'unguarded' ? undefined : protection;
+  const sshAgent = fence && configureAgent ? await startSshAgent(sshKeys, message => onWarning?.(message)) : undefined;
+  const guarded = fence && sshAgent ? { ...fence, sshAgent: sshAgent.socket } : fence;
   // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
   const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models) }) : undefined;
   let opened: Harness | undefined;
@@ -377,16 +399,8 @@ export async function openInstance({
   const available: ToolKits = { ...builtinKits(), browser: { extension: Browser, tools: Browser.tools },
     web_fetch: { extension: WebFetch, tools: WebFetch.tools },
     autoreview: { extension: Autoreview, tools: Autoreview.tools }, ...extraKits };
-  const kits: ToolKits = Object.fromEntries(Object.entries(available).map(([name, kit]) => {
-    if (!routing || !kit.extension) return [name, kit];
-    // Never reinstall the unwrapped coding-tools extension through a standing agent's kit.
-    // Autoreview already calls routed bash; network kits stay server-only with their own protections.
-    const extension = kit.extension.name === CodingTools.name ? codingTools
-      : kit.extension === Autoreview ? Autoreview : routing.localOnly(kit.extension);
-    const names = new Set(kit.tools.map(tool => tool.name));
-    return [name, { ...kit, extension, tools: (extension.tools ?? []).filter(tool => names.has(tool.name)) }];
-  }));
-  const setup: AgentsSetup = { childAgent, roster, kits };
+  const kits = routing ? routedKits(available, routing, codingTools, Autoreview) : available;
+  const setup: AgentsSetup = { childAgent, roster, kits, routed: routing !== undefined };
   const Agents = createAgentsExtension({ ...setup, onSpawn: routing?.pinSpawn, onDelivery: routing?.pinDelivery,
     initialContext: async (_agent, _api, spawn) => {
     if (!memory) return undefined;
@@ -421,21 +435,18 @@ export async function openInstance({
   registry.install(ShowImage);
   registry.install(Codemode);
   for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== codingTools) registry.install(kit.extension);
-  const agent: AgentChange = {
-    cwd,
-    model,
-    thinkingLevel,
-    extensions: [codingTools, Unii, Agents, ShowImage, Codemode],
-    tools: piTools([Unii, Agents], allowTools, [ShowImage, Codemode]),
-    modelTools: null,
-    instructions: piInstructions(cwd, allowTools, routing !== undefined),
-  };
+  /** Pi's tools and the instructions that describe them, with the coding tools on or off. */
+  const toolChoice = (on: boolean): AgentChange => ({
+    tools: piTools([Unii, Agents], on, [ShowImage, Codemode]), instructions: piInstructions(cwd, on, routing !== undefined),
+  });
+  const agent: AgentChange = { cwd, model, thinkingLevel, extensions: [codingTools, Unii, Agents, ShowImage, Codemode], modelTools: null,
+    ...toolChoice(allowTools) };
+  // What the instance owns besides the harness; they share nothing, so they close together.
+  const closeOwned = (): Promise<void> => closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
 
   // close() stops the roster checks, and drops what they would still warn.
   const checks = new AbortController();
-  // The archive sweeper (ADR 0034): its timer, and the sweep in progress, which close() waits for.
-  let sweeper: ReturnType<typeof setInterval> | undefined;
-  let sweeping: Promise<void> | undefined;
+  let sweeper: Sweeper | undefined;
   let database: HostDatabase | undefined;
   let storage: SqliteStorage | undefined;
   try {
@@ -460,19 +471,7 @@ export async function openInstance({
       await root.configure(agent, context);
       // Agents spawned under an earlier launch must not keep its tool choices; the roster's standing agents exist.
       await syncAgents(harness, context, setup);
-      // Delete agents archived for a day: now, since a closed host deletes nothing, then hourly. A failed sweep is
-      // reported and retried by the next.
-      const sweep = async (): Promise<void> => {
-        try {
-          const deleted = await purgeArchived(harness, context, clock());
-          // A deleted agent's name may be taken again: its browser profile, with the sites' logins, goes with it.
-          for (const name of deleted) await Browser.forget(name);
-          if (deleted.length) onWarning?.(`Deleted archived agents: ${deleted.join(', ')}.`);
-        } catch (error) { onReport?.(error); }
-      };
-      await sweep();
-      sweeper = setInterval(() => { sweeping ??= sweep().finally(() => { sweeping = undefined; }); }, sweepMs);
-      sweeper.unref();
+      sweeper = await startSweeper({ harness, context, clock, everyMs: sweepMs, forget: name => Browser.forget(name), onWarning, onReport });
       const missing = missingKits(roster, kits);
       if (missing.length) onWarning?.(`Standing agents run without tool kits this host lacks: ${missing.join('; ')}.`);
       // Not awaited: a credential check may take seconds (claude-cli asks its CLI), and only warns.
@@ -512,33 +511,72 @@ export async function openInstance({
       async setTools(enabled) {
         // Disabling takes effect even for an already-resolved tool invocation, before configuration commits.
         if (!enabled) toolsAllowed = false;
-        await reconfigure({ tools: piTools([Unii, Agents], enabled, [ShowImage, Codemode]), instructions: piInstructions(cwd, enabled, routing !== undefined) });
+        await reconfigure(toolChoice(enabled));
         toolsAllowed = enabled;
       },
       exclusive: step => hostDatabase.exclusive(step),
       close: async () => {
         checks.abort();
-        clearInterval(sweeper);
-        await sweeping;
-        // The harness first, so no tool still runs; then the rest, which share nothing, together.
-        try { await harness.close(context); } finally {
-          await closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
-        }
+        await sweeper?.stop();
+        // The harness first, so no tool still runs; then the rest.
+        try { await harness.close(context); } finally { await closeOwned(); }
       },
     };
   } catch (error) {
-    clearInterval(sweeper);
     try {
+      await sweeper?.stop();
       if (opened) await opened.close(context);
       else if (storage) await storage.close(context);
       else if (database) await database.close();
-      await closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
+      await closeOwned();
     } catch {
       // Preserve the opening failure, including when an API already closed
       // its owned database while handling that same failure.
     }
     throw error;
   }
+}
+
+/**
+ * The kits as a machine-routed launch offers them: the coding tools routed, autoreview as it is (it already calls the
+ * routed bash), and every other kit local only (network kits stay on the server, with their own protections).
+ */
+function routedKits(available: ToolKits, routing: MachineRouting, codingTools: Extension, autoreview: Extension): ToolKits {
+  return Object.fromEntries(Object.entries(available).map(([name, kit]) => {
+    if (!kit.extension) return [name, kit];
+    // Never reinstall the unwrapped coding-tools extension through a standing agent's kit.
+    const extension = kit.extension.name === CodingTools.name ? codingTools
+      : kit.extension === autoreview ? autoreview : routing.localOnly(kit.extension);
+    const names = new Set(kit.tools.map(tool => tool.name));
+    return [name, { ...kit, extension, tools: (extension.tools ?? []).filter(tool => names.has(tool.name)) }];
+  }));
+}
+
+/** The archive sweeper (ADR 0034); `stop` ends its timer and waits for the sweep in progress. */
+interface Sweeper { stop(): Promise<void> }
+
+/**
+ * Deletes agents archived for a day: now, since a closed host deletes nothing, then every `everyMs`. A deleted agent's
+ * name may be taken again, so `forget` drops its browser profile and the sites' logins with it. A failed sweep is
+ * reported and retried by the next.
+ */
+async function startSweeper({ harness, context, clock, everyMs, forget, onWarning, onReport }: {
+  readonly harness: Harness; readonly context: Context; readonly clock: () => number; readonly everyMs: number;
+  readonly forget: (name: string) => Promise<void>; readonly onWarning?: ((message: string) => void) | undefined;
+  readonly onReport?: ((error: unknown) => void) | undefined;
+}): Promise<Sweeper> {
+  let sweeping: Promise<void> | undefined;
+  const sweep = async (): Promise<void> => {
+    try {
+      const deleted = await purgeArchived(harness, context, clock());
+      for (const name of deleted) await forget(name);
+      if (deleted.length) onWarning?.(`Deleted archived agents: ${deleted.join(', ')}.`);
+    } catch (error) { onReport?.(error); }
+  };
+  await sweep();
+  const timer = setInterval(() => { sweeping ??= sweep().finally(() => { sweeping = undefined; }); }, everyMs);
+  timer.unref();
+  return { stop: async () => { clearInterval(timer); await sweeping; } };
 }
 
 /** Run every close at once; all of them run even when one fails, and the first failure is thrown once all settled. */
@@ -569,10 +607,5 @@ export async function answerText(root: Conversation, settled: SubmissionRecord |
   }
   const answer = await root.commit((tx) => tx.entry(AssistantEntry, settled.answer), context);
   if (!answer) throw new Error(`Committed assistant answer ${settled.answer} was not found`);
-  return (answer.model ?? [])
-    .filter((message) => message.role === 'assistant')
-    .flatMap((message) => message.content)
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('');
+  return assistantText(answer);
 }

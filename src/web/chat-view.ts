@@ -7,7 +7,7 @@ import { toolCommand, toolSummary } from '../ui/text.ts';
 import { renderMarkdown } from './markdown.ts';
 import { turnEnds } from './store.ts';
 import type { ViewItem } from './store.ts';
-import type { ChatImage } from '../protocol/messages.ts';
+import type { ChatImage } from '../protocol/images.ts';
 
 type ToolItem = Extract<ViewItem, { kind: 'tool' }>;
 

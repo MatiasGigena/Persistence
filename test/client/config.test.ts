@@ -6,7 +6,8 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { clientConfigPath, machineId, readClientConfig, remoteTarget, saveClientConfig } from '../../src/client/config.ts';
-import { parseArgs, resolveSocketPath } from '../../src/host/config.ts';
+import { parseArgs } from '../../src/config/options.ts';
+import { resolveSocketPath } from '../../src/config/paths.ts';
 
 const exec = promisify(execFile), launcher = resolve('bin/pi-durable');
 const id = 'ab0c2d3e-0000-4000-8000-123456789abc';

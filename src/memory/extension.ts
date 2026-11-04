@@ -11,16 +11,17 @@ import type { Memory, ReportInput } from './memory.ts';
 import { PROMPT } from './prompt.ts';
 import { CAP, clip, formatDate, hash } from './util.ts';
 import { agentInputOf } from '../agents/entries.ts';
+import { NotFound } from '../protocol/errors.ts';
 
 // Adapted from UniiChat's Server.ts HEAD (Apache-2.0): a turn's head, as a compaction's is "Compaction:", so the one
 // prompt tells the two apart.
 export const TURN_HEAD = 'Turn: the user\'s new message:\n\n';
 const LOGGED = new Set(['stop', 'length', 'toolUse']);
 /** What the extension reads of a pi-durable ContextView: entries (ids, kinds, data, messages, writer) and their model messages. */
-export type ContextEntries = {
+export interface ContextEntries {
   readonly entries: readonly (Pick<EntryRecord, 'kind' | 'data' | 'model'> & { readonly id: number; readonly byTaskId?: number })[];
   readonly contributions: readonly (readonly Message[])[];
-};
+}
 /**
  * What beforeRequest uses of its HookApi. HookApi does not declare context(), but the task runtime behind it has it
  * (pi-durable's TaskRuntime.context, which returns a ContextView); without it, inputs are keyed by timestamp.
@@ -32,7 +33,7 @@ export type RequestApi = Pick<HookApi, 'conversationId'> & {
 };
 /** The extension, with its tools always present (Pi's agent enables them by name). */
 export type UniiExtension = Extension & { readonly tools: readonly ToolRegistration[] };
-export type UniiExtensionOptions = {
+export interface UniiExtensionOptions {
   /** Absent only for inspection: the extension is installed so stored names resolve, and any turn or tool call throws. */
   memory: Memory | undefined;
   isRoot?: (conversationId: ConversationId) => boolean;
@@ -44,17 +45,17 @@ export type UniiExtensionOptions = {
   prevBytes?: number;
   now?: () => Date;
   name?: string;
-};
+}
 type Content = UserMessage['content'] | ToolResultMessage['content'];
 /**
  * One loggable message of the context; `run`: it belongs to the current run; `cut`: a reply pi-durable keeps out of
  * the model's context (aborted, or the last of a failed run), logged with a cut mark.
  */
-type Item = { m: UserMessage | AssistantMessage | ToolResultMessage; run: boolean; src: string; report?: ReportInput | undefined;
-  calls?: string[]; cut?: boolean };
+interface Item { m: UserMessage | AssistantMessage | ToolResultMessage; run: boolean; src: string; report?: ReportInput | undefined;
+  calls?: string[]; cut?: boolean }
 
 /** A run's request head, computed once: [view, turn state, previous exchange], and the message's tail for a huge input. */
-type Frozen = { blocks: TextContent[]; message: string | undefined };
+interface Frozen { blocks: TextContent[]; message: string | undefined }
 const baseSrc = (src: string | undefined): string => (src ?? '').replace(/#\d+$/, '');
 
 const isFinal = (m: Message | undefined): boolean => m?.role === 'assistant'
@@ -63,6 +64,8 @@ const textOf = (content: Content | undefined): string => typeof content === 'str
   : (content ?? []).map(b => b.type === 'text' ? b.text : b.type === 'image' ? '[image]' : '').filter(Boolean).join('\n');
 const blocksOf = (content: UserMessage['content']): (TextContent | ImageContent)[] =>
   typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+// Joined with '\n', unlike agents/entries.ts's `text`: the hash of this text is the reply's persisted `src` key, so it
+// stays as it is.
 const replyText = (m: AssistantMessage): string => m.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
 const replySrc = (m: AssistantMessage): string => `a:${m.timestamp}:${hash(replyText(m))}`;
 const callsOf = (m: AssistantMessage): ToolCall[] => m.content.filter(b => b.type === 'toolCall');
@@ -145,7 +148,7 @@ function headed(content: UserMessage['content']): (TextContent | ImageContent)[]
  * `name` ('uniichat').
  */
 export function createUniiExtension({
-  memory, isRoot = id => id === ROOT_CONVERSATION_ID, resolveAgentChat = async () => 'unknown agent', atWork,
+  memory, isRoot = id => id === ROOT_CONVERSATION_ID, resolveAgentChat = name => Promise.reject(new NotFound(`No agent named ${name}.`)), atWork,
   settleMs = 8_000, prevBytes = 16_000, now = () => new Date(), name = 'uniichat',
 }: UniiExtensionOptions): UniiExtension {
   const open = (): Memory => {

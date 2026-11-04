@@ -3,6 +3,9 @@ import type { JsonObject, ToolExecutionResult } from '@earendil-works/pi-durable
 import { MACHINE_TOOLS, jsonData } from '../protocol/machines.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult } from '../protocol/machines.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
+import { isRecord } from '../protocol/util.ts';
+import { ErrorCode } from '../protocol/messages.ts';
+import { OpError } from './connection.ts';
 
 export interface MachinePeer {
   readonly isClosed: boolean;
@@ -24,16 +27,16 @@ export class MachineBroker {
   private readonly peers = new Map<MachinePeer, MachineRegistration>();
   private readonly pending = new Map<string, Pending>();
   private stopping = false;
-  constructor(privateOptions: { authorized: () => boolean; notice?: (text: string) => void }) { this.options = privateOptions; }
   private readonly options: { authorized: () => boolean; notice?: (text: string) => void };
+  constructor(options: MachineBroker['options']) { this.options = options; }
 
   register(peer: MachinePeer, registration: MachineRegistration): void {
-    if (this.stopping || peer.isClosed) throw new Error('The machine connection is closed');
+    if (this.stopping || peer.isClosed) throw new OpError(ErrorCode.unavailable, 'The machine connection is closed');
     const key = keyOf(registration.target), before = this.peers.get(peer);
-    if (registration.target.machineId === 'server') throw new Error('The machine id server is reserved');
-    if (before && keyOf(before.target) !== key) throw new Error('A connection cannot change its execution machine or directory');
+    if (registration.target.machineId === 'server') throw new OpError(ErrorCode.badRequest, 'The machine id server is reserved');
+    if (before && keyOf(before.target) !== key) throw new OpError(ErrorCode.badRequest, 'A connection cannot change its execution machine or directory');
     for (const [other, machine] of this.peers) {
-      if (other !== peer && !other.isClosed && keyOf(machine.target) === key) throw new Error('This machine and directory already have an active connector');
+      if (other !== peer && !other.isClosed && keyOf(machine.target) === key) throw new OpError(ErrorCode.unavailable, 'This machine and directory already have an active connector');
     }
     this.peers.set(peer, registration);
     for (const pending of this.pending.values()) this.dispatch(pending);
@@ -42,7 +45,7 @@ export class MachineBroker {
   /** Turns a registered connector's tools on or off; returns its registration as it now is. */
   setEnabled(peer: MachinePeer, enabled: boolean): MachineRegistration {
     const before = this.peers.get(peer);
-    if (!before) throw new Error('Register an execution machine first');
+    if (!before) throw new OpError(ErrorCode.badRequest, 'Register an execution machine first');
     const registration = { ...before, enabled };
     this.peers.set(peer, registration);
     for (const pending of this.pending.values()) {
@@ -74,7 +77,7 @@ export class MachineBroker {
     const name = MACHINE_TOOLS.find(each => each === toolName);
     if (!name || target.machineId === 'server') return Promise.reject(new Error('Invalid remote execution destination or tool'));
     const parsed = jsonData(args);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return Promise.reject(new Error('Invalid tool arguments'));
+    if (!isRecord(parsed)) return Promise.reject(new Error('Invalid tool arguments'));
     const call: MachineCall = { t: 'machine.call', id: executionId, target, name, args: parsed };
     const fingerprint = JSON.stringify(call);
     const before = this.pending.get(executionId);

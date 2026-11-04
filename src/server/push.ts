@@ -5,7 +5,7 @@ import { createCipheriv, createECDH, createHash, createPrivateKey, generateKeyPa
 import type { ECDH, KeyObject } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ServeSettings, StatePaths } from '../host/config.ts';
+import type { ServeSettings, StatePaths } from '../config/paths.ts';
 import { errorMessage, isRecord } from '../protocol/util.ts';
 import type { PushSubscriptionJson } from '../protocol/messages.ts';
 import type { PushNotifier } from './link.ts';
@@ -17,7 +17,7 @@ const RECORD_SIZE = 4096;
 /** Header (salt 16, rs 4, idlen 1, keyid 65) and the GCM tag: what a payload adds to the 4096 bytes services take. */
 const OVERHEAD = 16 + 4 + 1 + 65 + 16;
 /** Largest JSON payload: the body stays within 4096 bytes, the size RFC 8030 has every push service accept. */
-export const MAX_PAYLOAD = 4096 - OVERHEAD - 1;
+export const MAX_PUSH_PAYLOAD = 4096 - OVERHEAD - 1;
 const KEY_INFO = Buffer.from('WebPush: info\0');
 const CEK_INFO = Buffer.from('Content-Encoding: aes128gcm\0');
 const NONCE_INFO = Buffer.from('Content-Encoding: nonce\0');
@@ -227,15 +227,15 @@ export function vapidJwt(key: KeyObject, audience: string, subject: string, nowM
 
 /** The service worker's payload: `{title, body, tag}` as UTF-8 JSON, the body cut to fit one push. */
 function payloadOf(message: { readonly title: string; readonly body: string; readonly tag: string }): Buffer {
-  const title = clip(message.title, 200), tag = clip(message.tag, 64);
-  for (let body = clip(message.body, 1000); ; body = clip(body, Math.floor(body.length / 2))) {
+  const title = truncate(message.title, 200), tag = truncate(message.tag, 64);
+  for (let body = truncate(message.body, 1000); ; body = truncate(body, Math.floor(body.length / 2))) {
     const json = Buffer.from(JSON.stringify({ title, body, tag }));
-    if (json.length <= MAX_PAYLOAD || body === '') return json;
+    if (json.length <= MAX_PUSH_PAYLOAD || body === '') return json;
   }
 }
 
 /** `text` cut to `max` UTF-16 units, never inside a surrogate pair, with an ellipsis when cut. */
-function clip(text: string, max: number): string {
+function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   const cut = text.slice(0, Math.max(0, max - 1)).replace(/[\uD800-\uDBFF]$/, '');
   return cut ? `${cut}…` : '';

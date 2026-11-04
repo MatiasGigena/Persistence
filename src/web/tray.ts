@@ -4,7 +4,8 @@ import { imageUrl, toChatImage } from './attach.ts';
 import { el, play } from './chat-view.ts';
 import { inOrder } from './format.ts';
 import { IMAGE_LIMITS, restoreImages } from '../protocol/images.ts';
-import type { ChatImage, NoticeLevel } from '../protocol/messages.ts';
+import type { NoticeLevel } from '../protocol/session.ts';
+import type { ChatImage } from '../protocol/images.ts';
 import { errorMessage } from '../protocol/util.ts';
 
 /**

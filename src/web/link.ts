@@ -23,7 +23,7 @@ export interface SocketEvents {
 export type Connect = (events: SocketEvents) => SocketHandle;
 
 /** Checked before each connection attempt (the web app's `/api/me`). */
-export type Gate = () => Promise<'ok' | 'offline' | 'unpaired' | 'forbidden'>;
+export type GateProbe = () => Promise<'ok' | 'offline' | 'unpaired' | 'forbidden'>;
 
 /**
  * - `connecting`: the first attempt, nothing shown yet.
@@ -41,7 +41,7 @@ export type ClosedBy = 'version' | 'unauthorized' | 'unpaired' | 'forbidden' | '
 
 export interface LinkOptions {
   readonly connect: Connect;
-  readonly gate?: Gate;
+  readonly gate?: GateProbe;
   /** `hello.client`. */
   readonly client: string;
   readonly visible: () => boolean;
@@ -157,7 +157,7 @@ export class Link {
   private async open(): Promise<void> {
     const generation = ++this.generation;
     if (this.options.gate) {
-      let gate: Awaited<ReturnType<Gate>>;
+      let gate: Awaited<ReturnType<GateProbe>>;
       let timer: Timer | undefined;
       const late = new Promise<'offline'>(resolve => { timer = setTimeout(() => resolve('offline'), LIMITS.connectMs); });
       try { gate = await Promise.race([this.options.gate(), late]); } catch { gate = 'offline'; } finally { clearTimeout(timer); }

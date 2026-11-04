@@ -7,7 +7,9 @@ import { promisify } from 'node:util';
 import { test } from 'node:test';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
-import { chromiumPath, DEFAULT_PORT, HELP, parseArgs, parseConfig, readSettings, resolveOptions, serveSettings, SOCKET_PATH_MAX, statePaths, updateSettings, writeSettings } from '../../src/host/config.ts';
+import { HELP, parseArgs, parseConfig, resolveOptions } from '../../src/config/options.ts';
+import { chromiumPath, DEFAULT_PORT, serveSettings, SOCKET_PATH_MAX, statePaths } from '../../src/config/paths.ts';
+import { readSettings, updateSettings, writeSettings } from '../../src/config/settings.ts';
 import { isRecord } from '../../src/protocol/util.ts';
 import { openInstance } from '../../src/runtime/runtime.ts';
 
@@ -240,7 +242,7 @@ test('flock rejects a second host and a symlink alias; status needs no credentia
   const folder = await mkdtemp(join(tmpdir(), 'pi-durable-lock-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   const databasePath = join(folder, 'session.sqlite');
-  const instance = await openInstance({ databasePath, cwd: folder, models: createModels(), configureAgent: false });
+  const instance = await openInstance({ protection: 'unguarded', databasePath, cwd: folder, models: createModels(), configureAgent: false });
   await instance.close();
   const alias = join(folder, 'alias.sqlite');
   await symlink(databasePath, alias);

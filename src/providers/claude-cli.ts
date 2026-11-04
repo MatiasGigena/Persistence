@@ -10,7 +10,7 @@ import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEven
   Message, Model, Provider, SimpleStreamOptions, SystemMessage, TextContent, ThinkingLevel, TranscriptContext,
   Usage } from '@earendil-works/pi-ai';
 import { getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai/utils/transcript';
-import { errorMessage, isRecord } from '../protocol/util.ts';
+import { errorCode, errorMessage, isRecord } from '../protocol/util.ts';
 
 // Claude through the unmodified official `claude` CLI in print mode, signed in with the user's own login
 // (docs/models.md, ADR 0010). Claude only proposes tool calls: Pi's tools are listed by a stub MCP server that runs
@@ -444,7 +444,7 @@ function streamClaude(model: Model<Api>, context: TranscriptContext, options: Si
         }
       });
       proc.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-4000); });
-      proc.on('error', error => finish({ error: 'code' in error && error.code === 'ENOENT'
+      proc.on('error', error => finish({ error: errorCode(error) === 'ENOENT'
         ? `claude-cli: ${bin} not found. Install Claude Code or set PI_DURABLE_CLAUDE_BIN.` : `claude-cli: ${error.message}` }));
       proc.on('close', (code, sig) => {
         if (buffer.trim()) parse(buffer);

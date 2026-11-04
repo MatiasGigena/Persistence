@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { OutputBuffer, PROGRESS_BYTES_PER_SECOND } from '@earendil-works/chord/output';
 import { createModels, validateToolArguments } from '@earendil-works/pi-ai';
-import { statePaths } from '../host/config.ts';
+import { statePaths } from '../config/paths.ts';
 import { bwrapBinary, GuardedEnv, protection } from '../runtime/guard.ts';
 import type { Protection } from '../runtime/guard.ts';
 import { clientConfigPath } from './config.ts';
@@ -15,7 +15,7 @@ import { jsonData, machineCall, machineTarget, machineToolResult } from '../prot
 import type { JsonData, MachineCall, MachineToolResult } from '../protocol/machines.ts';
 import { LIMITS } from '../protocol/messages.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
-import { errorCode, errorMessage } from '../protocol/util.ts';
+import { errorCode, errorMessage, isRecord } from '../protocol/util.ts';
 
 export interface MachineExecutorOptions {
   readonly target: MachineTarget;
@@ -92,7 +92,7 @@ async function executeNative(call: MachineCall, signal: AbortSignal, guarded: Pr
   const tool: ToolRegistration | undefined = CodingTools.tools?.find(each => each.name === call.name);
   if (!tool) throw new Error('Unknown machine tool');
   const prepared = jsonData(tool.prepareArguments?.(call.args) ?? call.args);
-  if (prepared === null || typeof prepared !== 'object' || Array.isArray(prepared)) throw new Error('Invalid tool arguments');
+  if (!isRecord(prepared)) throw new Error('Invalid tool arguments');
   const args: unknown = validateToolArguments(tool, { type: 'toolCall', id: call.id, name: call.name, arguments: prepared });
   const context = withAbortSignal(signal, BACKGROUND_CONTEXT);
   const env = new GuardedEnv({ cwd: call.target.cwd, protection: guarded, bwrap });
@@ -245,14 +245,14 @@ export class MachineExecutor {
 
   private async previous(directory: string, digest: string, id: string): Promise<MachineToolResult> {
     const intent: unknown = JSON.parse(await readFile(join(directory, 'intent.json'), 'utf8'));
-    if (typeof intent !== 'object' || intent === null || !('fingerprint' in intent) || typeof intent.fingerprint !== 'string') {
+    if (!isRecord(intent) || typeof intent.fingerprint !== 'string') {
       throw new Error('Invalid execution intent');
     }
     if (intent.fingerprint !== digest) return failure('PAYLOAD_MISMATCH', 'Execution id was reused with a changed payload.');
     const path = join(directory, 'result.json');
     if ((await stat(path)).size > LIMITS.clientMessage + 1024) throw new Error('Oversized cached result');
     const saved: unknown = JSON.parse(await readFile(path, 'utf8'));
-    if (typeof saved !== 'object' || saved === null || !('fingerprint' in saved) || saved.fingerprint !== digest || !('result' in saved)) {
+    if (!isRecord(saved) || saved.fingerprint !== digest || !('result' in saved)) {
       throw new Error('Invalid cached execution result');
     }
     return bounded(id, machineToolResult(saved.result));

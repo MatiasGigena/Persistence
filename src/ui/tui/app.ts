@@ -5,7 +5,7 @@ import {
   TuiAltScreen, VStack,
 } from '@earendil-works/pi-tui';
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
-import type { AttachedLink, ChatItem, UiSession } from '../types.ts';
+import type { AttachedLink, ChatItem, UiSession } from '../../protocol/session.ts';
 import { ChatView } from './chat.ts';
 import { statusText, toolSummary } from '../text.ts';
 import type { NoticeLevel } from './chat.ts';
@@ -317,13 +317,9 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (!arg || arg === 'all') session.abort().catch((error: unknown) => show(`Interrupt failed: ${errorMessage(error)}`, 'error'));
     if (!arg) return;
     session.stopAgents(arg === 'all' ? undefined : arg).then(
-      names => show(names.length ? `Stopped ${names.join(', ')}.` : arg === 'all' ? 'No agents to stop.' : unknownAgent(arg)),
-      (error: unknown) => show(`Stop failed: ${errorMessage(error)}`, 'error'));
-  };
-
-  const unknownAgent = (name: string): string => {
-    const names = session.status().agents.map(agent => agent.name);
-    return `No agent named ${name}.${names.length ? ` Agents: ${names.join(', ')}.` : ''}`;
+      names => show(names.length ? `Stopped ${names.join(', ')}.` : 'No agents to stop.'),
+      // An unknown name is refused with a sentence that names the agents.
+      (error: unknown) => show(errorMessage(error), 'error'));
   };
   /** Typed `/stop` (not Esc) says so when Pi has nothing running, and points at working agents. */
   const idleStop = (): void => {

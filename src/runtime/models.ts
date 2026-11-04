@@ -21,7 +21,7 @@ export interface ModelOption {
 }
 
 /** A provider's credentials now. */
-export type Access =
+export type CredentialStatus =
   | { readonly ok: true }
   | { readonly ok: false; readonly reason: 'none' | 'timeout' }
   | { readonly ok: false; readonly reason: 'subscription' | 'error'; readonly detail: string };
@@ -40,7 +40,7 @@ const SNAPSHOT = /-(\d{4}-\d{2}-\d{2}|\d{8})$/;
  * Check `provider`'s credentials within `timeoutMs`; never rejects. `anthropic` passes only with an API key: a Claude
  * subscription credential is refused (docs/models.md). The claude-cli check ignores signals, hence the race.
  */
-export async function checkAccess(models: CatalogModels, provider: string, { timeoutMs = 15_000, signal }: CheckOptions = {}): Promise<Access> {
+export async function checkAccess(models: CatalogModels, provider: string, { timeoutMs = 15_000, signal }: CheckOptions = {}): Promise<CredentialStatus> {
   // A held timer, not AbortSignal.timeout(): that one is unref'd, so a hung check could outlive an idle event loop.
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), timeoutMs);
@@ -49,7 +49,7 @@ export async function checkAccess(models: CatalogModels, provider: string, { tim
     if (limit.aborted) resolve('timeout');
     limit.addEventListener('abort', () => resolve('timeout'), { once: true });
   });
-  const check = async (): Promise<Access> => {
+  const check = async (): Promise<CredentialStatus> => {
     if (!await models.checkAuth(provider, { signal: limit })) return { ok: false, reason: 'none' };
     const subscription = provider === 'anthropic' ? await anthropicSubscriptionSource(models, { signal: limit }) : undefined;
     return subscription ? { ok: false, reason: 'subscription', detail: subscription } : { ok: true };
@@ -65,7 +65,7 @@ export async function checkAccess(models: CatalogModels, provider: string, { tim
 }
 
 /** Why `model` cannot run, as a message for the user, or undefined when it can. `authFile` is named when given. */
-export function accessProblem({ provider, modelId }: ModelRef, access: Access, authFile?: string): string | undefined {
+export function accessProblem({ provider, modelId }: ModelRef, access: CredentialStatus, authFile?: string): string | undefined {
   if (access.ok) return undefined;
   switch (access.reason) {
     case 'none': return provider === CLAUDE_CLI
@@ -100,7 +100,7 @@ export function catalogProblem(models: Pick<Models, 'getModel'>, { provider, mod
 }
 
 /** The short hint shown beside a provider's models. */
-function note(provider: string, access: Access): string | undefined {
+function note(provider: string, access: CredentialStatus): string | undefined {
   if (provider === CLAUDE_CLI) return access.ok ? 'uses your Claude plan via the claude CLI' : 'needs claude auth login';
   if (access.ok) return undefined;
   if (access.reason === 'timeout') return 'credential check timed out';
@@ -136,12 +136,12 @@ export interface ChooserOptions {
  * asks the `claude` CLI, so a first listing can take a second or two.
  */
 export function modelChooser(models: CatalogModels, { timeoutMs = 5_000, ttlMs = 60_000, authFile }: ChooserOptions = {}): ModelChooser {
-  const cache = new Map<string, { at: number; access: Promise<Access> }>();
-  const remember = (provider: string, access: Promise<Access>): Promise<Access> => {
+  const cache = new Map<string, { at: number; access: Promise<CredentialStatus> }>();
+  const remember = (provider: string, access: Promise<CredentialStatus>): Promise<CredentialStatus> => {
     cache.set(provider, { at: Date.now(), access });
     return access;
   };
-  const accessOf = (provider: string): Promise<Access> => {
+  const accessOf = (provider: string): Promise<CredentialStatus> => {
     const cached = cache.get(provider);
     return cached && Date.now() - cached.at < ttlMs ? cached.access : remember(provider, checkAccess(models, provider, { timeoutMs }));
   };
@@ -150,7 +150,7 @@ export function modelChooser(models: CatalogModels, { timeoutMs = 5_000, ttlMs =
     async list(current) {
       const providers = [...new Set([current.provider, ...ROUTES])]
         .filter(provider => provider === current.provider || models.getModels(provider).length > 0);
-      const access = new Map(await Promise.all(providers.map(async (provider): Promise<[string, Access]> => [provider, await accessOf(provider)])));
+      const access = new Map(await Promise.all(providers.map(async (provider): Promise<[string, CredentialStatus]> => [provider, await accessOf(provider)])));
       const isCurrent = (provider: string, id: string): boolean => provider === current.provider && id === current.modelId;
       const options: ModelOption[] = [];
       for (const provider of providers) {

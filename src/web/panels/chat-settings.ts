@@ -11,7 +11,7 @@ import { disablePush, enablePush, pushState } from '../push.ts';
 import type { PushState } from '../push.ts';
 import type { Link } from '../link.ts';
 import type { Store } from '../store.ts';
-import type { ModelChoice } from '../../protocol/messages.ts';
+import type { ModelChoice } from '../../protocol/session.ts';
 import { agentsView } from './agents.ts';
 import { Shared } from './cache.ts';
 import { memoryView } from './memory.ts';

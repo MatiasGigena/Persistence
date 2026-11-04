@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { cutBytes } from '../protocol/util.ts';
 
 export const NODE = 512;      // bytes per tree node (recipe §2)
 export const CAP = 30_000;    // characters: tool output is clipped to this, other text split at it (§1)
@@ -32,12 +33,6 @@ export function split(text: string, limit = CAP): string[] {
   }
   parts.push(text);
   return parts;
-}
-
-/** The longest prefix of `s` within `limit` UTF-8 bytes, never half a character. */
-export function cutBytes(s: string, limit: number): string {
-  if (bytes(s) <= limit) return s;
-  return Buffer.from(s, 'utf8').subarray(0, limit).toString('utf8').replace(/�+$/, '');
 }
 
 /** A compactor reply as one line: no fences, no echoed `id+n|` head, newlines as spaces. */

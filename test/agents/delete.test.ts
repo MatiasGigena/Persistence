@@ -12,7 +12,7 @@ import {
 } from '../../src/agents/index.ts';
 import { type AgentsInstance, call, openAgents, router, say } from '../fixtures/agents-instance.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
-import { NotFound } from '../../src/ui/errors.ts';
+import { NotFound } from '../../src/protocol/errors.ts';
 
 async function temporary(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-delete-'));

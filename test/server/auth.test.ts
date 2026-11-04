@@ -9,9 +9,9 @@ import {
   authenticate, COOKIE_MAX_AGE_S, deviceCookies, deviceName, Devices, gate, LAST_SEEN_MS, normalizeCode, PAIR_CODE_MS,
   PAIR_TRIES, setCookie,
 } from '../../src/server/auth.ts';
-import type { Access } from '../../src/server/auth.ts';
+import type { ListenerAccess } from '../../src/server/auth.ts';
 
-const access: Access = { origin: 'https://vps.tail1.ts.net', allowLogins: ['me@example.com', 'alt@example.com'] };
+const access: ListenerAccess = { origin: 'https://vps.tail1.ts.net', allowLogins: ['me@example.com', 'alt@example.com'] };
 
 async function open(t: TestContext): Promise<{ devices: Devices; path: string; clock: { now: number } }> {
   const folder = await mkdtemp(join(tmpdir(), 'pi-durable-auth-'));

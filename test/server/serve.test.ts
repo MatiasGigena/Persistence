@@ -6,27 +6,23 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { parseArgs, resolveOptions, statePaths } from '../../src/host/config.ts';
-import type { ChatItem, ServerMessage } from '../../src/protocol/messages.ts';
+import { parseArgs, resolveOptions } from '../../src/config/options.ts';
+import { statePaths } from '../../src/config/paths.ts';
+import type { ServerMessage } from '../../src/protocol/messages.ts';
+import type { ChatItem } from '../../src/protocol/session.ts';
 import { applyOps } from '../../src/protocol/mirror.ts';
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import { agentLine } from '../../src/client/admin.ts';
-import { lineSplitter } from '../../src/server/transport-unix.ts';
+import { lineSplitter } from '../../src/protocol/lines.ts';
 import { serve } from '../../src/server/serve.ts';
 import { Devices } from '../../src/server/auth.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
+import { until as untilFixture } from '../fixtures/until.ts';
 
 const exec = promisify(execFile);
 
-/** Waits until `done` holds, polling; fails with `what` after `ms`. */
-async function until(done: () => boolean, what: () => string, ms = 15_000): Promise<void> {
-  const start = Date.now();
-  while (!done()) {
-    if (Date.now() - start > ms) throw new Error(`timed out: ${what()}`);
-    await new Promise(resolve => setTimeout(resolve, 20));
-  }
-}
+const until = (done: () => boolean, what: () => string, ms = 15_000): Promise<void> => untilFixture(done, what, { ms });
 
 /** A loopback port nothing listens on just now. */
 async function freePort(): Promise<number> {
@@ -56,6 +52,7 @@ test('serve end to end: a socket client sends, watches the reply stream in, and 
   const socket = connect(socketPath);
   const got: ServerMessage[] = [];
   let mirror: ChatItem[] = [], resyncs = 0;
+  socket.setEncoding('utf8');
   socket.on('data', lineSplitter(Number.MAX_SAFE_INTEGER, text => {
     const message = parseServerMessage(text);
     if (isParseError(message)) throw new Error(message.message);
@@ -66,7 +63,7 @@ test('serve end to end: a socket client sends, watches the reply stream in, and 
       if (next === 'resync') resyncs++;
       else mirror = next;
     }
-  }, () => {}));
+  }));
   const send = (value: object): void => { socket.write(`${JSON.stringify(value)}\n`); };
   send({ t: 'hello', protocol: PROTOCOL, client: 'serve.test', visible: true });
   await until(() => got.some(m => m.t === 'ready'), () => JSON.stringify(got));

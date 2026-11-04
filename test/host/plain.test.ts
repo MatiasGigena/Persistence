@@ -101,7 +101,7 @@ test('--plain chat on a new chat reports no resumed work, and prints Pi\'s reply
 
 test('saved history shows an agent\'s report as its name and text, without the note for Pi', { timeout: 20000 }, async t => {
   const folder = await tempFolder(t), databasePath = join(folder, 'chat.sqlite');
-  const instance = await openInstance({ databasePath, cwd: folder, allowTools: false, ...offlineModels([fauxAssistantMessage('noted')]) });
+  const instance = await openInstance({ protection: 'unguarded', databasePath, cwd: folder, allowTools: false, ...offlineModels([fauxAssistantMessage('noted')]) });
   try {
     await instance.root.submit({ type: 'input', content: piReportText('Coder', 'built it', 1),
       entry: { kind: REPORT_KIND, data: { name: 'Coder', text: 'built it', id: 'r1' } } }, instance.context);

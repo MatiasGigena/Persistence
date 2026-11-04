@@ -2,18 +2,16 @@
 // status are synced, not queued: each flush diffs what the peer has against the current state, so a slow peer gets
 // the latest state rather than every step. Events (`res`, `notice`, `pong`, `feed.end`) are written as they come.
 import { CloseCode, ErrorCode, LIMITS, ROOT_FEED, SOCKET_ONLY, WEB_ONLY } from '../protocol/messages.ts';
-import type {
-  ChatItem, ClientMessage, ErrorCode as ErrorCodeType, NoticeLevel, Op, Params, RequestOf, ResponseOf, Result,
-  ServerMessage, SessionStatus, Welcome,
-} from '../protocol/messages.ts';
+import type { ClientMessage, ErrorCode as ErrorCodeType, Op, Params, RequestOf, ResponseOf, Result, ServerMessage, Welcome } from '../protocol/messages.ts';
+import type { ChatItem, NoticeLevel, SessionStatus } from '../protocol/session.ts';
 import { diffItems, wireItem } from '../protocol/diff.ts';
 import { isParseError, parseClientMessage } from '../protocol/parse.ts';
 import { PROTOCOL } from '../protocol/version.ts';
 import type { MachineCall, MachineCancel, MachineResult } from '../protocol/machines.ts';
-import type { ChatFeed } from '../ui/types.ts';
+import type { ChatFeed } from '../protocol/session.ts';
 import type { PeerLink } from './link.ts';
 import { errorMessage } from '../protocol/util.ts';
-import { NotFound, Unavailable } from '../ui/errors.ts';
+import { NotFound, Unavailable } from '../protocol/errors.ts';
 
 /** Status messages to one peer at most this often (4 a second): it changes with every streamed token. */
 export const STATUS_MS = 250;

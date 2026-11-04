@@ -5,6 +5,8 @@ import { BACKGROUND_CONTEXT, withCancel } from '@earendil-works/chord/context';
 import type { MachineCall, MachineCancel, MachineToolResult } from '../../src/protocol/machines.ts';
 import { MachineBroker } from '../../src/server/machines.ts';
 import type { MachinePeer } from '../../src/server/machines.ts';
+import { OpError } from '../../src/server/connection.ts';
+import { ErrorCode } from '../../src/protocol/messages.ts';
 import type { MachineTarget } from '../../src/protocol/machines.ts';
 
 const LAPTOP: MachineTarget = { machineId: 'laptop', label: 'Laptop', cwd: '/home/me/project' };
@@ -167,4 +169,15 @@ test('invalid remote tools and server destination never dispatch', async () => {
   }
   await assert.rejects(broker.execute({ ...LAPTOP, machineId: 'server' }, 'id', 'bash', {}, BACKGROUND_CONTEXT), /Invalid remote/);
   broker.close();
+});
+
+test('a connector\'s own mistakes are refused with the hub\'s codes, not as failures', () => {
+  const broker = new MachineBroker({ authorized: () => true });
+  const laptop = new Peer(), twin = new Peer(), stranger = new Peer();
+  const code = (run: () => unknown, expected: string) => assert.throws(run, (error: unknown) => error instanceof OpError && error.code === expected);
+  code(() => broker.register(laptop, { target: { ...LAPTOP, machineId: 'server' }, enabled: true }), ErrorCode.badRequest);
+  broker.register(laptop, { target: LAPTOP, enabled: true });
+  code(() => broker.register(laptop, { target: VPS, enabled: true }), ErrorCode.badRequest);
+  code(() => broker.register(twin, { target: LAPTOP, enabled: true }), ErrorCode.unavailable);
+  code(() => broker.setEnabled(stranger, true), ErrorCode.badRequest);
 });

@@ -17,7 +17,7 @@ import { offlineModels } from '../fixtures/faux-model.ts';
 async function temporary(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-codemode-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  return { cwd, databasePath: join(cwd, 'state', 'instance.sqlite') };
+  return { cwd, databasePath: join(cwd, 'state', 'instance.sqlite'), protection: 'unguarded' as const };
 }
 
 const script = (code: string) => fauxAssistantMessage(fauxToolCall(CODEMODE_TOOL_NAME, { code }), { stopReason: 'toolUse' });
@@ -213,6 +213,7 @@ text(out.join('\\n'));`),
     } finally {
       await instance.close();
     }
+    // A deliberate wait, not a poll: the persisted 300 ms deadline must pass while the chat is closed.
     await new Promise(resolve => setTimeout(resolve, 400));
     const reopened = offlineModels([fauxAssistantMessage('Recovered.')]);
     // A longer default now: the deadline that ends the replay is the persisted one, not this launch's.

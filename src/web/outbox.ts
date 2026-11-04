@@ -1,6 +1,6 @@
 // Sends not yet admitted by the server, by request id: each is resent with the same id after a reconnect, so Pi gets it
 // once. No DOM, so test/web runs it in Node.
-import type { ChatImage } from '../protocol/messages.ts';
+import type { ChatImage } from '../protocol/images.ts';
 
 export interface Outgoing {
   readonly text: string;

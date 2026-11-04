@@ -4,7 +4,7 @@ import { link, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { errorCode, errorMessage, isRecord } from '../protocol/util.ts';
-import type { Options } from '../host/config.ts';
+import type { Options } from '../config/options.ts';
 import { sshConnector } from './ssh-link.ts';
 import type { SshTarget } from './ssh-link.ts';
 

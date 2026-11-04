@@ -75,6 +75,9 @@ Give each test its own temporary data directory.
   tsc also refuses unused locals and imports (`noUnusedLocals`).
 - Parse external data (JSON, IPC, process arguments) as `unknown` and narrow it.
   Cast only what is genuinely known, and say why.
+- Object shapes are `interface`s; `type` is for unions, intersections, mapped types, and the state of a pi-durable doc
+  or task (`defineDoc`, `defineTask`), which must stay a type alias: an interface has no implicit index signature, so
+  it is not assignable to the JSON types those take.
 - Use Node built-ins and the pinned `@earendil-works/*` packages. Add a dependency
   only when there is no small alternative.
 - Write terse code: short functions, early returns, no dead code.

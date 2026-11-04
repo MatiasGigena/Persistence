@@ -2,7 +2,9 @@
 // not yet in the feed. No DOM: `handle` folds one server message in and returns what the caller must do about it
 // (ask for a resync, reload), so the whole sync logic runs in Node tests.
 import { ROOT_FEED } from '../protocol/messages.ts';
-import type { ChatImage, ChatItem, ItemOp, NoticeLevel, ServerMessage, SessionStatus, Welcome } from '../protocol/messages.ts';
+import type { ItemOp, ServerMessage, Welcome } from '../protocol/messages.ts';
+import type { ChatItem, NoticeLevel, SessionStatus } from '../protocol/session.ts';
+import type { ChatImage } from '../protocol/images.ts';
 import { applyOps } from '../protocol/mirror.ts';
 
 /** A message sent from this client: `sending` until the server admits it, then `queued` until it shows in the feed. */

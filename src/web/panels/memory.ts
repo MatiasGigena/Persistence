@@ -5,7 +5,7 @@ import { lineLabel, memoryHeader } from '../format.ts';
 import { parseMessage, parseZoom } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
 import { RequestError } from '../../protocol/request-error.ts';
-import type { ViewLine } from '../../protocol/messages.ts';
+import type { ViewLine } from '../../protocol/session.ts';
 import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 
