@@ -6,7 +6,8 @@ import { announce } from './copy.ts';
 import { guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { activeAgents } from '../ui/text.ts';
 import { errorMessage } from '../protocol/util.ts';
-import { Link, RequestError } from './link.ts';
+import { Link } from './link.ts';
+import { RequestError } from '../protocol/util.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
 import { agentsView } from './panels/agents.ts';
@@ -348,7 +349,7 @@ function start(): void {
     link.request('send', { text, requestId: id, ...steer ? { steer } : {}, ...images.length ? { images } : {} }).then(
       () => { outbox.delete(id); store.admitPending(id); drawSend(); },
       (error: unknown) => {
-        if (error instanceof RequestError && error.code === 'lost') return;
+        if (error instanceof RequestError && error.code === 'disconnected') return;
         outbox.delete(id);
         drawSend();
         store.dropPending(id);
@@ -662,7 +663,10 @@ function start(): void {
   async function act(effect: Effect): Promise<void> {
     switch (effect.t) {
       case 'resync':
-        await link.request('feed.resync', { feed: effect.feed }).catch(() => undefined);
+        await link.request('feed.resync', { feed: effect.feed }).catch((error: unknown) => {
+          // A dropped link gets fresh snapshots on reconnect; any other refusal must not leave the feed frozen.
+          if (!(error instanceof RequestError && error.code === 'disconnected')) store.resyncFailed(effect.feed, errorMessage(error));
+        });
         return;
       case 'reload':
         await reloadForFiles(`assets:${store.welcome?.assets ?? ''}`);

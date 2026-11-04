@@ -4,7 +4,7 @@ import { el } from '../chat-view.ts';
 import { lineLabel, memoryHeader } from '../format.ts';
 import { parseMessage, parseZoom } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
-import { RequestError } from '../link.ts';
+import { RequestError } from '../../protocol/util.ts';
 import type { ViewLine } from '../../protocol/messages.ts';
 import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
@@ -72,7 +72,7 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
           },
           // A failed reload keeps the lines shown; with none yet, its error shows instead.
           (error: unknown) => {
-            if (error instanceof RequestError && error.code === 'lost') retry = true;
+            if (error instanceof RequestError && error.code === 'disconnected') retry = true;
             if (loaded) same = true; else state.textContent = errorMessage(error);
           },
         ).finally(() => {
@@ -143,7 +143,7 @@ function messageView(ctx: PanelContext, line: ViewLine): View {
             fadeIn(text);
           },
           (error: unknown) => {
-            retry = error instanceof RequestError && error.code === 'lost';
+            retry = error instanceof RequestError && error.code === 'disconnected';
             text.replaceChildren();
             note.textContent = errorMessage(error);
             note.classList.add('is-error');

@@ -180,7 +180,7 @@ export interface UiSession {
 }
 
 /** The state of an attached TUI's link to the server: up, down and retrying, or closed for good. */
-export type LinkState = 'open' | 'reconnecting' | 'closed';
+export type LinkState = 'ready' | 'reconnecting' | 'closed';
 
 /** An attached TUI's link to the server (src/client/), as the TUI sees it. */
 export interface AttachedLink {

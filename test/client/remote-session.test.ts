@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { RemoteError, RemoteSession } from '../../src/client/remote-session.ts';
+import { RemoteSession } from '../../src/client/remote-session.ts';
+import { RequestError } from '../../src/protocol/util.ts';
 import type { RemoteSessionOptions } from '../../src/client/remote-session.ts';
 import { ClientLink } from '../../src/client/unix-link.ts';
 import { CloseCode, ROOT_FEED } from '../../src/protocol/messages.ts';
@@ -62,7 +63,7 @@ test('the first snapshot fills the chat, then ops keep it equal to the server', 
   const { server, session } = await attach();
   assert.deepEqual(session.chat.items(), ITEMS);
   assert.equal(session.welcome()?.cwd, '/fake/cwd');
-  assert.equal(session.attached.state(), 'open');
+  assert.equal(session.attached.state(), 'ready');
   let changes = 0;
   session.chat.subscribe(() => changes++);
   server.setItems([...ITEMS, { kind: 'assistant', id: 'live.0', text: 'Th', streaming: true }]);
@@ -119,7 +120,7 @@ test('requests map to ops, and failures reject with the server\'s readable messa
   const { server, session } = await attach({ agents: { Bob: [] } }, { requestTimeoutMs: 100 });
   assert.deepEqual(await session.memoryView(), [{ id: 0, n: 1, text: 'hello' }, { id: 1, n: 1, text: 'world' }]);
   assert.equal(await session.zoom(1, 1), 'zoomed world');
-  await assert.rejects(session.zoom(9, 9), (error: unknown) => error instanceof RemoteError && error.code === 'not_found'
+  await assert.rejects(session.zoom(9, 9), (error: unknown) => error instanceof RequestError && error.code === 'not_found'
     && /No line 9\+9/.test(error.message));
   assert.equal((await session.models()).length, 3);
   await session.setModel('faux', 'model-2');
@@ -166,9 +167,9 @@ test('a reconnect gets a fresh snapshot, re-opens agent feeds under their new id
   session.attached.onChange(() => states.push(session.attached.state()));
   server.restart();
   server.setItems([...ITEMS, { kind: 'user', id: 'e3', text: 'while away' }]);
-  await until(() => wire.peers.length === 2 && session.attached.state() === 'open', 'the reconnect');
+  await until(() => wire.peers.length === 2 && session.attached.state() === 'ready', 'the reconnect');
   assert.deepEqual(states.slice(0, 1), ['reconnecting']);
-  assert.equal(states.at(-1), 'open');
+  assert.equal(states.at(-1), 'ready');
   assert.deepEqual(session.chat.items(), server.rootItems(), 'a fresh snapshot');
   assert.deepEqual(notices.at(-1), ['The server restarted.', 'info']);
   // The server's record, not the client's: `requests` counts what the client sent, and the peer handles it a
@@ -260,7 +261,7 @@ test('archive and restore go to the real hub as agents.archive and agents.restor
   const realSend = peer.send.bind(peer);
   peer.send = text => { realSend(text); const message = peer.got.at(-1); if (message) for (const listener of heard) listener(message); };
   const session = new RemoteSession({
-    state: () => 'open', closedBecause: () => undefined, onChange: () => () => {},
+    state: () => 'ready', closedBecause: () => undefined, onChange: () => () => {},
     onMessage: listener => { heard.add(listener); return () => heard.delete(listener); },
     send: message => { sent.push(message.t === 'req' ? message.op : message.t); peer.deliver(message); return true; },
     close: () => {},

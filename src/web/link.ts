@@ -2,9 +2,10 @@
 // (docs/protocol.md "Reconnect and resume"). No DOM types: the socket comes from a `connect` function, so tests drive
 // the state machine with a fake socket and Node's mock timers.
 import { CloseCode, LIMITS } from '../protocol/messages.ts';
-import type { ErrorCode, Op, Params, ResponseOf, Result, ServerMessage } from '../protocol/messages.ts';
+import type { Op, Params, ResponseOf, Result, ServerMessage } from '../protocol/messages.ts';
 import { PROTOCOL } from '../protocol/version.ts';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
+import { RequestError } from '../protocol/util.ts';
 
 /** What the link needs of a socket. */
 export interface SocketHandle {
@@ -37,13 +38,6 @@ export type LinkState = 'connecting' | 'ready' | 'reconnecting' | 'offline' | 'c
 export type ClosedBy = 'version' | 'unauthorized' | 'unpaired' | 'forbidden' | 'stopped';
 
 /** A failed request: the server's error code, or `lost` when the link dropped first. */
-export class RequestError extends Error {
-  readonly code: ErrorCode | 'lost';
-  constructor(code: ErrorCode | 'lost', message: string) {
-    super(message);
-    this.code = code;
-  }
-}
 
 export interface LinkOptions {
   readonly connect: Connect;
@@ -139,7 +133,7 @@ export class Link {
   /** Sends a request; resolves with its result, rejects with a RequestError. Only while `ready`. */
   request<O extends Op>(op: O, params: Params<O>): Promise<Result<O>> {
     const socket = this.socket;
-    if (this.current !== 'ready' || !socket) return Promise.reject(new RequestError('lost', 'Not connected.'));
+    if (this.current !== 'ready' || !socket) return Promise.reject(new RequestError('disconnected', 'Not connected.'));
     const id = this.nextId++;
     return new Promise<Result<O>>((resolve, reject) => {
       this.waiters.set(id, {
@@ -249,7 +243,7 @@ export class Link {
     this.socket = undefined;
     const waiters = [...this.waiters.values()];
     this.waiters.clear();
-    for (const waiter of waiters) waiter.settle(new RequestError('lost', 'Connection lost.'));
+    for (const waiter of waiters) waiter.settle(new RequestError('disconnected', 'Connection lost.'));
   }
 
   private finish(why: ClosedBy): void {

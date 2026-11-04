@@ -193,6 +193,18 @@ export class Store {
     return effects;
   }
 
+  /**
+   * A `feed.resync` the server refused: the feed takes items again (the next gap asks anew) instead of waiting for a
+   * snapshot that is not coming, and the failure is shown.
+   */
+  resyncFailed(feed: string, why: string): void {
+    const unfreeze = (mirror: Mirror): Mirror => ({ ...mirror, waiting: false });
+    if (feed === ROOT_FEED) this.root = unfreeze(this.root);
+    const agent = this.agents.get(feed);
+    if (agent) this.agents.set(feed, { ...agent, mirror: unfreeze(agent.mirror) });
+    this.notice(`Could not resync the chat: ${why}`, 'error');
+  }
+
   /** Shows text in the root chat after its current last item, as the terminal's local notices. */
   notice(text: string, level: NoticeLevel = 'info'): void {
     const item = { kind: 'notice', id: `web:${++this.noticeCount}`, text, level } as const;

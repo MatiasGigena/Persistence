@@ -58,7 +58,7 @@ test('a send is shown pending, then once in the feed, even when resent after a d
   await flush();
   assert.equal(store.rootView().at(-1)?.kind, 'pending');
   drop();
-  await assert.rejects(first, { code: 'lost' });
+  await assert.rejects(first, { code: 'disconnected' });
   server.release('send');
   t.mock.timers.tick(500);
   await flush();

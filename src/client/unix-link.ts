@@ -81,7 +81,7 @@ export function unixConnector(path: string): Connector {
  * while it retries after a drop, `closed` for good (a final `bye`, a foreign socket, or `close()`). A welcomed
  * connection's `bye` 1000 is final unless `reconnectNormal` is set; 4000 and 4001 are always final.
  */
-export type LinkStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
+export type LinkStatus = 'connecting' | 'ready' | 'reconnecting' | 'closed';
 
 export interface LinkOptions {
   readonly connect: Connector;
@@ -177,7 +177,7 @@ export class ClientLink {
   /** Sends on the open connection; false when there is none. */
   send(message: Outgoing): boolean {
     const channel = this.current?.welcomed ? this.current.channel : undefined;
-    if (!channel || this.status !== 'open') return false;
+    if (!channel || this.status !== 'ready') return false;
     channel.send(JSON.stringify(message));
     return true;
   }
@@ -248,7 +248,7 @@ export class ClientLink {
       connection.welcomed = true;
       this.wait = this.options.retry?.first ?? 250;
       this.startTicker(connection);
-      this.setStatus('open');
+      this.setStatus('ready');
       connection.hello.resolve(message);
     }
     for (const listener of [...this.messageListeners]) listener(message);

@@ -6,7 +6,7 @@ import { el } from '../chat-view.ts';
 import { memoryHeader, sortModels } from '../format.ts';
 import { activeAgents, modelRef } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
-import { RequestError } from '../link.ts';
+import { RequestError } from '../../protocol/util.ts';
 import { disablePush, enablePush, pushState } from '../push.ts';
 import type { PushState } from '../push.ts';
 import type { Link } from '../link.ts';
@@ -251,7 +251,7 @@ export function chatSettingsView(ctx: PanelContext): View {
       let shownModel = '';
       /** A list was asked for while the link was down: asked again once it is back. */
       let retry = false;
-      const lost = (error: unknown): void => { if (error instanceof RequestError && error.code === 'lost') retry = true; };
+      const lost = (error: unknown): void => { if (error instanceof RequestError && error.code === 'disconnected') retry = true; };
       const loadModels = (): void => {
         const current = ctx.store.status?.model ?? '';
         shownModel = current;

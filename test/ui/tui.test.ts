@@ -627,7 +627,7 @@ test('Ctrl+D and Ctrl+C twice ask first only while Pi or an agent works', async 
 
 /** An attached TUI's link to a server, which the test moves between states. */
 class FakeLink implements AttachedLink {
-  private current: LinkState = 'open';
+  private current: LinkState = 'ready';
   private readonly listeners = new Set<() => void>();
   state(): LinkState { return this.current; }
   onChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -672,7 +672,7 @@ test('attached: the footer says reconnecting… while the link is down, and a cl
   const footer = terminal.screen().find(row => row.includes('tools off'));
   assert.match(footer ?? '', /reconnecting…/, 'kept on a phone-width footer');
   terminal.output = '';
-  link.set('open');
+  link.set('ready');
   await delay(30);
   assert.doesNotMatch(terminal.screen().find(row => row.includes('tools off')) ?? '', /reconnecting/);
   link.set('closed');
