@@ -293,6 +293,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |
 | `src/protocol/images.ts` | Images on the wire and in the chat: accepted types, magic bytes, size caps |
 | `src/protocol/version.ts` | `PROTOCOL` |
+| `src/protocol/lines.ts` | `lineSplitter`: the NDJSON framing of the Unix socket, the SSH bridge and the admin commands |
 | `src/protocol/session.ts` | The session contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); type-only |
 | `src/protocol/errors.ts` | `NotFound` and `Unavailable`: the session's refusals that the server reports as `not_found` and `unavailable` |
 | `src/protocol/util.ts` | `isRecord`, `errorMessage`, `errorCode`, `cutBytes`, `ShapeError` and the narrowers that throw it (`obj`, `str`, `int`, `list`…): the one copy of each, shared by Node and the browser |
@@ -310,7 +311,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/server/machines.ts` | `MachineBroker`: per-connector registration/grant, exact machine/cwd dispatch, reconnect waiting, results and cancellation |
 | `src/server/hub.ts` | `Hub` (the `PeerHub`): connections, the op handlers, agent feeds by refcount, notices, the tools policy and idle tools-off, push triggers and their suppression |
 | `src/server/connection.ts` | `Connection`: one peer's handshake, requests (peer checks, in-flight limit), feed and status sync (`diffItems`, ≤50 ms, gated on `buffered()`, status ≤4/s), slow-peer and silence closes, visibility |
-| `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing; `lineSplitter` |
+| `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing |
 | `src/client/admin.ts` | The CLI's admin client: `adminRequest` over the socket (owner checked), `backupOverSocket`, `pairCommand`, `devicesCommand`, `agentsCommand` |
 | `src/server/backup.ts` | `backup` (`VACUUM INTO` and the `.unii` (browser profiles left out) and settings copies in one step, then `prune`), `backupOffline`, `stamp` |
 | `src/server/store.ts` | `writeJson`, `readJson`, and narrowing helpers for `serve/`'s JSON files (mode 600, atomic) |

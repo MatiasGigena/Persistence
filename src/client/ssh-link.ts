@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { isIP } from 'node:net';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
+import { lineSplitter } from '../protocol/lines.ts';
 import type { Channel, Connector } from './unix-link.ts';
 
 export interface SshTarget {
@@ -90,7 +91,7 @@ export function sshConnector(target: SshTarget, options: SshOptions = {}): Conne
     let child: ChildProcessWithoutNullStreams;
     try { child = (options.spawn ?? spawn)('ssh', [...args], { stdio: ['pipe', 'pipe', 'pipe'], shell: false }); }
     catch (error) { reject(error); return; }
-    let settled = false, ended = false, welcomed = false, receivedBye = false, partial = '', stderr = '';
+    let settled = false, ended = false, welcomed = false, receivedBye = false, stderr = '';
     let startup: NodeJS.Timeout | undefined, killer: NodeJS.Timeout | undefined;
     const disposePipes = (): void => { child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); };
     const finish = (reason?: string): void => {
@@ -121,29 +122,18 @@ export function sshConnector(target: SshTarget, options: SshOptions = {}): Conne
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk.slice(0, STDERR_MAX - stderr.length); });
-    child.stdout.on('data', (chunk: string) => {
+    const split = lineSplitter(SSH_SERVER_LINE_MAX, line => {
       if (ended) return;
-      let at = 0;
-      while (at < chunk.length) {
-        const newline = chunk.indexOf('\n', at), end = newline < 0 ? chunk.length : newline;
-        if (partial.length + end - at > SSH_SERVER_LINE_MAX) { stop('SSH server message exceeds the line limit'); return; }
-        partial += chunk.slice(at, end);
-        if (newline < 0) return;
-        const line = partial.replace(/\r$/, '');
-        partial = '';
-        at = newline + 1;
-        if (!line.trim()) continue;
-        if (!welcomed) {
-          const message = parseServerMessage(line);
-          if (!isParseError(message)) {
-            if (message.t === 'welcome') { welcomed = true; clearTimeout(startup); }
-            if (message.t === 'bye') receivedBye = true;
-          }
+      if (!welcomed) {
+        const message = parseServerMessage(line);
+        if (!isParseError(message)) {
+          if (message.t === 'welcome') { welcomed = true; clearTimeout(startup); }
+          if (message.t === 'bye') receivedBye = true;
         }
-        events.message(line);
-        if (ended) return;
       }
-    });
+      events.message(line);
+    }, () => stop('SSH server message exceeds the line limit'));
+    child.stdout.on('data', (chunk: string) => { if (!ended) split(chunk); });
     child.stdin.on('error', error => stop(failure(error.message)));
     child.stdout.on('error', error => stop(failure(error.message)));
     child.stderr.on('error', () => undefined);

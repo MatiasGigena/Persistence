@@ -13,7 +13,7 @@ import { applyOps } from '../../src/protocol/mirror.ts';
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import { agentLine } from '../../src/client/admin.ts';
-import { lineSplitter } from '../../src/server/transport-unix.ts';
+import { lineSplitter } from '../../src/protocol/lines.ts';
 import { serve } from '../../src/server/serve.ts';
 import { Devices } from '../../src/server/auth.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
@@ -57,6 +57,7 @@ test('serve end to end: a socket client sends, watches the reply stream in, and 
   const socket = connect(socketPath);
   const got: ServerMessage[] = [];
   let mirror: ChatItem[] = [], resyncs = 0;
+  socket.setEncoding('utf8');
   socket.on('data', lineSplitter(Number.MAX_SAFE_INTEGER, text => {
     const message = parseServerMessage(text);
     if (isParseError(message)) throw new Error(message.message);
@@ -67,7 +68,7 @@ test('serve end to end: a socket client sends, watches the reply stream in, and 
       if (next === 'resync') resyncs++;
       else mirror = next;
     }
-  }, () => {}));
+  }));
   const send = (value: object): void => { socket.write(`${JSON.stringify(value)}\n`); };
   send({ t: 'hello', protocol: PROTOCOL, client: 'serve.test', visible: true });
   await until(() => got.some(m => m.t === 'ready'), () => JSON.stringify(got));

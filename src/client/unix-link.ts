@@ -6,6 +6,7 @@ import { createConnection } from 'node:net';
 import { CloseCode } from '../protocol/messages.ts';
 import type { Bye, ClientMessage, Op, RequestOf, ServerMessage, Welcome } from '../protocol/messages.ts';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
+import { lineSplitter } from '../protocol/lines.ts';
 import { PROTOCOL } from '../protocol/version.ts';
 import { errorMessage } from '../protocol/util.ts';
 
@@ -54,15 +55,7 @@ export function unixConnector(path: string): Connector {
       socket.once('error', reject);
     });
     socket.setEncoding('utf8');
-    let buffer = '';
-    socket.on('data', (chunk: string) => {
-      buffer += chunk;
-      for (let newline = buffer.indexOf('\n'); newline >= 0; newline = buffer.indexOf('\n')) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        if (line.trim()) events.message(line);
-      }
-    });
+    socket.on('data', lineSplitter(Number.MAX_SAFE_INTEGER, line => events.message(line)));
     // A reset or a write after the server left: 'close' follows, and that is the end.
     socket.on('error', () => undefined);
     socket.once('close', () => events.end());

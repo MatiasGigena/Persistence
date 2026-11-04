@@ -13,7 +13,8 @@ import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import { adminRequest, NoServer } from '../../src/client/admin.ts';
 import { Hub } from '../../src/server/hub.ts';
-import { lineSplitter, listenUnix } from '../../src/server/transport-unix.ts';
+import { listenUnix } from '../../src/server/transport-unix.ts';
+import { lineSplitter } from '../../src/protocol/lines.ts';
 import { fakeSession } from '../fixtures/server-fakes.ts';
 
 /** A test client: the lines it got, parsed, and a way to wait for one. */
@@ -22,12 +23,13 @@ function client(path: string) {
   const got: ServerMessage[] = [];
   const waiters: (() => void)[] = [];
   let ended = false;
+  socket.setEncoding('utf8');
   socket.on('data', lineSplitter(Number.MAX_SAFE_INTEGER, text => {
     const message = parseServerMessage(text);
     if (isParseError(message)) throw new Error(message.message);
     got.push(message);
     for (const wake of waiters.splice(0)) wake();
-  }, () => {}));
+  }));
   socket.on('end', () => { ended = true; for (const wake of waiters.splice(0)) wake(); });
   const until = async (done: () => boolean): Promise<void> => {
     while (!done()) {
@@ -52,19 +54,6 @@ async function served(t: { after: (fn: () => Promise<void>) => void }) {
   t.after(() => rm(folder, { recursive: true, force: true }));
   return { folder, path, hub };
 }
-
-test('lineSplitter splits lines across chunks and skips an oversized one', () => {
-  const lines: string[] = [];
-  let tooLong = 0;
-  const split = lineSplitter(5, line => lines.push(line), () => tooLong++);
-  for (const chunk of ['ab', 'c\nde', 'f\r\n\n', '123456', '789\nok\n', 'x'.repeat(9), '\n']) split(Buffer.from(chunk));
-  // A multi-byte character split across chunks is decoded whole.
-  const euro = Buffer.from('€\n');
-  split(euro.subarray(0, 1));
-  split(euro.subarray(1));
-  assert.deepEqual(lines, ['abc', 'def', 'ok', '€']);
-  assert.equal(tooLong, 2);
-});
 
 test('NDJSON over a mode 600 socket: handshake, requests, an oversized line, bye on close', async t => {
   const { path, hub } = await served(t);
