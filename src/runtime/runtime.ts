@@ -33,7 +33,7 @@ import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { CredentialStatus, CatalogModels } from './models.ts';
 import { createMachineRouting } from '../machines/routing.ts';
 import type { RoutingDispatcher } from '../machines/routing.ts';
-import type { SendOptions } from '../ui/types.ts';
+import type { SendOptions } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import { userInput } from './input.ts';
 import { errorMessage } from '../protocol/util.ts';

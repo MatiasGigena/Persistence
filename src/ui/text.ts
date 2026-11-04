@@ -3,7 +3,7 @@
 // the browser at /ui/text.ts (ADR 0020). Rendering (color, width, markup) stays with each front end.
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
 import { isRecord } from '../protocol/util.ts';
-import type { SessionStatus, ViewLine } from './types.ts';
+import type { SessionStatus, ViewLine } from '../protocol/session.ts';
 
 // Control characters other than newline and tab, and terminal escapes, never reach the summary.
 const CONTROL = /\u001b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f]/g;

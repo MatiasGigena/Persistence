@@ -1,9 +1,9 @@
-// The contract between the host's state (src/host/session.ts) and its clients: the terminal UI (src/ui/tui/), and
-// over the wire protocol (src/protocol/) the attached TUI and the web app. The session knows pi-durable, memory and
-// agents; clients know only these types. It imports only types from src/protocol/ (images, machine targets), which
-// has no Node or DOM imports either, so the browser can type-check against it.
-import type { ChatImage } from '../protocol/images.ts';
-import type { MachineTarget } from '../protocol/machines.ts';
+// The session contract: what the host's state (src/host/session.ts) offers its clients, the terminal UI (src/ui/tui/)
+// and, over the wire protocol, the attached TUI and the web app. The session knows pi-durable, memory and agents;
+// clients know only these types. Type-only, like the rest of src/protocol/ free of Node and DOM imports, so the browser
+// type-checks against it; the wire messages (messages.ts) are built from these items.
+import type { ChatImage } from './images.ts';
+import type { MachineTarget } from './machines.ts';
 
 /** One block of a conversation, in order. Streaming blocks are updated in place by `id`. */
 export type ChatItem =

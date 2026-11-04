@@ -21,7 +21,8 @@ import { freshAlerts, Store } from './store.ts';
 import { AttachmentTray } from './tray.ts';
 import type { Effect } from './store.ts';
 import { IMAGE_LIMITS } from '../protocol/images.ts';
-import type { ChatImage, NoticeLevel } from '../protocol/messages.ts';
+import type { NoticeLevel } from '../protocol/session.ts';
+import type { ChatImage } from '../protocol/images.ts';
 
 const CLIENT = 'web';
 const DRAFT_KEY = 'pd.draft';

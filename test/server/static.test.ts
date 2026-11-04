@@ -33,7 +33,6 @@ async function fixture(t: TestContext): Promise<StaticRoots & { folder: string }
     writeFile(join(roots.protocol, 'version.ts'), 'export type X = number;\nexport const PROTOCOL: number = 1;\n'),
     writeFile(join(roots.ui, 'types.ts'), 'export type Y = string;\n'),
     writeFile(join(roots.ui, 'text.ts'), 'export const z = 1 as number;\n'),
-    writeFile(join(roots.ui, 'session.ts'), 'export const host = 1;\n'),
     writeFile(join(roots.marked, 'marked.esm.js'), 'export const marked = 1;\n'),
     writeFile(join(roots.marked, 'marked.umd.js'), 'nope'),
     writeFile(join(folder, 'secret.ts'), 'export const secret = 1;\n'),
@@ -72,9 +71,8 @@ test('TypeScript is type-stripped to JavaScript; the shell and other files carry
   assert.match(main.body, /export const x = \(a\s*\)\s*=> a;/);
   assert.match((await get('/panels/a.ts')).body, /export const a = 1\s*;/);
   assert.match((await get('/protocol/version.ts')).body, /export const PROTOCOL\s*= 1;/);
-  assert.equal((await get('/ui/types.ts')).status, 200);
   assert.match((await get('/ui/text.ts')).body, /export const z = 1\s*;/);
-  assert.equal((await get('/ui/session.ts')).status, 404, 'only the listed ui files are served');
+  assert.equal((await get('/ui/types.ts')).status, 404, 'only the listed ui files are served');
   assert.equal((await get('/vendor/marked.esm.js')).headers['content-type'], 'text/javascript; charset=utf-8');
   assert.equal((await get('/styles.css')).headers['content-type'], 'text/css; charset=utf-8');
 

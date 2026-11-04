@@ -67,7 +67,7 @@ agents, and each agent is another conversation in the same database.
   `/agents`, `/mem`, `/model` and `/effort` overlays (`panels/model.ts` is the model picker, `panels/effort.ts` the
   reasoning effort picker;
 `panels/frame.ts` also has the one-key confirmation `/tools on` and archiving in `/agents` ask). It knows the
-host only through `src/ui/types.ts`. The wording it shares with the web app (tool summaries, archive prompts,
+host only through the session contract, `src/protocol/session.ts`. The wording it shares with the web app (tool summaries, archive prompts,
 `/status`, zoom parsing) is in `src/ui/text.ts`, which both import.
   Below 60 columns (`NARROW` in `theme.ts`) every part switches to a compact layout
   for phones (ADR 0014).
@@ -270,9 +270,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/memory/summarizer.ts` | Cheap compaction model choice and the pi-ai summarizer |
 | `src/memory/extension.ts` | The `uniichat` extension: `beforeRequest` view, logging hooks, `zoom` and `date` tools |
 | `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates |
-| `src/ui/types.ts` | The contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); imports only protocol types |
 | `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
-| `src/ui/errors.ts` | `NotFound` and `Unavailable`: the session's refusals that the server reports as `not_found` and `unavailable` |
 | `src/ui/tui/app.ts`, `chat.ts`, `footer.ts`, `theme.ts` | The terminal chat: pi-tui layout and editor, the chat blocks, the one-line status, the palette |
 | `src/ui/tui/panels/*` | The `/agents`, `/mem`, `/model` and `/effort` overlays and their shared frame, lists and confirmation box |
 | `src/providers/claude-cli.ts` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
@@ -295,6 +293,8 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |
 | `src/protocol/images.ts` | Images on the wire and in the chat: accepted types, magic bytes, size caps |
 | `src/protocol/version.ts` | `PROTOCOL` |
+| `src/protocol/session.ts` | The session contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); type-only |
+| `src/protocol/errors.ts` | `NotFound` and `Unavailable`: the session's refusals that the server reports as `not_found` and `unavailable` |
 | `src/protocol/util.ts` | `isRecord`, `errorMessage`, `errorCode`, `cutBytes`, `ShapeError` and the narrowers that throw it (`obj`, `str`, `int`, `list`…): the one copy of each, shared by Node and the browser |
 | `src/protocol/request-error.ts` | `RequestError`: a client request's failure (the server's code, `disconnected` or `timeout`), shared by the Node clients and the web app |
 | `src/client/attach.ts` | `probes`, `connect` (the probe), `attachChat` (the CLI's attach routing), `runAttached` (the TUI on a server, "Detached; the server keeps working."), `serverAnswers` |

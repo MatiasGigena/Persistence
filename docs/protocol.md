@@ -1,7 +1,7 @@
 # Wire protocol v4
 
 The protocol between `pi-durable serve` and its clients: the terminal UI over a Unix socket or SSH stdio bridge,
-and the web app over a WebSocket. It carries one `UiSession` ([src/ui/types.ts](../src/ui/types.ts)) across a link: the client
+and the web app over a WebSocket. It carries one `UiSession` ([src/protocol/session.ts](../src/protocol/session.ts)) across a link: the client
 mirrors the chat items and the status, and calls the session's methods as requests.
 
 This document is the reference. [src/protocol/](../src/protocol/) holds its types, constants, parser and sync code,
@@ -121,7 +121,7 @@ stops them; the checks hold only together. The server host is assumed to have on
 - The web app calls `/api/me` before opening `/ws`: a browser cannot read why an upgrade failed, and the app must
   tell "pair this device" from "offline".
 - **App files** ([src/server/static.ts](../src/server/static.ts), ADR [0020](decisions/0020-web-client-without-build.md)):
-  `src/web/` at `/` (`/` is `index.html`), `src/protocol/` at `/protocol/`, `src/ui/types.ts` and `src/ui/text.ts` under `/ui/` (no other file of
+  `src/web/` at `/` (`/` is `index.html`), `src/protocol/` at `/protocol/`, `src/ui/text.ts` under `/ui/` (no other file of
   `src/ui/`), and
   marked's ESM build at `/vendor/marked.esm.js` (with its source map). So `src/web/x.ts` imports
   `../protocol/messages.ts` as in the source tree, and `marked` through an import map in `index.html`. Served
@@ -173,7 +173,7 @@ stops them; the checks hold only together. The server host is assumed to have on
 | `bye` | `code: number`, `reason: string` | The last message before the server ends the connection; see [Close codes](#close-codes). |
 
 `SessionStatus`, `AgentStatus`, `MemoryStats`, `ChatItem`, `ViewLine` and `ModelChoice` are the types of
-[src/ui/types.ts](../src/ui/types.ts). `user` and `tool` items may carry `images: {mimeType, data}[]`; an image larger
+[src/protocol/session.ts](../src/protocol/session.ts). `user` and `tool` items may carry `images: {mimeType, data}[]`; an image larger
 than `IMAGE_LIMITS.wireBytes` goes with empty `data`, and clients show a placeholder. JSON drops `undefined`: a missing `status.memory` or `memory.lastError`
 reads as `undefined`, and `memory` may also be `null`. `status.agents` lists archived agents too (ADR 0034), each
 with `archivedAt` (milliseconds since the epoch; a sub agent of an archived main agent carries its main's): clients

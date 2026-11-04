@@ -1,7 +1,7 @@
 // Renders a ChatFeed: one block per item, kept by item id, so an update re-renders only that block.
 import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
-import type { ChatFeed, ChatItem } from '../types.ts';
+import type { ChatFeed, ChatItem } from '../../protocol/session.ts';
 import { NARROW } from './theme.ts';
 import type { Theme } from './theme.ts';
 import { toolSummary } from '../text.ts';

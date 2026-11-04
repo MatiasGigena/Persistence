@@ -7,7 +7,7 @@ import type {
 } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { userInput } from '../runtime/input.ts';
-import type { SendOptions } from '../ui/types.ts';
+import type { SendOptions } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 
 /** The dispatcher must wait for this destination to reconnect, never execute on another machine. */

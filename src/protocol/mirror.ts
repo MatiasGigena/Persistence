@@ -1,6 +1,7 @@
 // The client's side of feed sync: a feed's items rebuilt from `snapshot` and `items` messages. Shared by Node (the
 // attached TUI) and the browser.
-import type { AppendField, ChatItem, ItemOp } from './messages.ts';
+import type { AppendField, ItemOp } from './messages.ts';
+import type { ChatItem } from './session.ts';
 
 /** `item` with `text` appended to `field`, or undefined when the field is not the item's or not `at` long. */
 function appended(item: ChatItem, field: AppendField, at: number, text: string): ChatItem | undefined {

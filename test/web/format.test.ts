@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { SessionStatus } from '../../src/protocol/messages.ts';
+import type { SessionStatus } from '../../src/protocol/session.ts';
 import { base64UrlBytes, guessDeviceName, formatCodeInput, pairErrorText, sortModels, statusParts } from '../../src/web/format.ts';
 import { footerText } from '../../src/ui/tui/footer.ts';
 import { theme } from '../../src/ui/tui/theme.ts';

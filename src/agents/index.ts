@@ -13,8 +13,8 @@ import {
   AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, rosterEntry, type StandingAgent,
 } from './roster.ts';
 import { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
-import { NotFound } from '../ui/errors.ts';
-import type { ArchiveTarget } from '../ui/types.ts';
+import { NotFound } from '../protocol/errors.ts';
+import type { ArchiveTarget } from '../protocol/session.ts';
 import { isRecord } from '../protocol/util.ts';
 
 export { DEFAULT_ROSTER } from './roster.ts';

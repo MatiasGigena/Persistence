@@ -1,5 +1,5 @@
 import { NOTICE_LEVELS } from './messages.ts';
-import type { NoticeLevel } from './messages.ts';
+import type { NoticeLevel } from './session.ts';
 import { isRecord, ShapeError } from './util.ts';
 
 /** Where a request's tools run: a machine (`server` is the host itself) and a folder on it, with a label to show. */

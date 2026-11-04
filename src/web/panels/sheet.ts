@@ -7,7 +7,7 @@
 // right, a level gone back to from the left.
 import { el } from '../chat-view.ts';
 import type { Link } from '../link.ts';
-import type { NoticeLevel } from '../../protocol/messages.ts';
+import type { NoticeLevel } from '../../protocol/session.ts';
 import type { Store } from '../store.ts';
 
 /** One level of the sheet. `render` fills its container once; `dispose` runs when the level leaves the stack. */

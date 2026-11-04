@@ -2,7 +2,7 @@
 // filters. Models without credentials stay listed, dim, and answer Enter with their note instead.
 import type { TUI } from '@earendil-works/pi-tui';
 import { NARROW } from '../theme.ts';
-import type { ModelChoice, UiSession } from '../../types.ts';
+import type { ModelChoice, UiSession } from '../../../protocol/session.ts';
 import { clean, ListView, openPanel, PanelFrame } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
 import { errorMessage } from '../../../protocol/util.ts';

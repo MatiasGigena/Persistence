@@ -1,4 +1,4 @@
-// The host's state as the UI sees it (src/ui/types.ts): Pi's chat, status, memory view, and agents.
+// The host's state as the UI sees it (src/protocol/session.ts): Pi's chat, status, memory view, and agents.
 import { InboxDoc } from '@earendil-works/pi-durable';
 import type { AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
@@ -11,8 +11,8 @@ import { start } from '../memory/view.ts';
 import { imagesProblem, modelChooser, thinkingLevels } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
-import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
-import { NotFound, Unavailable } from '../ui/errors.ts';
+import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../protocol/session.ts';
+import { NotFound, Unavailable } from '../protocol/errors.ts';
 
 /**
  * The launch choices the status line falls back on until Pi's stored agent says otherwise; `setModel()` saves to

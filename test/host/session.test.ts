@@ -15,7 +15,7 @@ import { openInstance } from '../../src/runtime/runtime.ts';
 import type { Instance } from '../../src/runtime/runtime.ts';
 import { createUiSession } from '../../src/host/session.ts';
 import type { UiSessionHandle } from '../../src/host/session.ts';
-import type { ChatFeed, ChatItem } from '../../src/ui/types.ts';
+import type { ChatFeed, ChatItem } from '../../src/protocol/session.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 import type { OfflineModels } from '../fixtures/faux-model.ts';
 

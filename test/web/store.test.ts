@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { ChatItem, ServerMessage, SessionStatus, Welcome } from '../../src/protocol/messages.ts';
+import type { ServerMessage, Welcome } from '../../src/protocol/messages.ts';
+import type { ChatItem, SessionStatus } from '../../src/protocol/session.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import { freshAlerts, Store, turnEnds } from '../../src/web/store.ts';
 import type { ViewItem } from '../../src/web/store.ts';

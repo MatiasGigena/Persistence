@@ -2,12 +2,10 @@
 // its clients (src/client/, src/web/).
 // docs/protocol.md is the prose spec; this file is its types and constants. Shared by Node and the browser, so it
 // holds plain types and constants only: no Node or DOM imports, and no runtime imports at all.
-import type { ArchiveTarget, ChatItem, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
+import type { ArchiveTarget, ChatItem, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from './session.ts';
 import type { ChatImage } from './images.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult, MachineTarget } from './machines.ts';
 
-export type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../ui/types.ts';
-export type { ChatImage } from './images.ts';
 
 /** Pi's feed, open on every connection from `ready` on. Agent feeds get their id from `feed.open`. */
 export const ROOT_FEED = 'root';

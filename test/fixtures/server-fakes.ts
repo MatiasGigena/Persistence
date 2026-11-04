@@ -4,8 +4,8 @@ import type { CloseCode, Device, Peer, PushSubscriptionJson, ServerMessage } fro
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { PeerLink, PushNotifier } from '../../src/server/link.ts';
-import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
-import { NotFound } from '../../src/ui/errors.ts';
+import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
+import { NotFound } from '../../src/protocol/errors.ts';
 
 export class FakeFeed implements ChatFeed {
   list: ChatItem[];

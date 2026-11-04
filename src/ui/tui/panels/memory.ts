@@ -4,7 +4,7 @@
 // and the top level reloads whenever the memory's status changes while the panel is open.
 import type { TUI } from '@earendil-works/pi-tui';
 import { NARROW } from '../theme.ts';
-import type { MemoryStats, UiSession, ViewLine } from '../../types.ts';
+import type { MemoryStats, UiSession, ViewLine } from '../../../protocol/session.ts';
 import { clean, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
 import { errorMessage } from '../../../protocol/util.ts';

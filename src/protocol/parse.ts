@@ -2,10 +2,9 @@
 // are dropped, so a parsed message holds exactly its type's fields. Shared by Node and the browser.
 import { ENABLE_TOOLS, ERROR_CODES, LIMITS, NOTICE_LEVELS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
-import type {
-  AgentStatus, AppendField, ArchiveTarget, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, Op,
-  PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, SessionStatus, ToolsPolicy, ViewLine,
-} from './messages.ts';
+import type { AppendField, ClientMessage, Device, ErrorCode, ItemOp, Op, PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, ToolsPolicy } from './messages.ts';
+import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, SessionStatus, ViewLine } from './session.ts';
+import type { ChatImage } from './images.ts';
 import { bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
 import type { Obj } from './util.ts';
 
