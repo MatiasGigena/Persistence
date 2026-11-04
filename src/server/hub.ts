@@ -2,7 +2,7 @@
 // once however many peers watch them, serves the ops, applies the remote tools policy (ADRs 0019, 0025), and tells the
 // push notifier when Pi finishes or an agent reports while no one is looking.
 import { CloseCode, ENABLE_TOOLS, ErrorCode, ROOT_FEED } from '../protocol/messages.ts';
-import type { ArchiveTarget, ChatItem, Device, NoticeLevel, SessionStatus, ToolsPolicy, Welcome } from '../protocol/messages.ts';
+import type { ArchiveTarget, ChatItem, NoticeLevel, SessionStatus, ToolsPolicy, Welcome } from '../protocol/messages.ts';
 import { IMAGE_LIMITS, imageProblem } from '../protocol/images.ts';
 import { PROTOCOL } from '../protocol/version.ts';
 import type { ChatFeed, UiSession } from '../ui/types.ts';
@@ -67,8 +67,6 @@ const reportIds = (items: readonly ChatItem[]): Set<string> => new Set(items.fil
 /** Who made a change, as the other clients' notices say it: the web device, or "terminal". */
 const whoOf = (link: PeerLink): string => link.peer === 'socket' ? 'terminal' : link.device?.name ?? link.who;
 const running = (status: SessionStatus): boolean => status.busy || status.agents.some(agent => agent.busy);
-/** The core's refusal for a name it does not know (src/agents: `No agent named X.`). */
-const UNKNOWN_AGENT = /^No agent named /;
 
 /** The server's PeerHub. Transports `attach` links; `start` brings the session; `close` ends every connection. */
 export class Hub implements PeerHub {
@@ -142,7 +140,7 @@ export class Hub implements PeerHub {
   }
 
   /** Some client is visible now, or was within VISIBLE_MS. */
-  private seen(): boolean {
+  private recentlyVisible(): boolean {
     if ([...this.connections].some(connection => connection.visible)) return true;
     return Date.now() - this.visibleAt < VISIBLE_MS;
   }
@@ -162,7 +160,8 @@ export class Hub implements PeerHub {
     for (const entry of [...this.agentFeeds.values()]) this.release(entry, connection);
   }
 
-  private need(): UiSession {
+  /** The session, once started; `unavailable` while the server starts or stops. */
+  private requireSession(): UiSession {
     if (this.stopping) throw new OpError(ErrorCode.unavailable, 'The server is shutting down.');
     if (!this.session) throw new OpError(ErrorCode.unavailable, 'The server is starting; try again in a moment.');
     return this.session;
@@ -198,7 +197,7 @@ export class Hub implements PeerHub {
 
   /** Opens (or shares) the agent's feed for `connection`; its id, or undefined for no such agent. */
   private async openFeed(connection: Connection, name: string): Promise<string | undefined> {
-    const session = this.need(), key = name.toLowerCase();
+    const session = this.requireSession(), key = name.toLowerCase();
     let entry = this.agentFeeds.get(key);
     if (!entry) {
       let opening = this.opening.get(key);
@@ -287,15 +286,13 @@ export class Hub implements PeerHub {
   }
 
   private async setTools(connection: Connection, enabled: boolean, confirm: typeof ENABLE_TOOLS | undefined): Promise<null> {
-    const session = this.need(), { link } = connection;
+    const session = this.requireSession(), { link } = connection;
     if (enabled && link.peer === 'web' && this.options.tools.remote === 'off') {
       throw new OpError(ErrorCode.forbidden, 'Coding tools can be turned on only from a terminal on the server (PI_DURABLE_REMOTE_TOOLS=off).');
     }
     if (enabled && confirm !== ENABLE_TOOLS) throw new OpError(ErrorCode.badRequest, `Turning tools on needs confirm: '${ENABLE_TOOLS}'.`);
     const was = session.status().toolsEnabled;
-    try { await session.setTools(enabled); } catch (error) {
-      throw new OpError(ErrorCode.failed, errorMessage(error));
-    }
+    await session.setTools(enabled);
     if (enabled) this.idleSince = Date.now();
     this.current = session.status();
     this.watchIdle();
@@ -308,18 +305,15 @@ export class Hub implements PeerHub {
 
   // ---------------------------------------------------------------------------------------------- archive
 
-  /** Archives or restores through the session; a change is told to every client, naming who made it. */
+  /**
+   * Archives or restores through the session; a change is told to every client, naming who made it. An unknown name
+   * is the session's NotFound, which the connection reports as `not_found`.
+   */
   private async archive(
     connection: Connection, change: { readonly archive: ArchiveTarget } | { readonly restore: string },
   ): Promise<{ names: readonly string[] }> {
-    const session = this.need();
-    let names: readonly string[];
-    try {
-      names = 'archive' in change ? await session.archiveAgents(change.archive) : await session.restoreAgent(change.restore);
-    } catch (error) {
-      const message = errorMessage(error);
-      throw new OpError(UNKNOWN_AGENT.test(message) ? ErrorCode.notFound : ErrorCode.failed, message);
-    }
+    const session = this.requireSession();
+    const names = 'archive' in change ? await session.archiveAgents(change.archive) : await session.restoreAgent(change.restore);
     if (!names.length) return { names };
     const { link } = connection, verb = 'archive' in change ? 'Archived' : 'Restored';
     this.options.log(`${verb.toLowerCase()} ${names.join(', ')}, by ${link.who} (${link.peer})`);
@@ -337,7 +331,7 @@ export class Hub implements PeerHub {
   /** A push, unless a client was visible within VISIBLE_MS or this tag was pushed within PUSH_EVERY_MS. */
   private notify(title: string, text: string, tag: string): void {
     const { push, pushPreview } = this.options;
-    if (!push || this.stopping || this.seen()) return;
+    if (!push || this.stopping || this.recentlyVisible()) return;
     const now = Date.now(), last = this.pushedAt.get(tag);
     if (last !== undefined && now - last < PUSH_EVERY_MS) return;
     this.pushedAt.set(tag, now);
@@ -357,24 +351,25 @@ export class Hub implements PeerHub {
       if (!this.options.push) throw new OpError(ErrorCode.unavailable, 'Push notifications are not set up on this server.');
       return this.options.push;
     };
-    const failed = (error: unknown): OpError => error instanceof OpError ? error
-      : new OpError(ErrorCode.failed, errorMessage(error));
+    const machines = (): MachineBroker => {
+      this.requireSession();
+      if (!this.options.machines) throw new OpError(ErrorCode.unavailable, 'Machine connectors are not available on this server.');
+      return this.options.machines;
+    };
     return {
       'machine.register': async ({ registration }, connection) => {
-        this.need();
-        if (!this.options.machines) throw new OpError(ErrorCode.unavailable, 'Machine connectors are not available on this server.');
-        this.options.machines.register(connection, registration);
+        machines().register(connection, registration);
         this.options.log(`machine connected: ${registration.target.label}, ${registration.target.cwd}, tools ${registration.enabled ? 'on' : 'off'}`);
         return null;
       },
       'machine.set': async ({ enabled, confirm }, connection) => {
-        this.need();
-        if (!this.options.machines) throw new OpError(ErrorCode.unavailable, 'Machine connectors are not available on this server.');
+        const broker = machines();
         if (enabled && confirm !== ENABLE_TOOLS) throw new OpError(ErrorCode.badRequest, `Turning tools on needs confirm: '${ENABLE_TOOLS}'.`);
-        this.options.machines.setEnabled(connection, enabled);
+        const { target } = broker.setEnabled(connection, enabled);
+        this.options.log(`machine tools ${enabled ? 'on' : 'off'}: ${target.label}, ${target.cwd}, by ${connection.link.who}`);
         return null;
       },
-      'machine.list': async () => { this.need(); return { machines: this.options.machines?.list() ?? [] }; },
+      'machine.list': async () => { this.requireSession(); return { machines: this.options.machines?.list() ?? [] }; },
       send: async ({ text, requestId, steer, target, images }) => {
         if (!text.trim() && !images?.length) throw new OpError(ErrorCode.badRequest, 'The message is empty.');
         if (images && images.length > IMAGE_LIMITS.perMessage) {
@@ -386,11 +381,11 @@ export class Hub implements PeerHub {
           throw new OpError(ErrorCode.badRequest, 'requestId must be 1 to 128 characters.');
         }
         if (target && !this.options.machines) throw new OpError(ErrorCode.unavailable, 'This server cannot route tools to execution machines; update it first.');
-        try { await this.need().send(text, { requestId, steer: steer === true, target, images: images?.length ? images : undefined }); } catch (error) { throw failed(error); }
+        await this.requireSession().send(text, { requestId, steer: steer === true, target, images: images?.length ? images : undefined });
         return null;
       },
-      abort: async () => { await this.need().abort(); return null; },
-      stopAgents: async ({ name }) => ({ names: await this.need().stopAgents(name) }),
+      abort: async () => { await this.requireSession().abort(); return null; },
+      stopAgents: async ({ name }) => ({ names: await this.requireSession().stopAgents(name) }),
       'agents.archive': (target, connection) => this.archive(connection, { archive: target }),
       'agents.restore': ({ name }, connection) => this.archive(connection, { restore: name }),
       'feed.open': async ({ name }, connection) => {
@@ -411,60 +406,43 @@ export class Hub implements PeerHub {
         connection.resync(feed);
         return Promise.resolve(null);
       },
-      'memory.view': async () => ({ lines: await this.need().memoryView() }),
-      'memory.zoom': async ({ id, n }) => {
-        const session = this.need();
-        try { return { text: await session.zoom(id, n) }; } catch (error) {
-          const message = errorMessage(error);
-          throw new OpError(/^Memory is not open/.test(message) ? ErrorCode.unavailable : ErrorCode.notFound, message);
-        }
-      },
-      models: async () => ({ models: await this.need().models() }),
-      'model.set': async ({ provider, id }) => {
-        const session = this.need();
-        try { await session.setModel(provider, id); } catch (error) { throw failed(error); }
-        return null;
-      },
+      'memory.view': async () => ({ lines: await this.requireSession().memoryView() }),
+      'memory.zoom': async ({ id, n }) => ({ text: await this.requireSession().zoom(id, n) }),
+      models: async () => ({ models: await this.requireSession().models() }),
+      'model.set': async ({ provider, id }) => { await this.requireSession().setModel(provider, id); return null; },
       'tools.set': ({ enabled, confirm }, connection) => this.setTools(connection, enabled, confirm),
-      'thinking.levels': async () => ({ levels: await this.need().thinkingLevels() }),
-      'thinking.set': async ({ level }) => {
-        try { await this.need().setThinkingLevel(level); } catch (error) { throw failed(error); }
-        return null;
-      },
+      'thinking.levels': async () => ({ levels: await this.requireSession().thinkingLevels() }),
+      'thinking.set': async ({ level }) => { await this.requireSession().setThinkingLevel(level); return null; },
       'push.subscribe': async ({ subscription }, connection) => {
         let url: URL | undefined;
         try { url = new URL(subscription.endpoint); } catch { url = undefined; }
         if (url?.protocol !== 'https:') throw new OpError(ErrorCode.badRequest, 'endpoint must be an https: URL.');
         try { await notifier().subscribe(subscription, connection.link.device?.name); } catch (error) {
-          throw error instanceof InvalidSubscription ? new OpError(ErrorCode.badRequest, error.message) : failed(error);
+          throw error instanceof InvalidSubscription ? new OpError(ErrorCode.badRequest, error.message) : error;
         }
         return null;
       },
-      'push.unsubscribe': async ({ endpoint }) => {
-        try { await notifier().unsubscribe(endpoint); } catch (error) { throw failed(error); }
-        return null;
-      },
+      'push.unsubscribe': async ({ endpoint }) => { await notifier().unsubscribe(endpoint); return null; },
       'admin.backup': async ({ out }) => {
         if (out !== undefined && !out.startsWith('/')) throw new OpError(ErrorCode.badRequest, 'out must be an absolute path.');
         if (this.stopping) throw new OpError(ErrorCode.unavailable, 'The server is shutting down.');
         if (!this.options.backup) throw new OpError(ErrorCode.unavailable, 'Backups are not available on this server.');
-        try { return await this.options.backup(out); } catch (error) { throw failed(error); }
+        const made = await this.options.backup(out);
+        this.options.log(`backup written: ${made.path} (${made.bytes} bytes)`);
+        return made;
       },
       'admin.pair': async () => {
         const off = this.options.webOff?.();
         if (off !== undefined) throw new OpError(ErrorCode.unavailable, `The web app is off: ${off}. Pair once it is on.`);
-        let code: { readonly code: string; readonly expiresAt: number };
-        try { code = await registry().pair(); } catch (error) { throw failed(error); }
+        const code = await registry().pair();
+        this.options.log(`pairing code issued, valid until ${new Date(code.expiresAt).toISOString()}`);
         return this.options.origin === undefined ? code : { ...code, origin: this.options.origin };
       },
       'admin.devices': async () => {
-        let devices: readonly Device[];
-        try { devices = await registry().list(); } catch (error) { throw failed(error); }
-        return { devices };
+        return { devices: await registry().list() };
       },
       'admin.revoke': async ({ name }) => {
-        let found: boolean;
-        try { found = await registry().revoke(name); } catch (error) { throw failed(error); }
+        const found = await registry().revoke(name);
         if (!found) {
           // Names are exact (case too): list them, so a near miss shows the name to type.
           const names = (await registry().list().catch(() => [])).map(device => device.name);

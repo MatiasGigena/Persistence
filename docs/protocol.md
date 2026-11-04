@@ -448,7 +448,7 @@ There is no session resumption: every connection starts from `hello` and gets th
 | `bad_request` | Malformed message or params; `tools.set` enabling without `confirm`; empty `send`. |
 | `unknown_op` | The server does not know the op. |
 | `not_found` | No such agent, feed, memory line or device. |
-| `forbidden` | Not for this peer: `admin.*` from the web, `push.*` from the socket, tools when the remote policy is `off`. |
+| `forbidden` | Not for this peer: `admin.*`, `machine.register` and `machine.set` from the web, `push.*` from the socket, tools when the remote policy is `off`. |
 | `failed` | The op ran and failed; `message` says why, readably. |
 | `unavailable` | Not now: the server is shutting down, or the memory is not open. Retrying later may work. |
 | `version` | A request before `hello`. |

@@ -400,7 +400,7 @@ async function readSettingsJson(path: string): Promise<Record<string, unknown> |
     throw error;
   }
   let value: unknown;
-  try { value = JSON.parse(text); } catch (error) { throw new Error(`${path} is not valid JSON (${errorMessage(error)}); fix or delete it`); }
+  try { value = JSON.parse(text); } catch (error) { throw new Error(`${path} is not valid JSON (${errorMessage(error)}); fix or delete it`, { cause: error }); }
   if (!isRecord(value)) throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
   return value;
 }

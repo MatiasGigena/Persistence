@@ -31,7 +31,7 @@ export async function readJson<T>(file: string, parse: (value: unknown) => T, mi
     throw error;
   }
   try { return parse(JSON.parse(text)); } catch (error) {
-    throw new Error(`${file} is damaged (${errorMessage(error)}); fix it, or delete it to start over`);
+    throw new Error(`${file} is damaged (${errorMessage(error)}); fix it, or delete it to start over`, { cause: error });
   }
 }
 

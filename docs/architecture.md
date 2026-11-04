@@ -269,6 +269,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates |
 | `src/ui/types.ts` | The contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); imports nothing |
 | `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
+| `src/ui/errors.ts` | `NotFound` and `Unavailable`: the session's refusals that the server reports as `not_found` and `unavailable` |
 | `src/ui/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
 | `src/ui/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
 | `src/ui/tui/app.ts`, `chat.ts`, `footer.ts`, `theme.ts` | The terminal chat: pi-tui layout and editor, the chat blocks, the one-line status, the palette |

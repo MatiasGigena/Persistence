@@ -39,14 +39,17 @@ export class MachineBroker {
     for (const pending of this.pending.values()) this.dispatch(pending);
   }
 
-  setEnabled(peer: MachinePeer, enabled: boolean): void {
-    const registration = this.peers.get(peer);
-    if (!registration) throw new Error('Register an execution machine first');
-    this.peers.set(peer, { ...registration, enabled });
+  /** Turns a registered connector's tools on or off; returns its registration as it now is. */
+  setEnabled(peer: MachinePeer, enabled: boolean): MachineRegistration {
+    const before = this.peers.get(peer);
+    if (!before) throw new Error('Register an execution machine first');
+    const registration = { ...before, enabled };
+    this.peers.set(peer, registration);
     for (const pending of this.pending.values()) {
       if (!enabled && pending.assigned === peer) peer.sendMachine({ t: 'machine.cancel', id: pending.call.id });
       else this.dispatch(pending);
     }
+    return registration;
   }
   list(): readonly MachineRegistration[] { return [...this.peers.values()]; }
 

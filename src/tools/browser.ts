@@ -418,10 +418,12 @@ function launchError(error: unknown, executablePath: string | undefined): unknow
   const message = errorMessage(error);
   if (!/executable doesn't exist/i.test(message)) return error;
   if (executablePath) {
-    return new Error(`PI_DURABLE_CHROMIUM names ${executablePath}, which does not exist. The user can fix the path, or unset it to use Playwright's Chromium.`);
+    return new Error(`PI_DURABLE_CHROMIUM names ${executablePath}, which does not exist. The user can fix the path, or unset it to use Playwright's Chromium.`,
+      { cause: error });
   }
   return new Error(`Chromium for the browser tools is not installed (${message.split('\n')[0] ?? ''}). The user can run `
-    + 'npx --no-install playwright-core install chromium in the installation directory, or set PI_DURABLE_CHROMIUM to a Chromium executable.');
+    + 'npx --no-install playwright-core install chromium in the installation directory, or set PI_DURABLE_CHROMIUM to a Chromium executable.',
+    { cause: error });
 }
 
 const result = (text: string, details: JsonValue = {}, isError = false): ToolExecutionResult =>

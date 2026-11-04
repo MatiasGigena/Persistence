@@ -107,7 +107,7 @@ const FINAL: ReadonlySet<number> = new Set([CloseCode.normal, CloseCode.version,
 /** Why a connection attempt failed; `final` means do not retry. */
 class Failed extends Error {
   readonly final: boolean;
-  constructor(message: string, final: boolean) { super(message); this.final = final; }
+  constructor(message: string, final: boolean, options?: ErrorOptions) { super(message, options); this.final = final; }
 }
 
 /** One connection attempt and, once welcomed, the live connection. */
@@ -213,7 +213,7 @@ export class ClientLink {
     try { channel = await this.options.connect(events); } catch (error) {
       if (this.current === connection) this.current = undefined;
       if (error instanceof ForeignSocket) throw error;
-      throw new Failed(errorMessage(error), false);
+      throw new Failed(errorMessage(error), false, { cause: error });
     }
     if (this.current !== connection) {
       channel.close();

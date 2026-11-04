@@ -13,6 +13,7 @@ import type { MachineCall, MachineCancel, MachineResult } from '../protocol/mach
 import type { ChatFeed } from '../ui/types.ts';
 import type { PeerLink } from './link.ts';
 import { errorMessage } from '../protocol/util.ts';
+import { NotFound, Unavailable } from '../ui/errors.ts';
 
 /** Status messages to one peer at most this often (4 a second): it changes with every streamed token. */
 export const STATUS_MS = 250;
@@ -30,6 +31,14 @@ export class OpError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+/** The wire code for a handler's failure: an OpError's own, the session's typed refusals, else `failed`. */
+function codeOf(error: unknown): ErrorCodeType {
+  if (error instanceof OpError) return error.code;
+  if (error instanceof NotFound) return ErrorCode.notFound;
+  if (error instanceof Unavailable) return ErrorCode.unavailable;
+  return ErrorCode.failed;
 }
 
 /** Every op's handler: params already parsed, the result as the op's `res` carries it. */
@@ -231,8 +240,7 @@ export class Connection {
       const response: ResponseOf<O> = { t: 'res', id: request.id, op: request.op, ok: true, result };
       this.send(response);
     } catch (error) {
-      const code = error instanceof OpError ? error.code : ErrorCode.failed;
-      this.fail(request.id, code, errorMessage(error));
+      this.fail(request.id, codeOf(error), errorMessage(error));
     } finally {
       this.inFlight--;
     }

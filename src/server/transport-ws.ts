@@ -212,7 +212,7 @@ export async function startWebListener(hub: PeerHub, settings: ServeSettings, de
   });
   server.on('upgrade', upgrade);
   await new Promise<void>((resolve, reject) => {
-    const failed = (error: unknown): void => reject(new Error(`cannot listen on ${HOST}:${settings.port}: ${errorMessage(error)}`));
+    const failed = (error: unknown): void => reject(new Error(`cannot listen on ${HOST}:${settings.port}: ${errorMessage(error)}`, { cause: error }));
     server.once('error', failed);
     server.listen(settings.port, HOST, () => {
       server.off('error', failed);

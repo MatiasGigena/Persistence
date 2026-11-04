@@ -184,7 +184,7 @@ export function itemOp(x: unknown): ItemOp {
 }
 
 function machineShape<T>(parse: () => T): T {
-  try { return parse(); } catch (error) { throw new Bad(errorMessage(error)); }
+  try { return parse(); } catch (error) { throw new Bad(errorMessage(error), { cause: error }); }
 }
 
 function toolsPolicy(x: unknown): ToolsPolicy {

@@ -12,6 +12,7 @@ import { imagesProblem, modelChooser, thinkingLevels } from '../runtime/models.t
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
 import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from './types.ts';
+import { NotFound, Unavailable } from './errors.ts';
 
 /**
  * The launch choices the status line falls back on until Pi's stored agent says otherwise; `setModel()` saves to
@@ -189,8 +190,9 @@ export async function createUiSession(
     },
     memoryView: () => Promise.resolve(memoryLines(instance)),
     async zoom(id, n) {
-      if (!memory) throw new Error('Memory is not open (inspection only).');
-      return memory.zoom(id, n);
+      if (!memory) throw new Unavailable('Memory is not open (inspection only).');
+      // Memory.zoom throws only for a line or message the log does not have.
+      try { return memory.zoom(id, n); } catch (error) { throw new NotFound(errorMessage(error), { cause: error }); }
     },
     models: () => chooser.list(currentModel()),
     setModel(provider, id) {
@@ -208,7 +210,7 @@ export async function createUiSession(
         refresh();
         if (!config.settingsPath) return;
         try { await updateSettings(config.settingsPath, { model }); } catch (error) {
-          throw new Error(`Switched to ${provider}/${id}, but saving it as the default failed: ${errorMessage(error)}`);
+          throw new Error(`Switched to ${provider}/${id}, but saving it as the default failed: ${errorMessage(error)}`, { cause: error });
         }
       });
     },
@@ -234,7 +236,7 @@ export async function createUiSession(
         refresh();
         if (!config.settingsPath) return;
         try { await updateSettings(config.settingsPath, { thinkingLevel: level }); } catch (error) {
-          throw new Error(`Effort set to ${level}, but saving it as the default failed: ${errorMessage(error)}`);
+          throw new Error(`Effort set to ${level}, but saving it as the default failed: ${errorMessage(error)}`, { cause: error });
         }
       });
     },

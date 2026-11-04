@@ -11,6 +11,7 @@ import type {
   Session, TaskId, TaskOptions, ToolExecutionApi, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
 import { AUTOREVIEW_POLICY, isAgentName, type Kit, LOCAL_KITS, PURPOSES, type Roster, rosterEntry, type StandingAgent } from './roster.ts';
+import { NotFound } from '../ui/errors.ts';
 
 export { AGENT_NAME, DEFAULT_ROSTER, isAgentName, isKit, KITS, LOCAL_KITS } from './roster.ts';
 export type { Kit, Roster, StandingAgent } from './roster.ts';
@@ -616,7 +617,7 @@ function archiveSet(agents: Readonly<Record<string, AgentRecord>>, target: Archi
       .flatMap(([name]) => withSubs(name));
   }
   const found = find(agents, target.name);
-  if (!found) throw new Error(noAgent(agents, target.name));
+  if (!found) throw new NotFound(noAgent(agents, target.name));
   if (found.standing) throw new Error(`${found.name} is a standing agent; remove it from the roster first.`);
   return found.role === 'main' ? withSubs(found.name) : [found.name];
 }
@@ -654,7 +655,7 @@ export async function archiveAgents(source: AgentsStopper & Pick<Session, 'commi
 export async function restoreAgent(source: Pick<Session, 'commit'> & DocumentReader, context: Context, name: string): Promise<string[]> {
   const check = (agents: Readonly<Record<string, AgentRecord>>): Named => {
     const found = find(agents, name);
-    if (!found) throw new Error(noAgent(agents, name));
+    if (!found) throw new NotFound(noAgent(agents, name));
     if (archivedSince(agents, found.name) === undefined) throw new Error(`${found.name} is not archived.`);
     if (found.role === 'sub' && agents[found.parent]?.archivedAt !== undefined) {
       throw new Error(`${found.name}'s main agent ${found.parent} is archived; restore ${found.parent}.`);
@@ -759,7 +760,7 @@ export async function agentTranscript(
   const gone = deletedAgent(registry, base);
   const agent = base.toLowerCase() === PI.toLowerCase()
     ? { name: PI, conversationId: ROOT_CONVERSATION_ID, standing: false, past: [] } : find(registry?.agents ?? {}, base) ?? gone;
-  if (!agent) throw new Error(noAgent(registry?.agents ?? {}, base));
+  if (!agent) throw new NotFound(noAgent(registry?.agents ?? {}, base));
   const sessions = [...agent.past ?? [], agent.conversationId];
   const index = number === undefined ? sessions.length : Number(number);
   const conversationId = sessions[index - 1];
