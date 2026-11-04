@@ -345,12 +345,7 @@ export function parseArgs(args: readonly string[]): Options {
       throw new Error(`Unknown ${name} argument: ${prompts[0] ?? ''}${chosen === 'serve' ? ' (to send a prompt starting with "serve", use -p)' : ''}`);
     }
     for (const [key, spelling] of given) if (!ALLOWED[chosen].has(key)) throw new Error(`${spelling} does not apply to ${name}`);
-    if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
-    // serve starts with coding tools on unless --no-tools (ADR 0025); backup never runs them.
-    options.allowTools = chosen === 'serve' && !options.noTools;
   } else {
-    if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
-    options.allowTools = !options.noTools;
     for (const [key, owner] of ONLY_FOR) {
       const spelling = given.get(key);
       if (spelling) throw new Error(`${spelling} applies only to ${owner}`);
@@ -364,6 +359,9 @@ export function parseArgs(args: readonly string[]): Options {
     if (local && options.attach) throw new Error(`${local} does not apply to --attach: the server's settings apply (use /model and /tools there)`);
     if (local) options.launchOption = local;
   }
+  if (given.has('allowTools') && options.noTools) throw new Error('Choose either --allow-tools or --no-tools');
+  // chat and serve start with coding tools on unless --no-tools (ADR 0025); backup and the admin commands never run them.
+  options.allowTools = (chosen === 'chat' || chosen === 'serve') && !options.noTools;
   options.remoteAllowTools = chosen === 'chat' && given.has('allowTools') && !options.noTools;
   if (options.portSpec !== undefined) options.port = parsePort(options.portSpec, '--port');
   if (options.revoke !== undefined && !options.revoke.trim()) throw new Error('--revoke requires a device name');

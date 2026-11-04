@@ -46,7 +46,6 @@
     "@earendil-works/chord": {
       "ws": "$ws"
     },
-    "undici": "8.12.3",
     "minimatch": "11.0.4"
   }
 }

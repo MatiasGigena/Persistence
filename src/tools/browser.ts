@@ -7,12 +7,13 @@ import type { Duplex } from 'node:stream';
 import type { Context, JsonValue } from '@earendil-works/chord';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { ConversationId, Extension, ToolExecutionResult, ToolRegistration } from '@earendil-works/pi-durable';
-import { arr, bool, num, obj, opt, type Schema, str, union } from '@earendil-works/pi-schema';
+import { arr, bool, num, obj, opt, str, union } from '@earendil-works/pi-schema';
 import {
   type BrowserContext, chromium, type ConsoleMessage, type Page, type Request, type Route, type WebSocketRoute,
 } from 'playwright-core';
 import { addressKind, type Lookup, type LookupAddress, lookupAll } from './web-fetch.ts';
 import { errorMessage } from '../protocol/util.ts';
+import { literal } from './schema.ts';
 
 /**
  * Browser tools: a headless Chromium per agent, adapted from the browser extension of Pi Cloud,
@@ -40,8 +41,6 @@ export const BROWSER_EXTENSION = 'browser';
 export const MAX_BUFFER = 1000;
 export const OPERATION_TIMEOUT_MS = 60_000;
 const EVAL_LIMIT = 50_000;
-/** A string literal as TypeBox wrote it (`type` and `const`), so the tool's JSON Schema stays as it was. */
-const literal = <const V extends string>(value: V): Schema<V> => ({ type: 'string', const: value });
 const MAX_FULL_PAGE_PIXELS = 8_000_000;
 const MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024;
 

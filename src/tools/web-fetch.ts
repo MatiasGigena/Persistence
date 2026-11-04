@@ -238,7 +238,12 @@ function decodeText(bytes: Buffer, contentType: string): string {
 
 // ── Extraction ───────────────────────────────────────────────────────
 
-type Extracted = { title: string; content: string; error?: string };
+/**
+ * Why a fetched page gave no usable content: the server's own answer (`http`, `too_large`, `unsupported`), or a page
+ * that loaded but would not extract (`unreadable`, maybe JavaScript-rendered).
+ */
+type Failure = { readonly kind: 'http' | 'too_large' | 'unsupported' | 'unreadable'; readonly message: string };
+type Extracted = { title: string; content: string; failure?: Failure };
 
 const isPDF = (url: URL, contentType: string) =>
   contentType.includes('application/pdf') || url.pathname.toLowerCase().endsWith('.pdf');
@@ -446,6 +451,17 @@ const JS_RENDERED = 'Page appears to be JavaScript-rendered (content loads dynam
 
 const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 
+/**
+ * Readability's article HTML as a linkedom node: Turndown converts a DOM node as well as a string, and a node spares it
+ * a second parse with its own bundled DOM. Undefined if linkedom gave no body.
+ */
+function articleRoot(content: string): unknown {
+  const parsed: unknown = parseHTML(`<!doctype html><html><body>${content}</body></html>`);
+  return asRecord(asRecord(parsed)?.document)?.body;
+}
+
+const unreadable = (html: string, message: string): Failure => ({ kind: 'unreadable', message: isLikelyJSRendered(html) ? JS_RENDERED : message });
+
 function extractHTML(html: string): Extracted {
   // linkedom's types name DOM globals this project's lib leaves out; Readability only needs its document.
   const window: unknown = parseHTML(html);
@@ -454,12 +470,12 @@ function extractHTML(html: string): Extracted {
   if (!article?.content) {
     const rsc = extractRSCContent(html);
     if (rsc) return rsc;
-    return { title: '', content: '', error: isLikelyJSRendered(html) ? JS_RENDERED : 'Could not extract readable content from HTML structure' };
+    return { title: '', content: '', failure: unreadable(html, 'Could not extract readable content from HTML structure') };
   }
   const title = article.title ?? '';
-  const markdown = turndown.turndown(article.content);
+  const markdown = turndown.turndown(articleRoot(article.content) ?? article.content);
   if (markdown.length < MIN_USEFUL_CONTENT) {
-    return { title, content: markdown, error: isLikelyJSRendered(html) ? JS_RENDERED : 'Extracted content appears incomplete' };
+    return { title, content: markdown, failure: unreadable(html, 'Extracted content appears incomplete') };
   }
   return { title, content: markdown };
 }
@@ -471,7 +487,7 @@ async function extract(start: URL, options: WebFetchOptions, signal: AbortSignal
   const status = response.statusCode ?? 0;
   if (status < 200 || status >= 300) {
     response.destroy();
-    return { url, title: '', content: '', error: `HTTP ${status}: ${response.statusMessage ?? ''}`.trim() };
+    return { url, title: '', content: '', failure: { kind: 'http', message: `HTTP ${status}: ${response.statusMessage ?? ''}`.trim() } };
   }
   const contentType = response.headers['content-type'] ?? '';
   const pdf = isPDF(url, contentType);
@@ -479,12 +495,12 @@ async function extract(start: URL, options: WebFetchOptions, signal: AbortSignal
   const length = parseInt(response.headers['content-length'] ?? '', 10);
   if (length > max) {
     response.destroy();
-    return { url, title: '', content: '', error: `Response too large (${Math.round(length / 1024 / 1024)}MB)` };
+    return { url, title: '', content: '', failure: { kind: 'too_large', message: `Response too large (${Math.round(length / 1024 / 1024)}MB)` } };
   }
   if (pdf) return { url, ...await extractPDF(await boundedBody(response, max), url, signal) };
   if (UNSUPPORTED.some((type) => contentType.includes(type))) {
     response.destroy();
-    return { url, title: '', content: '', error: `Unsupported content type: ${contentType.split(';')[0] ?? ''}` };
+    return { url, title: '', content: '', failure: { kind: 'unsupported', message: `Unsupported content type: ${contentType.split(';')[0] ?? ''}` } };
   }
   const text = decodeText(await boundedBody(response, max), contentType);
   if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
@@ -498,7 +514,7 @@ async function extract(start: URL, options: WebFetchOptions, signal: AbortSignal
  * an error text (`ok: false`): a refusal, an HTTP or size error, a timeout, or content that would not extract.
  */
 export async function webFetch(raw: string, options: WebFetchOptions = {}, signal?: AbortSignal): Promise<WebFetchResult> {
-  const fail = (error: string): WebFetchResult => ({ ok: false, text: error.startsWith('Refused:') ? error : `${raw}: ${error}` });
+  const fail = (message: string): WebFetchResult => ({ ok: false, text: `${raw}: ${message}` });
   if (signal?.aborted) return fail('Aborted');
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeout = AbortSignal.timeout(timeoutMs);
@@ -509,12 +525,14 @@ export async function webFetch(raw: string, options: WebFetchOptions = {}, signa
   } catch (error) {
     if (signal?.aborted) return fail('Aborted');
     if (timeout.aborted) return fail(`Timed out after ${Math.round(timeoutMs / 1000)} s`);
+    // A refusal stands alone: it names the URL or address it refused.
+    if (error instanceof Refusal) return { ok: false, text: error.message };
     return fail(errorMessage(error));
   }
-  if (result.error) {
-    // The JavaScript hint is for pages that loaded but would not extract, not for the server's own refusals.
-    const final = /^(HTTP \d|Unsupported content type|Response too large)/.test(result.error);
-    return fail(final ? result.error : `${result.error}\n\nThe page may be JavaScript-rendered. Try a different URL for the same content, or the browser tools.`);
+  if (result.failure) {
+    // The JavaScript hint is for pages that loaded but would not extract, not for the server's own answers.
+    const { kind, message } = result.failure;
+    return fail(kind !== 'unreadable' ? message : `${message}\n\nThe page may be JavaScript-rendered. Try a different URL for the same content, or the browser tools.`);
   }
   const header = result.title ? `# ${result.title}\n\nSource: ${result.url.href}\n\n---\n\n` : '';
   const full = header + result.content;

@@ -283,6 +283,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/tools/browser.ts` | `createBrowserExtension`: the `browser` extension's eight `browser_*` tools, a headless Chromium and persistent profile per key (`keyOf`: the agent's name, from the host), one queue and a 60 s timeout per operation, URL redaction, `close()` |
 | `src/tools/autoreview.ts` | `createAutoreviewExtension`: dedicated skill-helper invocation, fixed P0–P2; guarded local shell or pinned connector execution, no raw commands or isolation overrides |
 | `src/tools/web-fetch.ts` | `createWebFetchExtension`: the `web-fetch` extension's `web_fetch` tool, a page as Markdown (Readability, Turndown) or a PDF as text; refuses private destinations, redirects included |
+| `src/tools/schema.ts` | `literal`: the TypeBox-shaped string literal the tools' frozen JSON Schemas use |
 | `src/tools/show-image.ts` | `createShowImageExtension`: `show_image`, an existing image file shown in the chat and given to the model, read through `GuardedEnv` (ADR 0031) |
 | `src/tools/codemode.ts` | The `codemode` extension: model-written scripts in a QuickJS sandbox that call the conversation's tools (`SCRIPT_TOOLS`) as nested tool calls (ADR 0033) |
 | `src/agents/index.ts` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
