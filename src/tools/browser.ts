@@ -197,14 +197,14 @@ const pinnedAll = (addresses: readonly LookupAddress[]): LookupFunction => (_hos
   else callback(new Error('no address'), '', 4);
 };
 
-type EgressProxy = { readonly server: string; readonly username: string; readonly password: string; close(): void };
+interface EgressProxy { readonly server: string; readonly username: string; readonly password: string; close(): void }
 
-type ProxyHooks = {
+interface ProxyHooks {
   readonly check: (url: string) => Promise<EgressCheck>;
   readonly refused: (url: string, refusal: string) => void;
   /** Tests only: the address to connect to for a checked one. */
   readonly connectAddress?: (address: string) => string;
-};
+}
 
 /**
  * One browser's egress proxy, on loopback behind a random Basic credential that only its Chromium is given. Chromium
@@ -324,7 +324,7 @@ async function startEgressProxy(hooks: ProxyHooks): Promise<EgressProxy> {
 export const evalSource = (source: string): string =>
   `(() => { const __v = (${source}); return typeof __v === 'function' ? __v() : __v; })()`;
 
-export type BrowserLaunchOptions = {
+export interface BrowserLaunchOptions {
   readonly headless: true;
   readonly chromiumSandbox: true;
   /** Service workers would fetch past the context's routes, unchecked. */
@@ -335,9 +335,9 @@ export type BrowserLaunchOptions = {
   readonly args: string[];
   readonly executablePath?: string;
   readonly viewport: { readonly width: number; readonly height: number };
-};
+}
 
-export type BrowserOptions = {
+export interface BrowserOptions {
   /** The chat's state directory; profiles go under `<profileRoot>/browser/`. */
   readonly profileRoot: string;
   /** Chromium executable (`PI_DURABLE_CHROMIUM`); Playwright's own download otherwise. */
@@ -361,7 +361,7 @@ export type BrowserOptions = {
   readonly lookup?: Lookup;
   /** Tests only: the address the egress proxy connects to for one it checked. Default: that address. */
   readonly connectAddress?: (address: string) => string;
-};
+}
 
 /** A browser key that is safe as a folder name: an agent name (`AGENT_NAME`) or a conversation ID. */
 export const BROWSER_KEY = /^(?:[A-Za-z][A-Za-z0-9_-]{0,31}|\d+)$/;
@@ -374,11 +374,11 @@ export type BrowserExtension = Extension & {
   forget(key: string): Promise<void>;
 };
 
-type ConsoleEntry = { ts: number; type: string; text: string; location?: string };
-type NetEntry = {
+interface ConsoleEntry { ts: number; type: string; text: string; location?: string }
+interface NetEntry {
   ts: number; method: string; url: string; status?: number; statusText?: string; resourceType: string;
   requestHeaders?: Record<string, string>; responseHeaders?: Record<string, string>; failure?: string;
-};
+}
 
 function pushBounded<T>(buffer: T[], entry: T): void {
   buffer.push(entry);
@@ -386,7 +386,7 @@ function pushBounded<T>(buffer: T[], entry: T): void {
 }
 
 /** One key's (agent's) browser: its context, current page, buffers, and operation queue. */
-type Browser = {
+interface Browser {
   readonly profileDir: string;
   readonly localOnly: boolean;
   /** Recent egress verdicts by host name, so one page's many requests resolve once; the proxy connects to their addresses. */
@@ -407,7 +407,7 @@ type Browser = {
   readonly console: ConsoleEntry[];
   readonly network: NetEntry[];
   readonly watched: WeakSet<Page>;
-};
+}
 
 /**
  * A launch failure for lack of a Chromium executable, with this installation's fix: Playwright's own text tells the user

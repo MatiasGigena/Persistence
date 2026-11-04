@@ -19,26 +19,26 @@ export const KINDS: ReadonlySet<string> = new Set(KIND_LIST);
 export const isKind = (x: unknown): x is Kind => typeof x === 'string' && KINDS.has(x);
 
 /** One logged message, as a line of main/YYYY-MM-DD.jsonl. `src` of a split text's later parts ends in `#n`. */
-export type MemoryRecord = { i: number; kind: Kind; text: string; size: number; date: string; src?: string };
+export interface MemoryRecord { i: number; kind: Kind; text: string; size: number; date: string; src?: string }
 /** One built tree node, as a line of tree/YYYY-MM-DD.jsonl (`size` is computed at load, not trusted from disk). */
 export type TreeNode = Pos & { text: string; size: number };
 /** View budgets in bytes: past `hi` a batch merges down to at most `lo`. */
-export type Budget = { hi: number; lo: number };
-export type AppendInput = { kind: Kind; text: string; date?: Date | number | string; src?: string };
+export interface Budget { hi: number; lo: number }
+export interface AppendInput { kind: Kind; text: string; date?: Date | number | string; src?: string }
 /**
  * A subagent's report; `id` (the delivery task's ID) keys it. `session` (from 1) is the standing agent's session it came
  * from, so its link opens that one (`zoom("Name#n")`) even after a later delegate.
  */
-export type ReportInput = {
+export interface ReportInput {
   name: string; text: string; id?: string | number | undefined; date?: Date | number | string; session?: number | undefined;
-};
+}
 /** The prompt and tools of the latest turn, so compactions share the turns' cached prefix. */
-export type CompactionPrompt = { system?: string; tools?: readonly Tool[] };
-export type MemoryStatus = {
+export interface CompactionPrompt { system?: string; tools?: readonly Tool[] }
+export interface MemoryStatus {
   messages: number; unsummarized: number; active: number; failed: number; lastError: string | undefined;
   viewBytes: number; viewLines: number;
-};
-export type MemoryOptions = {
+}
+export interface MemoryOptions {
   summarize?: Summarizer;
   models?: SummarizerModels;
   model?: ModelRef;
@@ -52,7 +52,7 @@ export type MemoryOptions = {
   view?: Budget;
   compactionView?: Budget;
   warn?: (message: string) => void;
-};
+}
 
 export const VIEW: Budget = { hi: 128_000, lo: 64_000 };
 export const COMPACTION_VIEW: Budget = { hi: 32_000, lo: 16_000 };

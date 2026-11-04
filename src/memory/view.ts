@@ -1,7 +1,7 @@
 // The view (recipe §3): tree nodes tiling messages [0, T), oldest first. Lines are only appended and merged.
 
 /** A tree node: level `l` (it covers 2^l messages) and index `i` at that level. */
-export type Pos = { l: number; i: number };
+export interface Pos { l: number; i: number }
 
 export const start = (p: Pos): number => p.i * 2 ** p.l;
 export const end = (p: Pos): number => (p.i + 1) * 2 ** p.l;
@@ -9,7 +9,7 @@ export const key = (p: Pos): string => `${p.l}/${p.i}`;
 export const parentOf = (p: Pos): Pos => ({ l: p.l + 1, i: Math.floor(p.i / 2) });
 export const name = (p: Pos): string => `${start(p)}+${2 ** p.l}`;
 
-export type ViewOptions = { hi: number; lo: number; sizeOf: (p: Pos) => number; built: (p: Pos) => boolean };
+export interface ViewOptions { hi: number; lo: number; sizeOf: (p: Pos) => number; built: (p: Pos) => boolean }
 
 export class View {
   hi: number;
