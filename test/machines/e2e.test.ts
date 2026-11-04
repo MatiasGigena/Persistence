@@ -12,7 +12,7 @@ import { parseArgs, resolveOptions } from '../../src/host/config.ts';
 import { ENABLE_TOOLS } from '../../src/protocol/messages.ts';
 import type { MachineCall, MachineToolResult } from '../../src/protocol/machines.ts';
 import { serve } from '../../src/server/serve.ts';
-import type { MachineTarget } from '../../src/ui/types.ts';
+import type { MachineTarget } from '../../src/protocol/machines.ts';
 import { call, router, say } from '../fixtures/agents-instance.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import type { Options } from '../host/config.ts';
 import { CLIENT, runAttached } from './attach.ts';
 import { ENABLE_TOOLS } from '../protocol/messages.ts';
-import type { MachineTarget } from '../ui/types.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 import { clientConfigPath, machineId, readClientConfig, remoteTarget, saveClientConfig, validateTarget } from './config.ts';
 import { RemoteSession } from './remote-session.ts';
 import { sshConnector } from './ssh-link.ts';

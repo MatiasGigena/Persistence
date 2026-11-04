@@ -42,14 +42,14 @@ Pi (root, session agent)
 ```
 
 Sub agents cannot spawn, so the tree is at most three levels deep. `stop_agent` only stops an agent's current work;
-Pi's `delete_agent` (or the host's `deleteAgent()`) removes an idle, non-standing agent and its sub agents from the
-registry. Their conversations are not erased (the SDK has no such operation): they stay in the database, owned by
-their finished anchor tasks, and the registry's `deleted` map keeps their ids, so `zoom("Name")` still reads the chat
-(headed `Name was deleted; its chat is kept`). The name is free again for `spawn_agent`; a later delete of the same
-name keeps only the newest chat's ids. Deleting is refused for Pi, a standing agent (or any roster name), and while
-the agent or one of its subs is busy or has an `agents.deliver` input still on its way: `stop_agent` it first.
-The user can also archive an ad-hoc agent, which is then deleted the same way a day later (see
-[Archiving and deletion](#archiving-and-deletion)); Pi cannot archive.
+Pi's `delete_agent` (or the host's `deleteAgent()`, which throws the refusal that the tool returns as text) removes an
+idle, non-standing agent and its sub agents from the registry. Their conversations are not erased (the SDK has no such
+operation): they stay in the database, owned by their finished anchor tasks, and the registry's `deleted` map keeps
+their ids, so `zoom("Name")` still reads the chat (headed `Name was deleted; its chat is kept`). The name is free
+again for `spawn_agent`; a later delete of the same name keeps only the newest chat's ids. Deleting is refused for Pi,
+a standing agent (or any roster name), and while the agent or one of its subs is busy or has an `agents.deliver` input
+still on its way: `stop_agent` it first. The user can also archive an ad-hoc agent, which is then deleted the same way
+a day later (see [Archiving and deletion](#archiving-and-deletion)); Pi cannot archive.
 
 The registry is the session-scoped document `agents.registry`:
 
@@ -489,7 +489,7 @@ side effects. Details and shutdown limitations:
 
 ## Reading an agent's chat
 
-Pi's `zoom("Name")` returns `agentTranscript(harness, name, context, page?)`: the agent's whole conversation, oldest
+Pi's `zoom("Name")` returns `agentTranscript(harness, context, name, page?)`: the agent's whole conversation, oldest
 first, in the format of upstream UniiChat's agent log, one `i|kind: text` line per message with a blank line between:
 
 ```

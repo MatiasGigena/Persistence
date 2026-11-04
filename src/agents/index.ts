@@ -1,5 +1,4 @@
 import { type Context, copyJson, type Draft } from '@earendil-works/chord';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { type ImageContent, type Message, type TextContent, type ThinkingContent, type ToolCall } from '@earendil-works/pi-ai';
 import {
   AgentDoc, AssistantEntry, configure, defineDoc, defineTask, defineTool,
@@ -15,6 +14,7 @@ import {
 } from './roster.ts';
 import { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
 import { NotFound } from '../ui/errors.ts';
+import type { ArchiveTarget } from '../ui/types.ts';
 
 export { AGENT_NAME, DEFAULT_ROSTER, isAgentName, isKit, KITS, LOCAL_KITS } from './roster.ts';
 export { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
@@ -480,7 +480,7 @@ async function ensureStanding(tx: Tx, registry: Draft<AgentsState>, roster: Rost
  * `root.configure()`, and after each change to Pi's model, effort or tools.
  */
 export async function syncAgents(
-  harness: Pick<Session, 'commit'>, context: Context = BACKGROUND_CONTEXT, setup: AgentsSetup = {},
+  harness: Pick<Session, 'commit'>, context: Context, setup: AgentsSetup = {},
 ): Promise<void> {
   await harness.commit(async (tx) => {
     const registry = await tx.doc(AgentsDoc);
@@ -510,7 +510,7 @@ export type AgentsStopper = DocumentReader & {
  * every conversation is stopped, a standing agent's past sessions too. A stopped run reports nothing. Returns the
  * names stopped, `name` last; an unknown name stops nothing.
  */
-export async function stopAgents(source: AgentsStopper, context: Context = BACKGROUND_CONTEXT, name?: string): Promise<string[]> {
+export async function stopAgents(source: AgentsStopper, context: Context, name?: string): Promise<string[]> {
   const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
   const found = name === undefined ? undefined : find(agents, name);
   if (name !== undefined && !found) return [];
@@ -539,8 +539,11 @@ function deletedAgent(registry: Readonly<AgentsState> | undefined, name: string)
   return found && current !== undefined ? { name: found[0], conversationId: current, past: sessions.slice(0, -1), standing: false } : undefined;
 }
 
-/** The outcome of deleting an agent: the names removed (its subs first, the agent last), or why nothing was. */
-export type DeleteResult = { readonly deleted: readonly string[] } | { readonly error: string };
+/**
+ * The outcome of deleting an agent: the names removed (its subs first, the agent last), or why nothing was; `unknown`
+ * when no agent has that name.
+ */
+export type DeleteResult = { readonly deleted: readonly string[] } | { readonly error: string; readonly unknown?: true };
 
 /** The text `delete_agent` returns for a result. */
 export const deleteText = (result: DeleteResult): string => {
@@ -562,7 +565,7 @@ async function removeAgent(tx: Tx, registry: Draft<AgentsState>, name: string, b
   roster: Roster | undefined): Promise<DeleteResult> {
   const found = find(registry.agents, name);
   if (String(name).toLowerCase() === PI.toLowerCase()) return { error: 'Pi cannot be deleted.' };
-  if (!found) return { error: noAgent(registry.agents, name) };
+  if (!found) return { error: noAgent(registry.agents, name), unknown: true };
   if (found.standing || (roster && rosterEntry(roster, found.name))) {
     return { error: `${found.name} is a standing agent; it can be deleted only after it leaves the roster.` };
   }
@@ -597,16 +600,17 @@ const busyNames = async (source: DocumentReader, context: Context): Promise<Set<
 
 /**
  * Delete agent `name` and its sub agents for the host (see `removeAgent`): never Pi or a standing agent, never a busy
- * one. `roster` refuses its names even before a launch synced them. Returns the names deleted, or why none was.
+ * one. `roster` refuses its names even before a launch synced them. Returns the names deleted, subs first; throws the
+ * refusal, as `archiveAgents` and `restoreAgent` do (NotFound for an unknown name). The `delete_agent` tool returns
+ * the refusal as its text instead.
  */
-export async function deleteAgent(source: AgentsSource, context: Context = BACKGROUND_CONTEXT, name: string,
-  roster?: Roster): Promise<DeleteResult> {
+export async function deleteAgent(source: AgentsSource, context: Context, name: string, roster?: Roster): Promise<string[]> {
   const busy = await busyNames(source, context);
-  return source.commit(async (tx) => removeAgent(tx, await tx.doc(AgentsDoc), name, busy, roster), context);
+  const result = await source.commit(async (tx) => removeAgent(tx, await tx.doc(AgentsDoc), name, busy, roster), context);
+  if ('error' in result) throw result.unknown ? new NotFound(result.error) : new Error(result.error);
+  return [...result.deleted];
 }
 
-/** What to archive: one agent by name, or every ad-hoc (not standing) main agent. */
-export type ArchiveTarget = { readonly name: string } | { readonly adhoc: true };
 
 /**
  * The agents `target` archives in `agents`: a main agent with its subs, a sub alone, or every ad-hoc main agent with its
@@ -714,7 +718,7 @@ export async function purgeArchived(source: Pick<Session, 'commit'>, context: Co
  * Every spawned agent with its role, parent, conversation, busy state (a run in any of its conversations) and, when
  * archived, since when. Archived agents are left out unless `includeArchived`.
  */
-export async function listAgents(source: DocumentReader, context: Context = BACKGROUND_CONTEXT,
+export async function listAgents(source: DocumentReader, context: Context,
   options: { readonly includeArchived?: boolean } = {}): Promise<AgentInfo[]> {
   const agents = (await source.snapshot(AgentsDoc, context))?.agents ?? {};
   const rows = Object.entries(agents).map(([name, agent]) => ({ name, agent, archivedAt: archivedSince(agents, name) }))
@@ -753,7 +757,7 @@ function pageEnd(all: string, at: number, max: number): number {
  * go on; without it, the whole chat. `source` is the Harness or a tool's `api`; `name` may be "Pi".
  */
 export async function agentTranscript(
-  source: AgentsSource, name: string, context: Context = BACKGROUND_CONTEXT, page?: number,
+  source: AgentsSource, context: Context, name: string, page?: number,
 ): Promise<string> {
   const registry = await source.snapshot(AgentsDoc, context);
   // "Name#n" is a standing agent's session n, 1 the oldest; plain "Name" its current one.

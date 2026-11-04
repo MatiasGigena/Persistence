@@ -267,7 +267,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/memory/summarizer.ts` | Cheap compaction model choice and the pi-ai summarizer |
 | `src/memory/extension.ts` | The `uniichat` extension: `beforeRequest` view, logging hooks, `zoom` and `date` tools |
 | `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates |
-| `src/ui/types.ts` | The contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); imports nothing |
+| `src/ui/types.ts` | The contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); imports only protocol types |
 | `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
 | `src/ui/errors.ts` | `NotFound` and `Unavailable`: the session's refusals that the server reports as `not_found` and `unavailable` |
 | `src/ui/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |

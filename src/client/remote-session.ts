@@ -8,7 +8,8 @@ import type {
 } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
 import type { AttachedLink, LinkState } from '../ui/tui/app.ts';
-import type { ArchiveTarget, ChatFeed, ChatItem, MachineTarget, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
+import type { ArchiveTarget, ChatFeed, ChatItem, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
 
 /** What the session needs of its link; `ClientLink` (unix-link.ts) is one. */

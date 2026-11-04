@@ -14,7 +14,7 @@ import type { ToolDiagnostic, ToolExecutionApi, ToolExecutionResult, ToolRegistr
 import { jsonData, machineCall, machineTarget, machineToolResult } from '../protocol/machines.ts';
 import type { JsonData, MachineCall, MachineToolResult } from '../protocol/machines.ts';
 import { LIMITS } from '../protocol/messages.ts';
-import type { MachineTarget } from '../ui/types.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 import { errorCode, errorMessage } from '../protocol/util.ts';
 
 export interface MachineExecutorOptions {

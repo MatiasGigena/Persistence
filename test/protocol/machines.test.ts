@@ -5,7 +5,7 @@ import type { JsonData, MachineRegistration, MachineToolResult } from '../../src
 import { LIMITS, SOCKET_ONLY } from '../../src/protocol/messages.ts';
 import type { ClientMessage, ServerMessage } from '../../src/protocol/messages.ts';
 import { isParseError, parseClientMessage, parseServerMessage } from '../../src/protocol/parse.ts';
-import type { MachineTarget } from '../../src/ui/types.ts';
+import type { MachineTarget } from '../../src/protocol/machines.ts';
 
 const TARGET: MachineTarget = { machineId: 'laptop-1', label: 'My laptop', cwd: '/home/me/project' };
 const REGISTRATION: MachineRegistration = { target: TARGET, enabled: false };

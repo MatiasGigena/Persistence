@@ -9,7 +9,8 @@ import type {
 } from '@earendil-works/pi-durable';
 import { agentInputOf } from '../agents/entries.ts';
 import { isRecord } from '../protocol/util.ts';
-import type { ChatFeed, ChatImage, ChatItem } from './types.ts';
+import type { ChatFeed, ChatItem } from './types.ts';
+import type { ChatImage } from '../protocol/images.ts';
 
 /** Items kept per feed: the newest ones. */
 export const CAP = 200;

@@ -33,7 +33,8 @@ import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { Access, CatalogModels } from './models.ts';
 import { createMachineRouting } from '../machines/routing.ts';
 import type { RoutingDispatcher } from '../machines/routing.ts';
-import type { MachineTarget, SendOptions } from '../ui/types.ts';
+import type { SendOptions } from '../ui/types.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 import { userInput } from './models.ts';
 import { errorMessage } from '../protocol/util.ts';
 
@@ -345,7 +346,7 @@ export async function openInstance({
   const Unii = createUniiExtension({ memory,
     resolveAgentChat: async (name, page) => {
       if (!opened) throw new Error('Harness is not open');
-      return agentTranscript(opened, name, context, page);
+      return agentTranscript(opened, context, name, page);
     },
     // Upstream's "Agents at work now", read from the agents' runs so it never drifts from them.
     atWork: async () => opened ? (await listAgents(opened, context)).filter(agent => agent.busy).map(agent => agent.name) : [],

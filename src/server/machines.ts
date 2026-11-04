@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionResult } from '@earendil-works/pi-durable';
 import { MACHINE_TOOLS, jsonData } from '../protocol/machines.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult } from '../protocol/machines.ts';
-import type { MachineTarget } from '../ui/types.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 
 export interface MachinePeer {
   readonly isClosed: boolean;

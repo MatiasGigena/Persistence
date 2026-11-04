@@ -1,5 +1,11 @@
-import type { MachineTarget } from '../ui/types.ts';
 import { isRecord } from './util.ts';
+
+/** Where a request's tools run: a machine (`server` is the host itself) and a folder on it, with a label to show. */
+export interface MachineTarget {
+  readonly machineId: string;
+  readonly cwd: string;
+  readonly label: string;
+}
 
 export type JsonData = null | boolean | number | string | JsonData[] | { [key: string]: JsonData };
 export type MachineToolName = 'read' | 'write' | 'edit' | 'bash';

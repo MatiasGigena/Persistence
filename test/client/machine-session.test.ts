@@ -5,7 +5,7 @@ import { RemoteSession } from '../../src/client/remote-session.ts';
 import { ClientLink } from '../../src/client/unix-link.ts';
 import type { Connector } from '../../src/client/unix-link.ts';
 import { isParseError, parseClientMessage, parseServerMessage } from '../../src/protocol/parse.ts';
-import type { MachineTarget } from '../../src/ui/types.ts';
+import type { MachineTarget } from '../../src/protocol/machines.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
 import { memoryConnector } from './memory-link.ts';
 

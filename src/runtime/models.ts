@@ -6,7 +6,7 @@ import type { ModelRef, UserInput } from '@earendil-works/pi-durable';
 import { THINKING } from './thinking.ts';
 import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
-import type { ChatImage } from '../ui/types.ts';
+import type { ChatImage } from '../protocol/images.ts';
 import { errorMessage } from '../protocol/util.ts';
 
 /** What the listing and the checks read of pi-ai's Models (a pi-coding-agent ModelRuntime is one). */

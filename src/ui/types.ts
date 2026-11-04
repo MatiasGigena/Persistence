@@ -1,15 +1,9 @@
 // The contract between the host's state (src/ui/session.ts) and its clients: the terminal UI (src/ui/tui/), and
 // over the wire protocol (src/protocol/) the attached TUI and the web app. The session knows pi-durable, memory and
-// agents; clients know only these types. This file imports nothing, so the browser can type-check against it.
-
-/**
- * An image a message or tool result carries: base64 `data` of a `mimeType` in IMAGE_TYPES (src/protocol/images.ts).
- * On the wire, `data` is empty when the image is too large to send (LIMITS.image); clients then show a placeholder.
- */
-export interface ChatImage {
-  readonly mimeType: string;
-  readonly data: string;
-}
+// agents; clients know only these types. It imports only types from src/protocol/ (images, machine targets), which
+// has no Node or DOM imports either, so the browser can type-check against it.
+import type { ChatImage } from '../protocol/images.ts';
+import type { MachineTarget } from '../protocol/machines.ts';
 
 /** One block of a conversation, in order. Streaming blocks are updated in place by `id`. */
 export type ChatItem =
@@ -123,12 +117,6 @@ export interface SendOptions {
   readonly images?: readonly ChatImage[];
 }
 
-export interface MachineTarget {
-  readonly machineId: string;
-  readonly cwd: string;
-  readonly label: string;
-}
-
 /** The shared chat contract. Every method may reject; none waits for a model answer. */
 export interface UiSession {
   /** Pi's conversation. */
@@ -152,8 +140,8 @@ export interface UiSession {
   stopAgents(name?: string): Promise<readonly string[]>;
   /**
    * Archives one agent (with a main agent's sub agents), or every ad-hoc main agent: their work stops, and they are
-   * deleted a day later unless restored. Resolves with the names archived; rejects with a readable refusal (a
-   * standing agent, an unknown or already archived one).
+   * deleted a day later unless restored. Resolves with the names archived; an agent already archived keeps its time
+   * and is among them. Rejects with a readable refusal for a standing agent, and NotFound for an unknown one.
    */
   archiveAgents(target: ArchiveTarget): Promise<readonly string[]>;
   /** Restores an archived agent (with a main agent's sub agents). Resolves with the names restored; rejects readably. */
