@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { RemoteSession } from '../../src/client/remote-session.ts';
-import { RequestError } from '../../src/protocol/util.ts';
+import { RequestError } from '../../src/protocol/request-error.ts';
 import type { RemoteSessionOptions } from '../../src/client/remote-session.ts';
 import { ClientLink } from '../../src/client/unix-link.ts';
 import { CloseCode, ROOT_FEED } from '../../src/protocol/messages.ts';

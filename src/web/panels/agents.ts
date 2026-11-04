@@ -4,7 +4,7 @@
 import { ChatView, el } from '../chat-view.ts';
 import { activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
-import { RequestError } from '../../protocol/util.ts';
+import { RequestError } from '../../protocol/request-error.ts';
 import { byId, fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 

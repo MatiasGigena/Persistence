@@ -5,7 +5,7 @@ import { CloseCode, LIMITS } from '../protocol/messages.ts';
 import type { Op, Params, ResponseOf, Result, ServerMessage } from '../protocol/messages.ts';
 import { PROTOCOL } from '../protocol/version.ts';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
-import { RequestError } from '../protocol/util.ts';
+import { RequestError } from '../protocol/request-error.ts';
 
 /** What the link needs of a socket. */
 export interface SocketHandle {

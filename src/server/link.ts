@@ -21,6 +21,40 @@ export interface PeerLink {
   onClose(listener: () => void): void;
 }
 
+/** The receiving half of a PeerLink, the same for every transport; the transport feeds it `received` and `ended`. */
+export interface PeerInbox extends Pick<PeerLink, 'onMessage' | 'onClose'> {
+  /** One incoming message: delivered, or kept until the hub listens. */
+  received(text: string): void;
+  /** The connection is gone: told now, or as soon as the hub listens. */
+  ended(): void;
+}
+
+/** A PeerInbox: messages that arrive before the hub listens are kept for it, and a close before `onClose` is still told. */
+export function peerInbox(): PeerInbox {
+  let deliver: ((text: string) => void) | undefined;
+  let closed: (() => void) | undefined;
+  const early: string[] = [];
+  let gone = false;
+  return {
+    received(text) {
+      if (deliver) deliver(text);
+      else early.push(text);
+    },
+    ended() {
+      gone = true;
+      closed?.();
+    },
+    onMessage(listener) {
+      deliver = listener;
+      for (const text of early.splice(0)) listener(text);
+    },
+    onClose(listener) {
+      if (gone) queueMicrotask(listener);
+      else closed = listener;
+    },
+  };
+}
+
 /** The hub as transports see it. */
 export interface PeerHub {
   /** Starts the protocol on a new link: waits for `hello`, then `welcome`, `status` and the root snapshot. */

@@ -17,6 +17,7 @@ import type { Access, Devices, Refusal } from './auth.ts';
 import type { PeerHub, PeerLink } from './link.ts';
 import { createStaticFiles, DEFAULT_ROOTS, securityHeaders } from './static.ts';
 import type { StaticFiles, StaticRoots } from './static.ts';
+import { peerInbox } from './link.ts';
 
 /** The only address the web listener binds. */
 export const HOST = '127.0.0.1';
@@ -51,10 +52,7 @@ const rawText = (data: RawData): string =>
 
 /** A WebSocket as a PeerLink. Messages that arrive before the hub listens are kept for it. */
 function webLink(ws: WebSocket, login: string, device: Device): PeerLink {
-  let deliver: ((text: string) => void) | undefined;
-  let closed: (() => void) | undefined;
-  const early: string[] = [];
-  let gone = false;
+  const inbox = peerInbox();
   ws.on('message', (data, isBinary) => {
     if (isBinary) { ws.close(1003, 'binary frames are not part of the protocol'); return; }
     const text = rawText(data);
@@ -63,13 +61,9 @@ function webLink(ws: WebSocket, login: string, device: Device): PeerLink {
       ws.send(JSON.stringify(answer));
       return;
     }
-    if (deliver) deliver(text);
-    else early.push(text);
+    inbox.received(text);
   });
-  ws.on('close', () => {
-    gone = true;
-    closed?.();
-  });
+  ws.on('close', () => inbox.ended());
   return {
     peer: 'web',
     who: `${login}/${device.name}`,
@@ -83,14 +77,8 @@ function webLink(ws: WebSocket, login: string, device: Device): PeerLink {
       // A close frame's reason is at most 123 bytes; `bye` carries the whole one.
       ws.close(code, cutBytes(reason, 123));
     },
-    onMessage(listener) {
-      deliver = listener;
-      for (const text of early.splice(0)) listener(text);
-    },
-    onClose(listener) {
-      if (gone) queueMicrotask(listener);
-      else closed = listener;
-    },
+    onMessage: inbox.onMessage,
+    onClose: inbox.onClose,
   };
 }
 

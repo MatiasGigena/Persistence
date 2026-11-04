@@ -6,7 +6,7 @@ import { el } from '../chat-view.ts';
 import { memoryHeader, sortModels } from '../format.ts';
 import { activeAgents, modelRef } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
-import { RequestError } from '../../protocol/util.ts';
+import { RequestError } from '../../protocol/request-error.ts';
 import { disablePush, enablePush, pushState } from '../push.ts';
 import type { PushState } from '../push.ts';
 import type { Link } from '../link.ts';

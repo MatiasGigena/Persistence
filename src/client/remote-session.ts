@@ -12,7 +12,8 @@ import type {
 } from '../ui/types.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
-import { errorMessage, RequestError } from '../protocol/util.ts';
+import { errorMessage } from '../protocol/util.ts';
+import { RequestError } from '../protocol/request-error.ts';
 
 /** What the session needs of its link; `ClientLink` (unix-link.ts) is one. */
 export interface ServerLink {

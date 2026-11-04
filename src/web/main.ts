@@ -6,7 +6,7 @@ import { guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, norm
 import { activeAgents } from '../ui/text.ts';
 import { errorMessage } from '../protocol/util.ts';
 import { Link } from './link.ts';
-import { RequestError } from '../protocol/util.ts';
+import { RequestError } from '../protocol/request-error.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
 import { agentsView } from './panels/agents.ts';
