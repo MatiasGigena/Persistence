@@ -5,7 +5,7 @@ import {
   TuiAltScreen, VStack,
 } from '@earendil-works/pi-tui';
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
-import type { ChatItem, UiSession } from '../types.ts';
+import type { AttachedLink, ChatItem, UiSession } from '../types.ts';
 import { ChatView } from './chat.ts';
 import { statusText, toolSummary } from '../text.ts';
 import type { NoticeLevel } from './chat.ts';
@@ -22,16 +22,6 @@ import { errorMessage } from '../../protocol/util.ts';
 
 /** Shows host text (a warning, a runtime report) as a notice in the chat. */
 export type ShowNotice = (text: string, level?: NoticeLevel) => void;
-
-/** The state of an attached TUI's link to the server: up, down and retrying, or closed for good. */
-export type LinkState = 'open' | 'reconnecting' | 'closed';
-
-/** An attached TUI's link to the server (src/client/), as the TUI sees it. */
-export interface AttachedLink {
-  state(): LinkState;
-  /** Called after any change to `state()`. Returns an unsubscribe function. */
-  onChange(listener: () => void): () => void;
-}
 
 export interface TuiInfo {
   /** Base directory of Tab path completion. */

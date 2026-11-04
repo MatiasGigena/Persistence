@@ -85,8 +85,8 @@ host only through `src/ui/types.ts`. The wording it shares with the web app (too
   (`connection.ts`: handshake, ops, per-feed sync by `diffItems`, backpressure, keepalive), agent feeds opened
   once by refcount, the remote tools policy and optional idle tools-off, and the push triggers.
   `machines.ts` brokers tool calls to the authenticated connector matching their immutable machine/cwd,
-  waits when it is offline or disabled, and never falls back to server tools. `admin.ts` is the CLI's
-  side of `backup`, `serve pair` and `serve devices`; `backup.ts` writes backups as the writer (ADR 0022);
+  waits when it is offline or disabled, and never falls back to server tools. The CLI's side of `backup`,
+  `serve pair`, `serve devices` and `serve agents` is `src/client/admin.ts`; `backup.ts` writes backups as the writer (ADR 0022);
   `store.ts` holds `serve/`'s JSON files.
 - **Runtime** (`src/runtime/`): opens SQLite and the pi-durable `Harness`,
   installs the coding/routing, memory and agents extensions plus the tool kits' (`browser`, `web-fetch`, `autoreview`),
@@ -254,6 +254,8 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/cli.ts` | Entry: parses arguments, checks Node, selects SSH/bridge before local state; otherwise resolves paths and runs the host under `flock` |
 | `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file, `PI_DURABLE_CHROMIUM`) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
+| `src/host/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
+| `src/host/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
 | `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`, `autoreview`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers and Pi's SSH agent included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read`, `coding` or `autoreview`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/ssh-agent.ts` | `startSshAgent`: Pi's own `ssh-agent` with `PI_DURABLE_SSH_KEYS` only, bash's `SSH_AUTH_SOCK` (ADR 0030); started by `openInstance` and by an SSH connector |
@@ -271,8 +273,6 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/ui/types.ts` | The contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); imports only protocol types |
 | `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
 | `src/ui/errors.ts` | `NotFound` and `Unavailable`: the session's refusals that the server reports as `not_found` and `unavailable` |
-| `src/ui/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
-| `src/ui/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
 | `src/ui/tui/app.ts`, `chat.ts`, `footer.ts`, `theme.ts` | The terminal chat: pi-tui layout and editor, the chat blocks, the one-line status, the palette |
 | `src/ui/tui/panels/*` | The `/agents`, `/mem`, `/model` and `/effort` overlays and their shared frame, lists and confirmation box |
 | `src/providers/claude-cli.ts` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
@@ -309,7 +309,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/server/hub.ts` | `Hub` (the `PeerHub`): connections, the op handlers, agent feeds by refcount, notices, the tools policy and idle tools-off, push triggers and their suppression |
 | `src/server/connection.ts` | `Connection`: one peer's handshake, requests (peer checks, in-flight limit), feed and status sync (`diffItems`, ≤50 ms, gated on `buffered()`, status ≤4/s), slow-peer and silence closes, visibility |
 | `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing; `lineSplitter` |
-| `src/server/admin.ts` | The CLI's admin client: `adminRequest` over the socket (owner checked), `backupOverSocket`, `pairCommand`, `devicesCommand`, `agentsCommand` |
+| `src/client/admin.ts` | The CLI's admin client: `adminRequest` over the socket (owner checked), `backupOverSocket`, `pairCommand`, `devicesCommand`, `agentsCommand` |
 | `src/server/backup.ts` | `backup` (`VACUUM INTO` and the `.unii` (browser profiles left out) and settings copies in one step, then `prune`), `backupOffline`, `stamp` |
 | `src/server/store.ts` | `writeJson`, `readJson`, `jsonFile`, and narrowing helpers for `serve/`'s JSON files (mode 600, atomic) |
 | `src/server/link.ts` | The seams: `PeerLink`, `PeerHub`, `DeviceRegistry`, `PushNotifier` |
@@ -327,7 +327,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/server/push.ts` | `createPush`: Web Push on `node:crypto` (VAPID, aes128gcm), the key pair in `serve/vapid.json` and the subscriptions in `serve/push.json`; the `PushNotifier` the hub calls |
 | `tsconfig.json` | Strict TypeScript for `tsc` (no emit): erasable syntax only, `.ts` import specifiers |
 | `eslint.config.ts` | typescript-eslint rules: no `any`, written or inferred, and no suppression comments |
-| `test/host/` | CLI parsing, paths, global chat, flock, shutdown |
+| `test/host/` | CLI parsing, paths, global chat, flock, shutdown, the `UiSession` over pi-durable (chat items, agents, memory) |
 | `test/runtime/` | Reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript, protected folders, Pi's SSH agent |
 | `test/memory/` | Log, tree, view, compactor, extension |
 | `test/agents/` | Roles, messaging, stops, reports, `zoom("Name")` pages, exactly-once delivery across close and SIGKILL; an agent's view and compaction through the host wiring |

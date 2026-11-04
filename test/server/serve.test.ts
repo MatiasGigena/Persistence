@@ -11,7 +11,7 @@ import type { ChatItem, ServerMessage } from '../../src/protocol/messages.ts';
 import { applyOps } from '../../src/protocol/mirror.ts';
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
-import { agentLine } from '../../src/server/admin.ts';
+import { agentLine } from '../../src/client/admin.ts';
 import { lineSplitter } from '../../src/server/transport-unix.ts';
 import { serve } from '../../src/server/serve.ts';
 import { Devices } from '../../src/server/auth.ts';

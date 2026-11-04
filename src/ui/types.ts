@@ -1,4 +1,4 @@
-// The contract between the host's state (src/ui/session.ts) and its clients: the terminal UI (src/ui/tui/), and
+// The contract between the host's state (src/host/session.ts) and its clients: the terminal UI (src/ui/tui/), and
 // over the wire protocol (src/protocol/) the attached TUI and the web app. The session knows pi-durable, memory and
 // agents; clients know only these types. It imports only types from src/protocol/ (images, machine targets), which
 // has no Node or DOM imports either, so the browser can type-check against it.
@@ -177,4 +177,14 @@ export interface UiSession {
    * Returns an unsubscribe function.
    */
   onNotice(listener: (text: string, level: NoticeLevel) => void): () => void;
+}
+
+/** The state of an attached TUI's link to the server: up, down and retrying, or closed for good. */
+export type LinkState = 'open' | 'reconnecting' | 'closed';
+
+/** An attached TUI's link to the server (src/client/), as the TUI sees it. */
+export interface AttachedLink {
+  state(): LinkState;
+  /** Called after any change to `state()`. Returns an unsubscribe function. */
+  onChange(listener: () => void): () => void;
 }

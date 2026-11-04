@@ -7,8 +7,9 @@ import type {
   ErrorCode, Op, Params, RequestOf, Response, ResponseOf, Result, ServerMessage, Welcome,
 } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
-import type { AttachedLink, LinkState } from '../ui/tui/app.ts';
-import type { ArchiveTarget, ChatFeed, ChatItem, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
+import type {
+  ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, ViewLine,
+} from '../ui/types.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
 

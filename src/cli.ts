@@ -7,7 +7,7 @@ import { remoteChat } from './client/remote.ts';
 import { HELP, VERSION, parseArgs, resolveOptions, resolveSocketPath, statePaths } from './host/config.ts';
 import { errorCode, errorMessage } from './protocol/util.ts';
 import type { Config } from './host/config.ts';
-import { agentsCommand, backupOverSocket, devicesCommand, formatBytes, NoServer, pairCommand } from './server/admin.ts';
+import { agentsCommand, backupOverSocket, devicesCommand, formatBytes, NoServer, pairCommand } from './client/admin.ts';
 
 /** `backup` through the running server; false when none answers (then the backup takes the flock itself). */
 async function backupViaServer(config: Config): Promise<boolean> {

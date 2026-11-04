@@ -44,14 +44,14 @@ claude-ready'`, and one prompt that makes Pi read a file.
 ## Test layout
 
 ```
-test/host/       CLI parsing, paths, global chat, flock, shutdown
+test/host/       CLI parsing, paths, global chat, flock, shutdown, the UiSession
 test/runtime/    reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript
 test/memory/     log, tree, view, compactor, uniichat extension
 test/agents/     roles, messaging, delivery across close and SIGKILL
 test/providers/  claude-cli with a fake CLI, stub MCP server, subscription check
 test/protocol/   wire messages and parsers, item diff and mirror (randomized, seeded)
 test/tools/      browser and its egress proxy, web_fetch, autoreview, show_image, code mode
-test/ui/         chat items, the TUI and its panels
+test/ui/         the shared wording, the TUI and its panels
 test/server/     hub, auth, Unix socket and WebSocket transports, push, backups, static files
 test/client/     attach, remote session, SSH link and bridge, client config
 test/machines/   routing, the execution broker and the local executor
