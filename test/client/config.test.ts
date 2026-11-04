@@ -67,7 +67,8 @@ test('configuration is atomic/private and stores no launch tools permission', as
 test('malformed, unknown, or unsafe saved settings reject; --local explicitly bypasses them', async t => {
   const { env } = await fixture(t);
   // Each refusal says what is wrong, so a hand edit can be fixed without guessing.
-  for (const [value, why] of [['{', 'it is not valid JSON'], ['[]', 'it must be an object like {"machineId":…,"ssh":{"host":…}}'],
+  const parseError = ((): string => { try { JSON.parse('{'); return ''; } catch (error) { return error instanceof Error ? error.message : ''; } })();
+  for (const [value, why] of [['{', `it is not valid JSON (${parseError})`], ['[]', 'it must be an object like {"machineId":…,"ssh":{"host":…}}'],
     ['{}', 'machineId must be a UUID'], [JSON.stringify({ machineId: 'not-an-id' }), 'machineId must be a UUID'],
     [JSON.stringify({ machineId: id, allowTools: true }), 'unknown key allowTools'],
     [JSON.stringify({ machineId: id, ssh: { host: '-oProxyCommand=bad' } }), 'Invalid SSH host: use [user@]host (configure ports in ~/.ssh/config)'],

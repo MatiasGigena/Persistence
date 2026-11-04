@@ -36,9 +36,11 @@ export async function readClientConfig(env: NodeJS.ProcessEnv = process.env): Pr
   let text: string;
   try { text = await readFile(path, 'utf8'); }
   catch (error) { if (errorCode(error) === 'ENOENT') return undefined; throw error; }
-  const invalid = (why: string): never => { throw new Error(`Invalid remote client configuration at ${path}: ${why}; fix it or use --local`); };
+  const invalid = (why: string, cause?: unknown): never => {
+    throw new Error(`Invalid remote client configuration at ${path}: ${why}; fix it or use --local`, cause === undefined ? undefined : { cause });
+  };
   let value: unknown;
-  try { value = JSON.parse(text); } catch { return invalid('it is not valid JSON'); }
+  try { value = JSON.parse(text); } catch (error) { return invalid(`it is not valid JSON (${errorMessage(error)})`, error); }
   if (!isRecord(value)) return invalid('it must be an object like {"machineId":…,"ssh":{"host":…}}');
   if (!validId(value.machineId)) return invalid('machineId must be a UUID');
   const extra = Object.keys(value).find(key => !['machineId', 'ssh'].includes(key));
