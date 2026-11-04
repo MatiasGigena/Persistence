@@ -382,7 +382,7 @@ describe('claude-cli provider (fake claude)', { timeout: 30_000 }, () => {
     ]);
     // src/runtime is not typed yet: name what this test uses of the instance.
     const instance: { root: Conversation; context: Context; memory?: { jobs: number }; close(): Promise<void> } = await openInstance({
-      databasePath: join(cwd, 'state', 'chat.sqlite'), cwd, allowTools: true, models: cli.models,
+      protection: 'unguarded', databasePath: join(cwd, 'state', 'chat.sqlite'), cwd, allowTools: true, models: cli.models,
       model: { provider: 'claude-cli', modelId: 'haiku' }, onReport: undefined });
     try {
       assert.equal(instance.memory?.jobs, 2, 'claude-cli compactions run 2 at a time');

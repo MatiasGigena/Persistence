@@ -25,7 +25,7 @@ const currentText = (user: string) => user.includes(TURN_HEAD) ? user.slice(user
 async function temporary(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-routing-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  return { cwd, databasePath: join(cwd, 'chat.sqlite') };
+  return { cwd, databasePath: join(cwd, 'chat.sqlite'), protection: 'unguarded' as const };
 }
 
 function recorder() {

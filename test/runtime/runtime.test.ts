@@ -37,7 +37,7 @@ const isPending = (message: Serializable): message is Pending & Serializable => 
 async function temporaryInstance(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-runtime-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  return { cwd, databasePath: join(cwd, 'state', 'instance.sqlite') };
+  return { cwd, databasePath: join(cwd, 'state', 'instance.sqlite'), protection: 'unguarded' as const };
 }
 
 async function ask(instance: Instance, content: string, requestId?: string) {

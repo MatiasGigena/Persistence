@@ -17,7 +17,7 @@ import { offlineModels } from '../fixtures/faux-model.ts';
 async function temporary(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-codemode-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  return { cwd, databasePath: join(cwd, 'state', 'instance.sqlite') };
+  return { cwd, databasePath: join(cwd, 'state', 'instance.sqlite'), protection: 'unguarded' as const };
 }
 
 const script = (code: string) => fauxAssistantMessage(fauxToolCall(CODEMODE_TOOL_NAME, { code }), { stopReason: 'toolUse' });

@@ -20,7 +20,7 @@ const catalog = offlineModels([async () => {
 try {
   if (databasePath === undefined || cwd === undefined) throw new Error('usage: pending-submission.ts <databasePath> <cwd> [requestId]');
   if (!process.send) throw new Error('pending-submission.ts needs an IPC channel');
-  const instance = await openInstance({ databasePath, cwd, ...catalog });
+  const instance = await openInstance({ protection: 'unguarded', databasePath, cwd, ...catalog });
   const submission = await instance.root.submit({
     type: 'input', content: 'Recover this pending question exactly once.', requestId,
   }, instance.context);

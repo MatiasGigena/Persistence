@@ -1,14 +1,13 @@
 import { createInterface } from 'node:readline/promises';
 import { resolve } from 'node:path';
-import { format } from 'node:util';
 import type { Interface } from 'node:readline/promises';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { cleanupSessionResources } from '@earendil-works/pi-ai';
 import type { Message, Models } from '@earendil-works/pi-ai';
 import type { ConversationView, ConversationWatch, EntryRecord } from '@earendil-works/pi-durable';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
-import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
-import { openInstance, transcript, answerText } from '../runtime/runtime.ts';
+import { protection, sandboxProblem } from '../runtime/guard.ts';
+import { answerText, launchOptions, openInstance, reportText, transcript } from '../runtime/runtime.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { isWork, resumeInstance, settleAgents } from '../runtime/recovery.ts';
 import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts';
@@ -16,18 +15,18 @@ import { agentInputOf, listAgents } from '../agents/index.ts';
 import { claudeCliProvider } from '../providers/claude-cli.ts';
 import { backupOffline } from '../server/backup.ts';
 import { formatBytes } from '../ui/text.ts';
+import { redirectConsole } from '../runtime/console.ts';
 import { serve } from '../server/serve.ts';
 import { createUiSession } from '../session/session.ts';
 import { isCommand, runTui } from '../ui/tui/app.ts';
 import { parseConfig } from '../config/options.ts';
 import type { Config } from '../config/options.ts';
-import { errorMessage, isRecord } from '../protocol/util.ts';
+import { errorMessage } from '../protocol/util.ts';
 import type { ModelSource } from '../config/options.ts';
 
 // Internal entry point: src/cli.ts owns the database flock for this process.
 const textContent = (content: Message['content'] | undefined): string => typeof content === 'string' ? content
   : (content ?? []).flatMap(block => block.type === 'text' ? [block.text] : []).join('');
-const field = (value: unknown, key: string): unknown => isRecord(value) ? value[key] : undefined;
 
 /** An agent's report as its name and text: what the terminal UI shows, without the note to Pi its model text ends with. */
 function reportOf(entry: EntryRecord): { name: string; text: string } | undefined {
@@ -111,14 +110,11 @@ async function send({ root, context }: Instance, prompt: string, requestId?: str
 // warnings) becomes host notices, which the session hands to every client as chat notices.
 async function chatTui(instance: Instance, config: Config, signal: AbortSignal): Promise<void> {
   const session = await createUiSession(instance, config);
-  const { error, warn } = console;
+  let restore = (): void => undefined;
   try {
-    await runTui(session, { cwd: config.cwd, signal, onStart: () => {
-      console.error = console.warn = (...args: unknown[]) => session.notify(format(...args), 'warn');
-    } });
+    await runTui(session, { cwd: config.cwd, signal, onStart: () => { restore = redirectConsole(text => session.notify(text, 'warn')); } });
   } finally {
-    console.error = error;
-    console.warn = warn;
+    restore();
     await session.close();
   }
 }
@@ -195,9 +191,8 @@ async function runHost(config: Config): Promise<void> {
     if (config.command === 'serve') return serve(config, { models, signal: shutdown.signal });
     // The sandbox probe (it runs bwrap once) never rejects, and runs while the chat opens.
     const sandbox = config.allowTools && !config.inspectOnly ? sandboxProblem(protection(config)) : undefined;
-    const opened = await openInstance({ ...config, models, configureAgent: !config.inspectOnly, protection: protection(config), sshKeys: sshKeys(),
-      onWarning: message => console.error(`Pi Durable: ${message}`),
-      onReport: report => console.error(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
+    const opened = await openInstance({ ...launchOptions(config, models),
+      onWarning: message => console.error(`Pi Durable: ${message}`), onReport: report => console.error(`Pi Durable: ${reportText(report)}`) });
     instance = opened;
     const problem = await sandbox;
     if (problem) console.error(`Coding tools: bash is off. ${problem}`);

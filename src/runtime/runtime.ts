@@ -26,7 +26,7 @@ import { createShowImageExtension } from '../tools/show-image.ts';
 import { createCodemode } from '../tools/codemode.ts';
 import type { BrowserOptions } from '../tools/browser.ts';
 import { createWebFetchExtension } from '../tools/web-fetch.ts';
-import { GuardedEnv } from './guard.ts';
+import { GuardedEnv, protection as protectionOf, sshKeys as sshKeysOf } from './guard.ts';
 import { startSshAgent } from './ssh-agent.ts';
 import type { Protection } from './guard.ts';
 import { accessProblem, catalogProblem, checkAccess } from './models.ts';
@@ -36,7 +36,8 @@ import type { RoutingDispatcher } from '../machines/routing.ts';
 import type { SendOptions } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import { userInput } from './input.ts';
-import { errorMessage } from '../protocol/util.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
+import type { Config } from '../config/options.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;
@@ -55,9 +56,12 @@ export interface InstanceOptions {
   readonly thinkingLevel?: ModelThinkingLevel;
   /** Enable the coding tools for this launch. */
   readonly allowTools?: boolean;
-  /** Folders the coding tools may not touch (src/runtime/guard.ts); without it they run unguarded (tests). */
-  readonly protection?: Protection;
-  /** PI_DURABLE_SSH_KEYS: with `protection`, bash's SSH agent holds these keys alone (ADR 0030); default none. */
+  /**
+   * Folders the coding tools may not touch (src/runtime/guard.ts). Required, so a caller cannot run the tools
+   * unguarded by leaving it out: only tests pass 'unguarded', for a bare NodeExecutionEnv.
+   */
+  readonly protection: Protection | 'unguarded';
+  /** PI_DURABLE_SSH_KEYS: with a `protection`, bash's SSH agent holds these keys alone (ADR 0030); default none. */
   readonly sshKeys?: readonly string[];
   /** false inspects: no memory opened, the persisted agent left untouched. */
   readonly configureAgent?: boolean;
@@ -309,6 +313,23 @@ function compactionFor(model: ModelRef | undefined, models: Models): { compactio
  * Open the one persisted root (Pi, the UniiChat chat) without starting interrupted work.
  * Pi's context is its memory view (src/memory); its agents are src/agents.
  */
+/**
+ * The InstanceOptions a launch's Config gives, the same for the terminal host and the server: its paths, model and
+ * roster, the coding tools held to the chat's protected folders, and PI_DURABLE_SSH_KEYS. Each caller adds its own
+ * warning and report handlers (and the server its dispatcher).
+ */
+export function launchOptions(config: Config, models: Models): InstanceOptions {
+  const { databasePath, memoryDir, cwd, model, thinkingLevel, allowTools, roster, chromium, authFile } = config;
+  return { databasePath, memoryDir, cwd, model, thinkingLevel, allowTools, roster, chromium, authFile, models,
+    configureAgent: !config.inspectOnly, protection: protectionOf(config), sshKeys: sshKeysOf() };
+}
+
+/** A runtime report (an `onReport` value) as one line: its error's message, else its own message or kind. */
+export function reportText(report: unknown): string {
+  const field = (value: unknown, key: string): unknown => isRecord(value) ? value[key] : undefined;
+  return String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report');
+}
+
 export async function openInstance({
   databasePath,
   memoryDir = databasePath.replace(/(\.sqlite)?$/, '.unii'),
@@ -335,8 +356,9 @@ export async function openInstance({
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Started even with the tools off: /tools on needs no restart. Inspection runs no tools.
-  const sshAgent = protection && configureAgent ? await startSshAgent(sshKeys, message => onWarning?.(message)) : undefined;
-  const guarded = protection && sshAgent ? { ...protection, sshAgent: sshAgent.socket } : protection;
+  const fence = protection === 'unguarded' ? undefined : protection;
+  const sshAgent = fence && configureAgent ? await startSshAgent(sshKeys, message => onWarning?.(message)) : undefined;
+  const guarded = fence && sshAgent ? { ...fence, sshAgent: sshAgent.socket } : fence;
   // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
   const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models) }) : undefined;
   let opened: Harness | undefined;

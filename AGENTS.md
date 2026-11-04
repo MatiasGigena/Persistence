@@ -11,7 +11,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/config/`: every mode's process configuration: `options.ts` (CLI parsing, `--help`, the resolved `Config`), `paths.ts` (`statePaths`, the socket, `serve`'s environment), `settings.json` and the standing-agent roster in `settings.ts`.
 - `src/host/host.ts`: the spawned process's entry and composition root: terminal chat, /commands, reply watcher, and the dispatch to `serve` and offline backup.
 - `src/session/`: `session.ts` and `feed.ts`, the host's state as a `UiSession` (pi-durable's conversation views, memory and agents turned into chat items), shared by the terminal host and the server.
-- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends).
+- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends), `console.ts` (stray console output as chat notices).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks; `roster.ts`: the standing agents and kit names; `entries.ts`: the input entry kinds and their decoder.
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and
@@ -50,7 +50,7 @@ A change is done when both pass and the docs below still match the code.
 - **Tools on, held to protected folders.** A local launch and `serve` start with coding tools on unless
   `--no-tools` is passed (ADR 0025). Every tool runs through `GuardedEnv` (`src/runtime/guard.ts`): the chat's
   state and credentials hidden, system folders read-only, bash in bubblewrap; never hand the tools a bare
-  `NodeExecutionEnv` outside tests. `/tools on|off`
+  `NodeExecutionEnv` outside tests (`openInstance` requires a `protection`; only tests pass `'unguarded'`). `/tools on|off`
   switches them for the current launch only; never persist that choice. Launch config and the toggle share
   one tool list (`piTools`), and both reconfigure Pi and its agents. Remote SSH connectors have an additional
   local grant: their tools start **off** unless `--allow-tools` is explicit or `/tools on` confirms them. Neither

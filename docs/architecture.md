@@ -265,6 +265,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/runtime/input.ts` | `userInput`: the user message a send becomes (text and images), shared by the runtime and routing |
 | `src/runtime/thinking.ts` | `THINKING` and `isThinkingLevel`: the reasoning efforts the CLI, settings and `/effort` accept |
 | `src/runtime/files.ts` | `atomicWrite` and `appendJson`: fsynced writes for settings, the server's stores and the memory directory |
+| `src/runtime/console.ts` | `redirectConsole`: console.error and console.warn as chat notices while the TUI or the server runs |
 | `src/memory/index.ts` | Public exports of the memory |
 | `src/memory/memory.ts` | `Memory`: log, tree, views, compactor scheduling, zoom, date, status; `openMemory` |
 | `src/memory/view.ts` | The view: tree lines tiling the log, sawtooth merging, `cut` |

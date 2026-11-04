@@ -242,7 +242,7 @@ test('flock rejects a second host and a symlink alias; status needs no credentia
   const folder = await mkdtemp(join(tmpdir(), 'pi-durable-lock-'));
   t.after(() => rm(folder, { recursive: true, force: true }));
   const databasePath = join(folder, 'session.sqlite');
-  const instance = await openInstance({ databasePath, cwd: folder, models: createModels(), configureAgent: false });
+  const instance = await openInstance({ protection: 'unguarded', databasePath, cwd: folder, models: createModels(), configureAgent: false });
   await instance.close();
   const alias = join(folder, 'alias.sqlite');
   await symlink(databasePath, alias);

@@ -1,7 +1,7 @@
 // Attaching the terminal UI to a running server (ADR 0018): an interactive launch probes the chat's socket, and
 // when a server answers it runs the TUI here on a RemoteSession, with no flock, ModelRuntime or Harness in this
 // process. Otherwise src/cli.ts takes the local path. Detaching leaves the server working.
-import { format } from 'node:util';
+import { redirectConsole } from '../runtime/console.ts';
 import type { Terminal } from '@earendil-works/pi-tui';
 import { VERSION } from '../config/options.ts';
 import type { Config } from '../config/options.ts';
@@ -111,19 +111,18 @@ export async function runAttached(session: RemoteSession, io: AttachIo = {}): Pr
   io.signal?.addEventListener('abort', onAbort, { once: true });
   for (const [signal, handler] of handlers) process.on(signal, handler);
   // The TUI owns the screen: stray console output becomes a notice in the chat, as in the host.
-  const { error, warn } = console;
+  let restore = (): void => undefined;
   try {
     await runTui(session, {
       cwd: io.cwd ?? session.welcome()?.cwd ?? process.cwd(), signal: shutdown.signal, attached: session.attached,
       ...io.terminal ? { terminal: io.terminal } : {}, ...io.env ? { env: io.env } : {},
       onStart: () => {
-        console.error = console.warn = (...args: unknown[]) => session.notify(format(...args), 'warn');
+        restore = redirectConsole(text => session.notify(text, 'warn'));
         if (io.initialNotice) session.notify(io.initialNotice);
       },
     });
   } finally {
-    console.error = error;
-    console.warn = warn;
+    restore();
     for (const [signal, handler] of handlers) process.off(signal, handler);
     io.signal?.removeEventListener('abort', onAbort);
   }

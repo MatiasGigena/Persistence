@@ -34,7 +34,7 @@ function slowModels(responses: FauxResponseStep[]): OfflineModels {
 async function open(t: TestContext, responses: FauxResponseStep[], { allowTools = false, slow = false }: Options = {}) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-ui-'));
   const catalog = slow ? slowModels(responses) : offlineModels(responses);
-  const instance = await openInstance({ databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools, ...catalog });
+  const instance = await openInstance({ protection: 'unguarded', databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools, ...catalog });
   const session = await createUiSession(instance, { model: catalog.model, thinkingLevel: 'high', allowTools }, { refreshMs: 50 });
   t.after(async () => {
     await session.close();
@@ -143,7 +143,7 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     models.setProvider(blind.provider);
     const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-ui-'));
     const model = { provider: blind.getModel().provider, modelId: 'blind' };
-    const instance = await openInstance({ databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools: false, models, model });
+    const instance = await openInstance({ protection: 'unguarded', databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools: false, models, model });
     const other = await createUiSession(instance, { model, thinkingLevel: 'high', allowTools: false }, { refreshMs: 50 });
     t.after(async () => { await other.close(); await instance.close(); await rm(cwd, { recursive: true, force: true }); });
     await assert.rejects(other.send('look', { images: [image] }), /does not take images; nothing was sent/);
@@ -336,7 +336,7 @@ async function openRoutes(t: TestContext, { inspect = false } = {}) {
   models.setProvider({ ...api.provider, auth: { apiKey: { name: 'Anthropic API key', resolve: async () => undefined } } });
   const model = { provider: 'faux', modelId: 'one' };
   const databasePath = join(cwd, 'chat.sqlite'), settingsPath = join(cwd, 'settings.json');
-  const instance = await openInstance({ databasePath, cwd, models, model, configureAgent: !inspect });
+  const instance = await openInstance({ protection: 'unguarded', databasePath, cwd, models, model, configureAgent: !inspect });
   const session = await createUiSession(instance, { model, thinkingLevel: 'high', allowTools: false, settingsPath }, { refreshMs: 50 });
   t.after(async () => {
     await session.close();
@@ -497,7 +497,7 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     models.setProvider(faux.provider);
     const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-sighted-'));
     const model = { provider: faux.getModel().provider, modelId: 'sees' };
-    const instance = await openInstance({ databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools: false, models, model });
+    const instance = await openInstance({ protection: 'unguarded', databasePath: join(cwd, 'chat.sqlite'), cwd, allowTools: false, models, model });
     const session = await createUiSession(instance, { model, thinkingLevel: 'off', allowTools: false }, { refreshMs: 50 });
     t.after(async () => { await session.close(); await instance.close(); await rm(cwd, { recursive: true, force: true }); });
     return { instance, session, provider: model.provider };
