@@ -7,7 +7,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { errorCode } from '../host/config.ts';
+import { errorCode } from '../protocol/util.ts';
 
 /** Where each URL prefix is served from. */
 export interface StaticRoots {

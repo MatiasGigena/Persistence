@@ -251,8 +251,6 @@ export function guessDeviceName(userAgent: string): string {
   return 'Browser';
 }
 
-export const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
 // ------------------------------------------------------------------------------------------------ the first load
 
 /** The loading rule's marks: under QUIET nothing new shows; until SLOW a skeleton; past it, a skeleton and a line. */

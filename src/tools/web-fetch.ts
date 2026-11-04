@@ -11,6 +11,7 @@ import { obj, str } from '@earendil-works/pi-schema';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 
 /**
  * `web_fetch(url)`: a page as readable Markdown (Readability, Turndown), a PDF as text (unpdf), at most 50,000
@@ -242,12 +243,12 @@ type Extracted = { title: string; content: string; error?: string };
 const isPDF = (url: URL, contentType: string) =>
   contentType.includes('application/pdf') || url.pathname.toLowerCase().endsWith('.pdf');
 
-const record = (value: unknown): Record<string, unknown> | undefined =>
-  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+/** `value` when it is a plain object, else undefined. */
+const asRecord = (value: unknown): Record<string, unknown> | undefined => isRecord(value) ? value : undefined;
 
 /** Call `target[method](...args)` on a pdf.js object this project has no types for, or throw. */
 async function callMethod(target: unknown, method: string, ...args: unknown[]): Promise<unknown> {
-  const fn = record(target)?.[method];
+  const fn = asRecord(target)?.[method];
   if (typeof fn !== 'function') throw new Error(`PDF: no ${method}()`);
   const value: unknown = await Reflect.apply(fn, target, args);
   return value;
@@ -256,11 +257,11 @@ async function callMethod(target: unknown, method: string, ...args: unknown[]): 
 /** One page's text, as unpdf's `extractText` joins it. */
 async function pageText(pdf: unknown, pageNumber: number): Promise<string> {
   const page = await callMethod(pdf, 'getPage', pageNumber);
-  const items = record(await callMethod(page, 'getTextContent'))?.items;
+  const items = asRecord(await callMethod(page, 'getTextContent'))?.items;
   if (!Array.isArray(items)) return '';
   const list: readonly unknown[] = items;
   return list.map((item) => {
-    const fields = record(item);
+    const fields = asRecord(item);
     return typeof fields?.str === 'string' ? fields.str + (fields.hasEOL === true ? '\n' : '') : '';
   }).join('');
 }
@@ -283,7 +284,7 @@ async function pdfContent(pdf: unknown, url: URL, signal: AbortSignal, meta: { r
   const urlTitle = basename(url.pathname, '.pdf').replace(/[_-]+/g, ' ').trim() || 'document';
   const title = metaTitle || urlTitle;
 
-  const numPages = record(pdf)?.numPages;
+  const numPages = asRecord(pdf)?.numPages;
   const totalPages = typeof numPages === 'number' ? numPages : 0;
   const maxPages = Math.min(totalPages, MAX_PDF_PAGES);
   // Page by page, the first 100 only, and stoppable: a long PDF must not hold the host past an abort or the timeout.
@@ -382,7 +383,7 @@ export function extractRSCContent(html: string): { title: string; content: strin
     const [marker, tag] = items;
     if (marker !== '$' || typeof tag !== 'string') return walkAll(items, inCode);
     if (SKIP_TAGS.has(tag)) return '';
-    const props = record(items[3]) ?? {};
+    const props = asRecord(items[3]) ?? {};
     const children: unknown = props.children;
     if (tag.startsWith('$L')) {
       const id = tag.slice(2);
@@ -448,7 +449,7 @@ const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fen
 function extractHTML(html: string): Extracted {
   // linkedom's types name DOM globals this project's lib leaves out; Readability only needs its document.
   const window: unknown = parseHTML(html);
-  const document: unknown = record(window)?.document;
+  const document: unknown = asRecord(window)?.document;
   const article = new Readability(document).parse();
   if (!article?.content) {
     const rsc = extractRSCContent(html);
@@ -508,7 +509,7 @@ export async function webFetch(raw: string, options: WebFetchOptions = {}, signa
   } catch (error) {
     if (signal?.aborted) return fail('Aborted');
     if (timeout.aborted) return fail(`Timed out after ${Math.round(timeoutMs / 1000)} s`);
-    return fail(error instanceof Error ? error.message : String(error));
+    return fail(errorMessage(error));
   }
   if (result.error) {
     // The JavaScript hint is for pages that loaded but would not extract, not for the server's own refusals.

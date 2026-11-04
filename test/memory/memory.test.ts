@@ -11,7 +11,8 @@ import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel, openMe
 import type { AppendInput, CompactionMessage, Memory, SummarizeOptions, Summarizer } from '../../src/memory/index.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 import { RULER } from '../../src/memory/prompt.ts';
-import { bytes, CAP, cutLine, flat, hash, isObject, NODE } from '../../src/memory/util.ts';
+import { bytes, CAP, cutLine, flat, hash, NODE } from '../../src/memory/util.ts';
+import { isRecord } from '../../src/protocol/util.ts';
 
 const fake: Summarizer = async (_system, messages, { node }) => `summary of ${node.name} (${messages[0]?.content.length} chars in)`;
 
@@ -159,7 +160,7 @@ describe('unii memory', { concurrency: false }, () => {
     const saved = m.view.parts.map(p => `${p.l}/${p.i}`);
     await m.close();
     const viewJson: unknown = JSON.parse(readFileSync(join(dir, 'view.json'), 'utf8'));
-    assert.ok(isObject(viewJson));
+    assert.ok(isRecord(viewJson));
     assert.deepEqual(viewJson.view, saved.map(k => k.split('/').map(Number)));
     const reopened = openMemory(dir, { summarize: fake, ...quiet }); // default 64-128 KB budget
     assert.deepEqual(reopened.view.parts.map(p => `${p.l}/${p.i}`), saved);
@@ -297,7 +298,7 @@ describe('unii memory', { concurrency: false }, () => {
       const kept = readFileSync(join(treeDir, file), 'utf8').split('\n').filter(line => {
         if (!line) return false;
         const n: unknown = JSON.parse(line);
-        return !(isObject(n) && `${String(n.l)}/${String(n.i)}` === lostKey);
+        return !(isRecord(n) && `${String(n.l)}/${String(n.i)}` === lostKey);
       });
       writeFileSync(join(treeDir, file), kept.map(line => `${line}\n`).join(''));
     }

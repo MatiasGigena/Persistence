@@ -8,6 +8,7 @@ import type { AgentStatus, ChatFeed, ChatItem, UiSession } from '../../types.ts'
 import { toolSummary } from '../chat.ts';
 import { clean, confirm, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
+import { errorMessage } from '../../../protocol/util.ts';
 
 export type { PanelTheme } from './frame.ts';
 
@@ -67,8 +68,6 @@ const ARCHIVED_KEY = ' archived';
 /** Deletion times are redrawn this often while the panel is open. */
 const CLOCK_MS = 60_000;
 
-const failure = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
 /** Opens the agents panel over the chat; resolves when it closes and the editor has focus again. */
 export function openAgentsPanel(tui: TUI, session: UiSession, theme: PanelTheme, now: () => number = Date.now): Promise<void> {
   /** The header's last outcome: what was archived or restored, or why not. */
@@ -126,23 +125,23 @@ export function openAgentsPanel(tui: TUI, session: UiSession, theme: PanelTheme,
   async function archiveOne(name: string): Promise<void> {
     const subs = activeAgents(session.status().agents).filter(a => a.role === 'sub' && a.parent === name).map(a => a.name);
     if (!await ask(archiveQuestion(name, subs))) return;
-    try { say(archivedText(await session.archiveAgents({ name }))); } catch (error) { say(failure(error), true); }
+    try { say(archivedText(await session.archiveAgents({ name }))); } catch (error) { say(errorMessage(error), true); }
   }
 
   async function archiveAdhoc(): Promise<void> {
     const names = adhocAgents(session.status().agents).map(a => a.name);
     if (!names.length) { say('No ad-hoc agents to archive.'); return; }
     if (!await ask(archiveAdhocQuestion(names))) return;
-    try { say(archivedText(await session.archiveAgents({ adhoc: true }))); } catch (error) { say(failure(error), true); }
+    try { say(archivedText(await session.archiveAgents({ adhoc: true }))); } catch (error) { say(errorMessage(error), true); }
   }
 
   async function restore(name: string): Promise<void> {
-    try { say(archivedText(await session.restoreAgent(name), true)); } catch (error) { say(failure(error), true); }
+    try { say(archivedText(await session.restoreAgent(name), true)); } catch (error) { say(errorMessage(error), true); }
   }
 
   async function openChat(name: string): Promise<void> {
     let feed: ChatFeed | undefined, failed = `No agent named ${name}.`;
-    try { feed = await session.agentChat(name); } catch (error) { failed = failure(error); }
+    try { feed = await session.agentChat(name); } catch (error) { failed = errorMessage(error); }
     if (frame.isClosed || frame.top() !== list) { void feed?.close().catch(() => undefined); return; }
     if (!feed) { frame.push(new TextView({ title: name, lines: () => [theme.error(failed)] })); return; }
     const chat = feed, renderer = new ChatRenderer(theme), unsubscribe = chat.subscribe(() => tui.requestRender());

@@ -1,4 +1,5 @@
 import type { MachineTarget } from '../ui/types.ts';
+import { isRecord } from './util.ts';
 
 export type JsonData = null | boolean | number | string | JsonData[] | { [key: string]: JsonData };
 export type MachineToolName = 'read' | 'write' | 'edit' | 'bash';
@@ -30,7 +31,6 @@ export interface MachineCall {
 export interface MachineResult { readonly t: 'machine.result'; readonly id: string; readonly result: MachineToolResult }
 export interface MachineCancel { readonly t: 'machine.cancel'; readonly id: string }
 
-const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 function text(value: unknown, max: number, what: string): string {
   if (typeof value !== 'string' || value.length < 1 || value.length > max || /[\u0000-\u001f\u007f]/u.test(value)) {
     throw new Error(`Invalid ${what}`);
@@ -38,7 +38,7 @@ function text(value: unknown, max: number, what: string): string {
   return value;
 }
 export function machineTarget(value: unknown): MachineTarget {
-  if (!record(value)) throw new Error('Invalid machine target');
+  if (!isRecord(value)) throw new Error('Invalid machine target');
   const machineId = text(value.machineId, 128, 'machine id');
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u.test(machineId)) throw new Error('Invalid machine id');
   const cwd = text(value.cwd, 4096, 'machine directory');
@@ -46,7 +46,7 @@ export function machineTarget(value: unknown): MachineTarget {
   return { machineId, cwd, label: text(value.label, 256, 'machine label') };
 }
 export function machineRegistration(value: unknown): MachineRegistration {
-  if (!record(value) || typeof value.enabled !== 'boolean') throw new Error('Invalid machine registration');
+  if (!isRecord(value) || typeof value.enabled !== 'boolean') throw new Error('Invalid machine registration');
   const target = machineTarget(value.target);
   if (target.machineId === 'server') throw new Error('The machine id server is reserved');
   return { target, enabled: value.enabled };
@@ -56,12 +56,12 @@ export function jsonData(value: unknown, depth = 0): JsonData {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (Array.isArray(value)) return (value as unknown[]).map(item => jsonData(item, depth + 1));
-  if (!record(value)) throw new Error('Invalid JSON value');
+  if (!isRecord(value)) throw new Error('Invalid JSON value');
   const entries = Object.entries(value).map(([key, item]) => [key, jsonData(item, depth + 1)] as const);
   return Object.fromEntries(entries);
 }
 export function machineToolResult(value: unknown): MachineToolResult {
-  if (!record(value)) throw new Error('Invalid machine result');
+  if (!isRecord(value)) throw new Error('Invalid machine result');
   const result: { output?: MachineToolResult['output']; structuredOutput?: JsonData; details?: JsonData; isError?: boolean; diagnostics?: MachineToolResult['diagnostics'] } = {};
   if (value.isError !== undefined) {
     if (typeof value.isError !== 'boolean') throw new Error('Invalid tool error flag');
@@ -70,7 +70,7 @@ export function machineToolResult(value: unknown): MachineToolResult {
   if (value.output !== undefined) {
     if (!Array.isArray(value.output)) throw new Error('Invalid tool output');
     result.output = (value.output as unknown[]).map(item => {
-      if (!record(item)) throw new Error('Invalid output block');
+      if (!isRecord(item)) throw new Error('Invalid output block');
       if (item.type === 'text' && typeof item.text === 'string') return { type: 'text', text: item.text };
       if (item.type === 'image' && typeof item.data === 'string' && typeof item.mimeType === 'string') {
         if (!/^image\/(png|jpeg|gif|webp|bmp)$/u.test(item.mimeType) || !/^[a-zA-Z0-9+/]*={0,2}$/u.test(item.data)) throw new Error('Invalid image output');
@@ -84,7 +84,7 @@ export function machineToolResult(value: unknown): MachineToolResult {
   if (value.diagnostics !== undefined) {
     if (!Array.isArray(value.diagnostics)) throw new Error('Invalid tool diagnostics');
     result.diagnostics = (value.diagnostics as unknown[]).map(item => {
-      if (!record(item) || (item.severity !== 'info' && item.severity !== 'warn' && item.severity !== 'error') || typeof item.message !== 'string'
+      if (!isRecord(item) || (item.severity !== 'info' && item.severity !== 'warn' && item.severity !== 'error') || typeof item.message !== 'string'
         || (item.code !== undefined && typeof item.code !== 'string')) throw new Error('Invalid tool diagnostic');
       return { severity: item.severity, message: item.message, ...typeof item.code === 'string' ? { code: item.code } : {} };
     });
@@ -92,11 +92,11 @@ export function machineToolResult(value: unknown): MachineToolResult {
   return result;
 }
 export function machineCall(value: unknown): MachineCall {
-  if (!record(value) || !record(value.args)) throw new Error('Invalid machine call');
+  if (!isRecord(value) || !isRecord(value.args)) throw new Error('Invalid machine call');
   const name = MACHINE_TOOLS.find(each => each === value.name);
   if (!name) throw new Error('Unknown machine tool');
   const args = jsonData(value.args);
-  if (!record(args)) throw new Error('Invalid machine arguments');
+  if (!isRecord(args)) throw new Error('Invalid machine arguments');
   return { t: 'machine.call', id: text(value.id, 512, 'execution id'), target: machineTarget(value.target), name, args };
 }
 export function executionId(value: unknown): string { return text(value, 512, 'execution id'); }

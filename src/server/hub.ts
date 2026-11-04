@@ -11,6 +11,7 @@ import type { ConnectionHost, Handlers } from './connection.ts';
 import type { DeviceRegistry, PeerHub, PeerLink, PushNotifier } from './link.ts';
 import { InvalidSubscription } from './push.ts';
 import type { MachineBroker } from './machines.ts';
+import { errorMessage } from '../protocol/util.ts';
 
 /** No push while some client was visible this recently. */
 export const VISIBLE_MS = 60_000;
@@ -247,7 +248,7 @@ export class Hub implements PeerHub {
     for (const connection of entry.watchers) connection.removeFeed(entry.id, reason);
     entry.watchers.clear();
     try { await entry.feed.close(); } catch (error) {
-      this.options.log(`closing the feed of ${entry.key} failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.options.log(`closing the feed of ${entry.key} failed: ${errorMessage(error)}`);
     }
   }
 
@@ -277,7 +278,7 @@ export class Hub implements PeerHub {
     try {
       await session.setTools(false);
     } catch (error) {
-      this.options.log(`turning idle coding tools off failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.options.log(`turning idle coding tools off failed: ${errorMessage(error)}`);
       return;
     }
     this.idleSince = undefined;
@@ -293,7 +294,7 @@ export class Hub implements PeerHub {
     if (enabled && confirm !== ENABLE_TOOLS) throw new OpError(ErrorCode.badRequest, `Turning tools on needs confirm: '${ENABLE_TOOLS}'.`);
     const was = session.status().toolsEnabled;
     try { await session.setTools(enabled); } catch (error) {
-      throw new OpError(ErrorCode.failed, error instanceof Error ? error.message : String(error));
+      throw new OpError(ErrorCode.failed, errorMessage(error));
     }
     if (enabled) this.idleSince = Date.now();
     this.current = session.status();
@@ -316,7 +317,7 @@ export class Hub implements PeerHub {
     try {
       names = 'archive' in change ? await session.archiveAgents(change.archive) : await session.restoreAgent(change.restore);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       throw new OpError(UNKNOWN_AGENT.test(message) ? ErrorCode.notFound : ErrorCode.failed, message);
     }
     if (!names.length) return { names };
@@ -357,7 +358,7 @@ export class Hub implements PeerHub {
       return this.options.push;
     };
     const failed = (error: unknown): OpError => error instanceof OpError ? error
-      : new OpError(ErrorCode.failed, error instanceof Error ? error.message : String(error));
+      : new OpError(ErrorCode.failed, errorMessage(error));
     return {
       'machine.register': async ({ registration }, connection) => {
         this.need();
@@ -414,7 +415,7 @@ export class Hub implements PeerHub {
       'memory.zoom': async ({ id, n }) => {
         const session = this.need();
         try { return { text: await session.zoom(id, n) }; } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = errorMessage(error);
           throw new OpError(/^Memory is not open/.test(message) ? ErrorCode.unavailable : ErrorCode.notFound, message);
         }
       },
@@ -472,7 +473,7 @@ export class Hub implements PeerHub {
         this.closeDevice(name, CloseCode.unauthorized, 'This device was revoked.');
         this.options.log(`device "${name}" revoked`);
         try { await this.options.revoked?.(name); } catch (error) {
-          this.options.log(`after revoking "${name}": ${error instanceof Error ? error.message : String(error)}`);
+          this.options.log(`after revoking "${name}": ${errorMessage(error)}`);
         }
         return null;
       },

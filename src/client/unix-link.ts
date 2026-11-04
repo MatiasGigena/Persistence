@@ -7,6 +7,7 @@ import { CloseCode } from '../protocol/messages.ts';
 import type { Bye, ClientMessage, Op, RequestOf, ServerMessage, Welcome } from '../protocol/messages.ts';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
 import { PROTOCOL } from '../protocol/version.ts';
+import { errorMessage } from '../protocol/util.ts';
 
 /** One connection's message channel, whatever carries it. */
 export interface Channel {
@@ -212,7 +213,7 @@ export class ClientLink {
     try { channel = await this.options.connect(events); } catch (error) {
       if (this.current === connection) this.current = undefined;
       if (error instanceof ForeignSocket) throw error;
-      throw new Failed(error instanceof Error ? error.message : String(error), false);
+      throw new Failed(errorMessage(error), false);
     }
     if (this.current !== connection) {
       channel.close();

@@ -2,6 +2,7 @@
 import { createConnection } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
 import { checkSocket } from './unix-link.ts';
+import { errorCode, errorMessage } from '../protocol/util.ts';
 
 export interface BridgeIo {
   readonly stdin?: Readable;
@@ -14,10 +15,9 @@ export interface BridgeIo {
   readonly timeoutMs?: number;
 }
 
-const readableError = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+const readableError = (error: unknown): string => errorMessage(error)
   .replace(/[\p{Cc}\p{Cf}]/gu, ' ').slice(0, 1024);
 
-const errorCode = (error: unknown): unknown => error instanceof Error && 'code' in error ? error.code : undefined;
 const START = 'Start it with pi-durable serve (or systemctl --user start pi-durable); a server with another data directory needs --remote-data-dir.';
 
 /** The bridge's usual failure, no server for this data directory, said plainly; any other error as it is. */

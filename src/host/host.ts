@@ -19,7 +19,8 @@ import { formatBytes } from '../server/admin.ts';
 import { serve } from '../server/serve.ts';
 import { createUiSession } from '../ui/session.ts';
 import { isCommand, runTui } from '../ui/tui/app.ts';
-import { errorMessage, isRecord, parseConfig } from './config.ts';
+import { parseConfig } from './config.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 import type { ModelSource } from './config.ts';
 
 // Internal entry point: src/cli.ts owns the database flock for this process.

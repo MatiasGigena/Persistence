@@ -10,6 +10,7 @@ import { clientConfigPath, machineId, readClientConfig, remoteTarget, saveClient
 import { RemoteSession } from './remote-session.ts';
 import { sshConnector } from './ssh-link.ts';
 import { ClientLink } from './unix-link.ts';
+import { errorMessage } from '../protocol/util.ts';
 
 /** Saves preferences, or runs the SSH TUI; undefined is the only route to local configuration. */
 export async function remoteChat(options: Options, env: NodeJS.ProcessEnv = process.env): Promise<number | undefined> {
@@ -51,12 +52,12 @@ export async function remoteChat(options: Options, env: NodeJS.ProcessEnv = proc
     if (message.t === 'ready') {
       registered = session.request('machine.register', { registration: { target, enabled } });
       registered.catch((error: unknown) => {
-        session.notify(error instanceof Error ? error.message : String(error), 'error');
+        session.notify(errorMessage(error), 'error');
         link.close();
       });
     } else if (message.t === 'machine.call') {
       void executor.execute(message).catch((error: unknown) => ({ isError: true,
-        output: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }] }))
+        output: [{ type: 'text' as const, text: errorMessage(error) }] }))
         .then(result => { link.send({ t: 'machine.result', id: message.id, result }); });
     } else if (message.t === 'machine.cancel') executor.cancel(message.id);
   });

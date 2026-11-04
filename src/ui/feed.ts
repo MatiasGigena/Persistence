@@ -8,7 +8,7 @@ import type {
   RunFailure, ToolSlot,
 } from '@earendil-works/pi-durable';
 import { MESSAGE_KIND, REPORT_KIND } from '../agents/index.ts';
-import { isRecord } from '../host/config.ts';
+import { isRecord } from '../protocol/util.ts';
 import type { ChatFeed, ChatImage, ChatItem } from './types.ts';
 
 /** Items kept per feed: the newest ones. */

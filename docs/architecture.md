@@ -257,13 +257,15 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/ssh-agent.ts` | `startSshAgent`: Pi's own `ssh-agent` with `PI_DURABLE_SSH_KEYS` only, bash's `SSH_AUTH_SOCK` (ADR 0030); started by `openInstance` and by an SSH connector |
 | `src/runtime/recovery.ts` | `resumeInstance` (pending tasks and queued input), `settleAgents` (wait until agents are idle) |
+| `src/runtime/thinking.ts` | `THINKING` and `isThinkingLevel`: the reasoning efforts the CLI, settings and `/effort` accept |
+| `src/runtime/files.ts` | `atomicWrite` and `appendJson`: fsynced writes for settings, the server's stores and the memory directory |
 | `src/memory/index.ts` | Public exports of the memory |
 | `src/memory/memory.ts` | `Memory`: log, tree, views, compactor scheduling, zoom, date, status; `openMemory` |
 | `src/memory/view.ts` | The view: tree lines tiling the log, sawtooth merging, `cut` |
 | `src/memory/prompt.ts` | The recipe's system prompt and the leaf and merge compaction tasks |
 | `src/memory/summarizer.ts` | Cheap compaction model choice and the pi-ai summarizer |
 | `src/memory/extension.ts` | The `uniichat` extension: `beforeRequest` view, logging hooks, `zoom` and `date` tools |
-| `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates, fsynced appends, atomic writes |
+| `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates |
 | `src/providers/claude-cli.ts` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
 | `src/providers/claude-cli-mcp.ts` | Stub stdio MCP server that lists Pi's tools to the CLI and runs none |
 | `src/providers/anthropic.ts` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
@@ -279,6 +281,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/protocol/diff.ts` | `diffItems` (item ops between what a peer has and the current items), `wireItem` and `clip` |
 | `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |
 | `src/protocol/version.ts` | `PROTOCOL` |
+| `src/protocol/util.ts` | `isRecord`, `errorMessage`, `errorCode`: the one copy of each, shared by Node and the browser |
 | `src/client/attach.ts` | `probes`, `connect` (the probe), `attachChat` (the CLI's attach routing), `runAttached` (the TUI on a server, "Detached; the server keeps working."), `serverAnswers` |
 | `src/client/remote-session.ts` | `RemoteSession`: a `UiSession` over a `ServerLink`; mirrors, status, notices, requests, `send` resent with its requestId after a reconnect, agent feeds re-opened; `attached` for `TuiInfo` |
 | `src/client/config.ts` | Stable machine identity, private `client.json`, saved SSH destination and fail-closed remote selection |

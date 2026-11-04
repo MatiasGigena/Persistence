@@ -12,6 +12,7 @@ import { PROTOCOL } from '../protocol/version.ts';
 import type { MachineCall, MachineCancel, MachineResult } from '../protocol/machines.ts';
 import type { ChatFeed } from '../ui/types.ts';
 import type { PeerLink } from './link.ts';
+import { errorMessage } from '../protocol/util.ts';
 
 /** Status messages to one peer at most this often (4 a second): it changes with every streamed token. */
 export const STATUS_MS = 250;
@@ -231,7 +232,7 @@ export class Connection {
       this.send(response);
     } catch (error) {
       const code = error instanceof OpError ? error.code : ErrorCode.failed;
-      this.fail(request.id, code, error instanceof Error ? error.message : String(error));
+      this.fail(request.id, code, errorMessage(error));
     } finally {
       this.inFlight--;
     }

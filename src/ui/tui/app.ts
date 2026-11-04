@@ -15,6 +15,7 @@ import { openMemoryPanel } from './panels/memory.ts';
 import { openEffortPanel } from './panels/effort.ts';
 import { modelRef, openModelPanel } from './panels/model.ts';
 import { NARROW, theme } from './theme.ts';
+import { errorMessage } from '../../protocol/util.ts';
 
 /** Shows host text (a warning, a runtime report) as a notice in the chat. */
 export type ShowNotice = (text: string, level?: NoticeLevel) => void;
@@ -122,8 +123,6 @@ const DOUBLE_CTRL_C = 1000;
 const EDITOR_PADDING_MIN = 50;
 /** Below this many rows (a phone with its keyboard open) completion lists 3 items instead of pi-tui's 5. */
 const SHORT_ROWS = 20;
-
-const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 /**
  * Whether `line` is a slash command: a `/` and a word without another slash. A line that starts with a path
@@ -337,15 +336,15 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     confirming = true;
     confirm(tui, theme, EXIT_QUESTION).then(
       yes => { confirming = false; if (yes) void exit(); },
-      (error: unknown) => { confirming = false; show(`Confirmation failed: ${message(error)}`, 'error'); });
+      (error: unknown) => { confirming = false; show(`Confirmation failed: ${errorMessage(error)}`, 'error'); });
   };
   const stop = (arg = ''): void => {
     // `/stop` is Esc for Pi alone; `/stop all` also stops every agent, `/stop Name` one agent and its subs.
-    if (!arg || arg === 'all') session.abort().catch((error: unknown) => show(`Interrupt failed: ${message(error)}`, 'error'));
+    if (!arg || arg === 'all') session.abort().catch((error: unknown) => show(`Interrupt failed: ${errorMessage(error)}`, 'error'));
     if (!arg) return;
     session.stopAgents(arg === 'all' ? undefined : arg).then(
       names => show(names.length ? `Stopped ${names.join(', ')}.` : arg === 'all' ? 'No agents to stop.' : unknownAgent(arg)),
-      (error: unknown) => show(`Stop failed: ${message(error)}`, 'error'));
+      (error: unknown) => show(`Stop failed: ${errorMessage(error)}`, 'error'));
   };
 
   const unknownAgent = (name: string): string => {
@@ -363,12 +362,12 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
 
   const panel = (open: (tui: TUI, session: UiSession, panelTheme: typeof theme) => Promise<void>): void => {
     // Not awaited: the panel takes focus from the editor and hands it back when it closes.
-    open(tui, session, theme).catch((error: unknown) => show(`Panel failed: ${message(error)}`, 'error'));
+    open(tui, session, theme).catch((error: unknown) => show(`Panel failed: ${errorMessage(error)}`, 'error'));
   };
   const switchModel = (provider: string, id: string): void => {
     session.setModel(provider, id).then(
       () => show(`Model: ${provider}/${id} (from the next message; saved as default)`),
-      (error: unknown) => show(`Model not changed: ${message(error)}`, 'error'));
+      (error: unknown) => show(`Model not changed: ${errorMessage(error)}`, 'error'));
   };
   const model = (arg: string): void => {
     // Ids may hold slashes (openrouter/vendor/model); providers do not. Anything else (`/model sonnet`) filters the picker.
@@ -376,23 +375,23 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (slash > 0 && slash < arg.length - 1) { switchModel(arg.slice(0, slash), arg.slice(slash + 1)); return; }
     openModelPanel(tui, session, theme, arg).then(
       choice => { if (choice) switchModel(choice.provider, choice.id); },
-      (error: unknown) => show(`Panel failed: ${message(error)}`, 'error'));
+      (error: unknown) => show(`Panel failed: ${errorMessage(error)}`, 'error'));
   };
   const setEffort = (level: string): void => {
     session.setThinkingLevel(level).then(
       () => show(`Effort: ${level} (from the next request; saved as default)`),
-      (error: unknown) => show(`Effort not changed: ${message(error)}`, 'error'));
+      (error: unknown) => show(`Effort not changed: ${errorMessage(error)}`, 'error'));
   };
   const effort = (arg: string): void => {
     if (arg) { setEffort(arg); return; }
     openEffortPanel(tui, session, theme).then(
       level => { if (level) setEffort(level); },
-      (error: unknown) => show(`Panel failed: ${message(error)}`, 'error'));
+      (error: unknown) => show(`Panel failed: ${errorMessage(error)}`, 'error'));
   };
   const setTools = (enabled: boolean): void => {
     session.setTools(enabled).then(
       () => show(enabled ? 'Coding tools on for this launch' : 'Coding tools off', enabled ? 'warn' : 'info'),
-      (error: unknown) => show(`Tools not changed: ${message(error)}`, 'error'));
+      (error: unknown) => show(`Tools not changed: ${errorMessage(error)}`, 'error'));
   };
   const tools = (arg: string): void => {
     const on = session.status().toolsEnabled;
@@ -401,7 +400,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     else if (arg === 'on') {
       confirm(tui, theme, TOOLS_QUESTION).then(
         yes => { if (yes) setTools(true); else show('Coding tools stay off.'); },
-        (error: unknown) => show(`Confirmation failed: ${message(error)}`, 'error'));
+        (error: unknown) => show(`Confirmation failed: ${errorMessage(error)}`, 'error'));
     } else if (arg) show('Usage: /tools, /tools on or /tools off.', 'warn');
     else show(on ? 'Coding tools on for this launch: read, write, edit, bash. /tools off turns them off.'
       : 'Coding tools off. /tools on enables read, write, edit and bash for this launch.');
@@ -426,7 +425,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (!line) return;
     editor.addToHistory(line);
     if (isCommand(line)) command(line);
-    else session.send(line).catch((error: unknown) => show(`Not sent: ${message(error)} (↑ brings the message back)`, 'error'));
+    else session.send(line).catch((error: unknown) => show(`Not sent: ${errorMessage(error)} (↑ brings the message back)`, 'error'));
   };
   editor.onKey = data => {
     if (matchesKey(data, 'escape')) {

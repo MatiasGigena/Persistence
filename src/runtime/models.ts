@@ -3,10 +3,11 @@
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef, UserInput } from '@earendil-works/pi-durable';
-import { THINKING } from '../host/config.ts';
+import { THINKING } from './thinking.ts';
 import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
 import type { ChatImage } from '../ui/types.ts';
+import { errorMessage } from '../protocol/util.ts';
 
 /** What the listing and the checks read of pi-ai's Models (a pi-coding-agent ModelRuntime is one). */
 export type CatalogModels = Pick<Models, 'getModels' | 'getModel' | 'checkAuth' | 'getAuth'>;
@@ -35,7 +36,6 @@ export interface CheckOptions {
 const ROUTES = [CLAUDE_CLI, 'openai-codex', 'openai', 'anthropic'];
 // Dated snapshots (gpt-4o-2024-08-06, claude-haiku-4-5-20251001) duplicate the aliases beside them.
 const SNAPSHOT = /-(\d{4}-\d{2}-\d{2}|\d{8})$/;
-const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 /**
  * Check `provider`'s credentials within `timeoutMs`; never rejects. `anthropic` passes only with an API key: a Claude
@@ -59,7 +59,7 @@ export async function checkAccess(models: CatalogModels, provider: string, { tim
     const result = await Promise.race([check(), stopped]);
     return result === 'timeout' ? { ok: false, reason: 'timeout' } : result;
   } catch (error) {
-    return limit.aborted ? { ok: false, reason: 'timeout' } : { ok: false, reason: 'error', detail: errorText(error) };
+    return limit.aborted ? { ok: false, reason: 'timeout' } : { ok: false, reason: 'error', detail: errorMessage(error) };
   } finally {
     clearTimeout(timer);
   }

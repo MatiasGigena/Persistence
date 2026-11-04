@@ -4,7 +4,7 @@ import { chmod, lstat, unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import type { Server, Socket } from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
-import { errorCode } from '../host/config.ts';
+import { errorCode } from '../protocol/util.ts';
 import { ErrorCode, LIMITS } from '../protocol/messages.ts';
 import type { Bye, ErrorResponse } from '../protocol/messages.ts';
 import type { PeerHub, PeerLink } from './link.ts';

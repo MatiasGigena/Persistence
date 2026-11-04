@@ -2,9 +2,8 @@
 // be archived (ADR 0034): one from its conversation, or every ad-hoc one from the list, after a confirmation; the
 // list's "Archived" section shows when each is deleted and restores it.
 import { ChatView, el } from '../chat-view.ts';
-import {
-  activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText, errorText,
-} from '../format.ts';
+import { activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText } from '../format.ts';
+import { errorMessage } from '../../protocol/util.ts';
 import { RequestError } from '../link.ts';
 import { byId, fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
@@ -31,7 +30,7 @@ async function archiveOne(ctx: PanelContext, name: string, say: (text: string, e
     ctx.notice(archivedText(names));
     say('');
   } catch (error) {
-    say(errorText(error), true);
+    say(errorMessage(error), true);
   }
 }
 
@@ -41,7 +40,7 @@ async function restore(ctx: PanelContext, name: string, say: (text: string, erro
     ctx.notice(archivedText(names, true));
     say('');
   } catch (error) {
-    say(errorText(error), true);
+    say(errorMessage(error), true);
   }
 }
 
@@ -86,7 +85,7 @@ export function agentsView(ctx: PanelContext): View {
             ctx.notice(archivedText(result.names));
             say('');
           } catch (error) {
-            say(errorText(error), true);
+            say(errorMessage(error), true);
           }
         }));
       });
@@ -167,7 +166,7 @@ export function agentChatView(ctx: PanelContext, name: string): View {
         ctx.link.request('stopAgents', { name }).then(
           ({ names }) => ctx.notice(names.length ? `Stopped ${names.join(', ')}.` : `No agent named ${name}.`),
           (error: unknown) => {
-            stopError = `Stop failed: ${errorText(error)}`;
+            stopError = `Stop failed: ${errorMessage(error)}`;
             ctx.notice(stopError, 'error');
           },
         ).finally(() => { stop.disabled = false; draw(); });
@@ -213,7 +212,7 @@ export function agentChatView(ctx: PanelContext, name: string): View {
             if (!open) return;
             failed = true;
             draw();
-            state.textContent = errorText(error);
+            state.textContent = errorMessage(error);
             retry = error instanceof RequestError && error.code === 'lost';
           },
         );

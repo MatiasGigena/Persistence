@@ -26,7 +26,7 @@ const SHELL = [
   '/main.ts', '/link.ts', '/store.ts', '/chat-view.ts', '/markdown.ts', '/format.ts', '/push.ts',
   '/panels/sheet.ts', '/panels/agents.ts', '/panels/memory.ts', '/panels/chat-settings.ts', '/panels/tools.ts', '/panels/cache.ts', '/copy.ts',
   '/attach.ts', '/protocol/images.ts',
-  '/protocol/messages.ts', '/protocol/machines.ts', '/protocol/mirror.ts', '/protocol/parse.ts', '/protocol/version.ts',
+  '/protocol/messages.ts', '/protocol/machines.ts', '/protocol/mirror.ts', '/protocol/parse.ts', '/protocol/util.ts', '/protocol/version.ts',
   '/vendor/marked.esm.js',
 ];
 

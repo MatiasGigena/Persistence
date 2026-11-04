@@ -7,14 +7,13 @@ import { NARROW } from '../theme.ts';
 import type { MemoryStats, UiSession, ViewLine } from '../../types.ts';
 import { clean, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
+import { errorMessage } from '../../../protocol/util.ts';
 
 /** Shown while a level's lines or a message are on their way. */
 export const LOADING = 'Loading…';
 
 /** What a level shows: lines, still loading, or why they failed. */
 type Loaded<T> = { readonly state: 'loading' } | { readonly state: 'done'; readonly value: T } | { readonly state: 'failed'; readonly error: string };
-
-const failure = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** Opens the memory panel over the chat; resolves when it closes and the editor has focus again. */
 export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme): Promise<void> {
@@ -28,7 +27,7 @@ export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme)
     loading = true;
     session.memoryView().then(
       lines => { view = { state: 'done', value: lines }; },
-      (error: unknown) => { if (view.state !== 'done') view = { state: 'failed', error: failure(error) }; },
+      (error: unknown) => { if (view.state !== 'done') view = { state: 'failed', error: errorMessage(error) }; },
     ).finally(() => {
       loading = false;
       tui.requestRender();
@@ -70,7 +69,7 @@ export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme)
     let loaded: Loaded<T> = { state: 'loading' };
     promise.then(
       value => { loaded = { state: 'done', value }; },
-      (error: unknown) => { loaded = { state: 'failed', error: failure(error) }; },
+      (error: unknown) => { loaded = { state: 'failed', error: errorMessage(error) }; },
     ).finally(() => tui.requestRender());
     return () => loaded;
   }

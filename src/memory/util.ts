@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { closeSync, fsyncSync, openSync, renameSync, writeSync } from 'node:fs';
 
 export const NODE = 512;      // bytes per tree node (recipe §2)
 export const CAP = 30_000;    // characters: tool output is clipped to this, other text split at it (§1)
@@ -73,26 +72,3 @@ export function formatDate(value: Date | number | string): string {
   const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getDay()] ?? '';
   return `${localDay(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${zone} (${weekday})`;
 }
-
-/** Append JSON lines in one write and fsync them before returning. */
-export function appendJson(file: string, ...values: unknown[]): void {
-  const fd = openSync(file, 'a', 0o600);
-  try {
-    const data = Buffer.from(values.map(value => `${JSON.stringify(value)}\n`).join(''));
-    if (writeSync(fd, data) !== data.length) throw new Error(`Incomplete write: ${file}`);
-    fsyncSync(fd);
-  } finally { closeSync(fd); }
-}
-
-export function atomicWrite(file: string, content: string): void {
-  const tmp = `${file}.${process.pid}.tmp`;
-  const fd = openSync(tmp, 'w', 0o600);
-  try { writeSync(fd, content); fsyncSync(fd); } finally { closeSync(fd); }
-  renameSync(tmp, file);
-}
-
-/** An error's message, or the thrown value as text. */
-export const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
-
-/** A JSON object (not null, not an array), its fields still unknown. */
-export const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);

@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { errorMessage } from '../protocol/util.ts';
 
 export interface SshAgent {
   /** For SSH_AUTH_SOCK. */
@@ -38,7 +39,7 @@ export async function startSshAgent(keys: readonly string[], warn: (message: str
   if (!keys.length) return undefined;
   let dir: string;
   try { dir = await mkdtemp(join(env.XDG_RUNTIME_DIR || '/tmp', 'pi-ssh-')); } catch (error) {
-    warn(`Pi's SSH agent is off: ${error instanceof Error ? error.message : String(error)}`);
+    warn(`Pi's SSH agent is off: ${errorMessage(error)}`);
     return undefined;
   }
   const socket = join(dir, 'agent');

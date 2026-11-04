@@ -4,8 +4,8 @@
 import { closeSync, fsyncSync, mkdirSync, openSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { errorCode, errorMessage, isRecord } from '../host/config.ts';
-import { atomicWrite } from '../memory/util.ts';
+import { errorCode, errorMessage, isRecord } from '../protocol/util.ts';
+import { atomicWrite } from '../runtime/files.ts';
 
 /** A field that is not what the file's shape says; `readJson` turns it into a readable error naming the file. */
 export class ShapeError extends Error {}

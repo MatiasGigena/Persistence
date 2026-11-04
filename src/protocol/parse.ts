@@ -6,6 +6,7 @@ import type {
   AgentStatus, AppendField, ArchiveTarget, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
   PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, SessionStatus, ToolsPolicy, ViewLine,
 } from './messages.ts';
+import { errorMessage, isRecord } from './util.ts';
 
 /**
  * Why a message did not parse; never sent. `id` is the request's when it could be read, so the server can answer
@@ -24,14 +25,13 @@ type Obj = Readonly<Record<string, unknown>>;
 /** A field that is not what its type says; caught at the top and turned into a ParseError. */
 class Bad extends Error {}
 
-const isObj = (x: unknown): x is Obj => typeof x === 'object' && x !== null && !Array.isArray(x);
 const NOTICE_LEVELS: readonly NoticeLevel[] = ['info', 'warn', 'error'];
 const TOOL_STATUS = ['running', 'done', 'error'] as const;
 const APPEND_FIELDS: readonly AppendField[] = ['text', 'output', 'args'];
 const CONFIRMS: readonly (typeof ENABLE_TOOLS)[] = [ENABLE_TOOLS];
 
 function obj(x: unknown, what: string): Obj {
-  if (!isObj(x)) throw new Bad(`${what} must be an object`);
+  if (!isRecord(x)) throw new Bad(`${what} must be an object`);
   return x;
 }
 function str(o: Obj, key: string): string {
@@ -184,7 +184,7 @@ export function itemOp(x: unknown): ItemOp {
 }
 
 function machineShape<T>(parse: () => T): T {
-  try { return parse(); } catch (error) { throw new Bad(error instanceof Error ? error.message : String(error)); }
+  try { return parse(); } catch (error) { throw new Bad(errorMessage(error)); }
 }
 
 function toolsPolicy(x: unknown): ToolsPolicy {
@@ -278,9 +278,9 @@ function object(text: string, max: number): { readonly o: Obj } | ParseError {
   if (text.length > max) return { invalid: 'too_large', message: `message over ${max} characters` };
   let value: unknown;
   try { value = JSON.parse(text); } catch (error) {
-    return { invalid: 'json', message: error instanceof Error ? error.message : String(error) };
+    return { invalid: 'json', message: errorMessage(error) };
   }
-  if (!isObj(value)) return { invalid: 'shape', message: 'a message must be a JSON object' };
+  if (!isRecord(value)) return { invalid: 'shape', message: 'a message must be a JSON object' };
   if (typeof value.t !== 'string') return { invalid: 'shape', message: 't must be a string' };
   return { o: value };
 }

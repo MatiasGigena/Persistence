@@ -15,6 +15,7 @@ import { jsonData, machineCall, machineTarget, machineToolResult } from '../prot
 import type { JsonData, MachineCall, MachineToolResult } from '../protocol/machines.ts';
 import { LIMITS } from '../protocol/messages.ts';
 import type { MachineTarget } from '../ui/types.ts';
+import { errorCode, errorMessage } from '../protocol/util.ts';
 
 export interface MachineExecutorOptions {
   readonly target: MachineTarget;
@@ -32,10 +33,6 @@ export interface MachineExecutorOptions {
 
 function failure(code: string, message: string): MachineToolResult {
   return { isError: true, output: [{ type: 'text', text: message }], diagnostics: [{ severity: 'error', code, message }] };
-}
-function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-function hasCode(error: unknown, code: string): boolean {
-  return error instanceof Error && 'code' in error && error.code === code;
 }
 function canonical(value: JsonData): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -57,7 +54,7 @@ async function ensureDirectory(path: string): Promise<void> {
   await ensureDirectory(parent);
   try { await mkdir(path, { mode: 0o700 }); }
   catch (error) {
-    if (!hasCode(error, 'EEXIST')) throw error;
+    if (errorCode(error) !== 'EEXIST') throw error;
     if (!(await stat(path)).isDirectory()) throw new Error('Ledger path is not a directory');
   }
   // Also flush a concurrently created directory's entry, not only our own mkdir.
@@ -129,7 +126,7 @@ async function executeNative(call: MachineCall, signal: AbortSignal, guarded: Pr
     // The installed schema validator has established the registration's erased argument type.
     result = await tool.execute(args, api, context);
   } catch (error) {
-    result = { isError: true, diagnostics: [{ severity: 'error', code: signal.aborted ? 'CANCELLED' : 'tool_error', message: message(error) }] };
+    result = { isError: true, diagnostics: [{ severity: 'error', code: signal.aborted ? 'CANCELLED' : 'tool_error', message: errorMessage(error) }] };
   } finally {
     output.end();
     await env.cleanup(BACKGROUND_CONTEXT);
@@ -173,7 +170,7 @@ export class MachineExecutor {
   execute(input: MachineCall): Promise<MachineToolResult> {
     let call: MachineCall;
     try { call = machineCall(input); }
-    catch (error) { return Promise.resolve(failure('INVALID_CALL', message(error))); }
+    catch (error) { return Promise.resolve(failure('INVALID_CALL', errorMessage(error))); }
     if (call.target.machineId !== this.target.machineId || call.target.cwd !== this.target.cwd) {
       return Promise.resolve(failure('TARGET_NOT_APPROVED', 'Execution target does not match the approved machine and launch directory.'));
     }
@@ -212,14 +209,14 @@ export class MachineExecutor {
     /** Whether this call made its entry; false when an earlier one did. */
     const makeEntry = async (): Promise<boolean> => {
       try { await mkdir(directory, { mode: 0o700 }); return true; }
-      catch (error) { if (hasCode(error, 'EEXIST')) return false; throw error; }
+      catch (error) { if (errorCode(error) === 'EEXIST') return false; throw error; }
     };
     try {
       await this.ensureLedger();
       let created: boolean;
       try { created = await makeEntry(); }
       catch (error) {
-        if (!hasCode(error, 'ENOENT')) throw error;
+        if (errorCode(error) !== 'ENOENT') throw error;
         // The ledger was removed since this executor made it: make it again.
         this.ledgerReady = undefined;
         await this.ensureLedger();
@@ -235,14 +232,14 @@ export class MachineExecutor {
         signal.throwIfAborted();
         result = !this.enabled ? failure('TOOLS_DISABLED', 'Machine tools were disabled before execution.')
           : machineToolResult(await this.runner(call, signal));
-      } catch (error) { result = failure(signal.aborted ? 'CANCELLED' : 'EXECUTION_FAILED', message(error)); }
+      } catch (error) { result = failure(signal.aborted ? 'CANCELLED' : 'EXECUTION_FAILED', errorMessage(error)); }
       result = bounded(call.id, result);
       await writeSynced(join(directory, 'result.tmp'), { fingerprint: digest, result });
       await rename(join(directory, 'result.tmp'), join(directory, 'result.json'));
       await syncDirectory(directory);
       return result;
     } catch (error) {
-      return failure('INDETERMINATE', `Execution ledger could not establish a durable outcome; never automatically rerun this id or repeat the operation under a new id. Inspect possible side effects and ask the user before retrying: ${message(error).slice(0, 1024)}`);
+      return failure('INDETERMINATE', `Execution ledger could not establish a durable outcome; never automatically rerun this id or repeat the operation under a new id. Inspect possible side effects and ask the user before retrying: ${errorMessage(error).slice(0, 1024)}`);
     }
   }
 

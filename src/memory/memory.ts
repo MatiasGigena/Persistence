@@ -5,10 +5,9 @@ import type { ModelRef } from '@earendil-works/pi-durable';
 import { leafTask, mergeTask, PLACEHOLDER, PROMPT, tooLong } from './prompt.ts';
 import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
 import type { CompactionMessage, Reasoning, Summarizer, SummarizerModels } from './summarizer.ts';
-import {
-  appendJson, atomicWrite, bytes, CAP, cleanLine, clip, cutBytes, cutLine, errorMessage, flat, formatDate, hash, isObject,
-  localDay, NODE, split,
-} from './util.ts';
+import { bytes, CAP, cleanLine, clip, cutBytes, cutLine, flat, formatDate, hash, localDay, NODE, split } from './util.ts';
+import { appendJson, atomicWrite } from '../runtime/files.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 import { cut, end, key, name, parentOf, start, View } from './view.ts';
 import type { Pos } from './view.ts';
 
@@ -114,9 +113,9 @@ function readJsonl(dir: string, warn: (message: string) => void): unknown[] {
   return out;
 }
 
-const isRecord = (r: unknown): r is MemoryRecord => isObject(r) && Number.isSafeInteger(r.i) && typeof r.text === 'string'
+const isMemoryRecord = (r: unknown): r is MemoryRecord => isRecord(r) && Number.isSafeInteger(r.i) && typeof r.text === 'string'
   && isKind(r.kind) && typeof r.size === 'number' && typeof r.date === 'string' && (r.src === undefined || typeof r.src === 'string');
-const isNode = (n: unknown): n is Pos & { text: string } => isObject(n) && Number.isSafeInteger(n.l) && Number.isSafeInteger(n.i)
+const isNode = (n: unknown): n is Pos & { text: string } => isRecord(n) && Number.isSafeInteger(n.l) && Number.isSafeInteger(n.i)
   && typeof n.text === 'string';
 /** view.json's `[l, i]` pairs. */
 function pairs(x: unknown): Pos[] {
@@ -189,7 +188,7 @@ export class Memory {
   // ---------------------------------------------------------------- load and save
 
   load(): void {
-    const records = readJsonl(join(this.dir, 'main'), this.warn).filter(isRecord).sort((a, b) => a.i - b.i);
+    const records = readJsonl(join(this.dir, 'main'), this.warn).filter(isMemoryRecord).sort((a, b) => a.i - b.i);
     records.forEach((r, n) => {
       if (r.i !== n) throw new Error(`unii: log in ${this.dir} is not contiguous at ${n} (found ${r.i}); refusing to open`);
       this.log.push(r);
@@ -220,7 +219,7 @@ export class Memory {
     if (!existsSync(file)) return false;
     try {
       const saved: unknown = JSON.parse(readFileSync(file, 'utf8'));
-      if (!isObject(saved)) throw new Error('not an object');
+      if (!isRecord(saved)) throw new Error('not an object');
       const lists = [saved.view, saved.cview], shrinking = saved.shrinking;
       [this.view, this.cview].forEach((v, n) => {
         v.parts = pairs(lists[n]).flatMap(p => this.down(p));

@@ -9,7 +9,8 @@ import { int, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { reportSrc } from './memory.ts';
 import type { Memory, ReportInput } from './memory.ts';
 import { PROMPT } from './prompt.ts';
-import { CAP, clip, formatDate, hash, isObject } from './util.ts';
+import { CAP, clip, formatDate, hash } from './util.ts';
+import { isRecord } from '../protocol/util.ts';
 
 export const REPORT_KIND = 'agents.report';
 // Adapted from UniiChat's Server.ts HEAD (Apache-2.0): a turn's head, as a compaction's is "Compaction:", so the one
@@ -95,7 +96,7 @@ function logResult(memory: Memory, { toolCallId, toolName, content, isError, tim
 
 function reportOf(entry: ContextEntries['entries'][number]): ReportInput | undefined {
   const { data } = entry;
-  if (entry.kind !== REPORT_KIND || !isObject(data) || typeof data.name !== 'string' || typeof data.text !== 'string') return undefined;
+  if (entry.kind !== REPORT_KIND || !isRecord(data) || typeof data.name !== 'string' || typeof data.text !== 'string') return undefined;
   return { name: data.name, text: data.text, id: typeof data.id === 'string' || typeof data.id === 'number' ? data.id : undefined,
     session: typeof data.session === 'number' ? data.session : undefined };
 }

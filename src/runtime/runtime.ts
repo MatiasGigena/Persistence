@@ -34,6 +34,7 @@ import { createMachineRouting } from '../machines/routing.ts';
 import type { RoutingDispatcher } from '../machines/routing.ts';
 import type { ChatImage, MachineTarget } from '../ui/types.ts';
 import { userInput } from './models.ts';
+import { errorMessage } from '../protocol/util.ts';
 
 // Each claude-cli compaction is a whole `claude` process drawing on the plan's limits: run 2 at once, not 8.
 const CLAUDE_CLI_JOBS = 2;
@@ -288,7 +289,7 @@ export async function rosterWarnings(roster: Roster, {
   const checked = await Promise.all([...byProvider].map(async ([provider, { model, names }]) => {
     let result: Access;
     try { result = await access(provider, { timeoutMs, ...signal ? { signal } : {} }); } catch (error) {
-      result = { ok: false, reason: 'error', detail: error instanceof Error ? error.message : String(error) };
+      result = { ok: false, reason: 'error', detail: errorMessage(error) };
     }
     if (result.ok) return undefined;
     if (result.reason === 'timeout') return `${listed(names)}: could not verify the credentials for ${provider} in time; if they are missing, the agent's tasks fail. Check with /model.`;

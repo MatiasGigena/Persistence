@@ -1,7 +1,7 @@
 // Coding tools: on or off for this server run (the chat settings' switch). Turning them on asks first, in a dialog
 // that states what they can do, and sends `confirm: 'enable-tools'` only after a yes. The server turns them off after
 // its idle minutes.
-import { errorText } from '../format.ts';
+import { errorMessage } from '../../protocol/util.ts';
 import { ENABLE_TOOLS } from '../../protocol/messages.ts';
 import { byId, closeDialog, showDialog } from './sheet.ts';
 import type { PanelContext } from './sheet.ts';
@@ -60,7 +60,7 @@ export async function setTools(ctx: PanelContext, enabled: boolean): Promise<str
     await ctx.link.request('tools.set', enabled ? { enabled, confirm: ENABLE_TOOLS } : { enabled });
     return '';
   } catch (error) {
-    const why = `Tools not changed: ${errorText(error)}`;
+    const why = `Tools not changed: ${errorMessage(error)}`;
     ctx.notice(why, 'error');
     return why;
   }

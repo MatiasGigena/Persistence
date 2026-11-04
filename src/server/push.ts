@@ -6,7 +6,7 @@ import type { ECDH, KeyObject } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ServeSettings, StatePaths } from '../host/config.ts';
-import { errorMessage, isObject } from '../memory/util.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 import type { PushSubscriptionJson } from '../protocol/messages.ts';
 import type { PushNotifier } from './link.ts';
 import { ShapeError, readJson, writeJson } from './store.ts';
@@ -261,7 +261,7 @@ function checkSubscription(subscription: PushSubscriptionJson, allow: (url: URL)
 }
 
 function subscriptionProblem(sub: unknown, allow: (url: URL) => boolean): string | undefined {
-  if (!isObject(sub) || typeof sub.endpoint !== 'string' || !isObject(sub.keys)) return 'a subscription needs endpoint and keys';
+  if (!isRecord(sub) || typeof sub.endpoint !== 'string' || !isRecord(sub.keys)) return 'a subscription needs endpoint and keys';
   if (sub.endpoint.length > MAX_ENDPOINT) return 'the endpoint is too long';
   let url: URL;
   try { url = new URL(sub.endpoint); } catch { return 'the endpoint is not a URL'; }
@@ -320,7 +320,7 @@ async function loadVapid(file: string): Promise<{ readonly key: KeyObject; reado
 
 /** A P-256 private JWK: the key, its public point as `welcome.pushKey` wants it, and the JWK's fields to store. */
 function parseJwk(value: unknown): { readonly key: KeyObject; readonly publicKey: string; readonly jwk: object } | undefined {
-  if (!isObject(value) || value.kty !== 'EC' || value.crv !== 'P-256') return undefined;
+  if (!isRecord(value) || value.kty !== 'EC' || value.crv !== 'P-256') return undefined;
   const x = base64url(value.x), y = base64url(value.y), d = base64url(value.d);
   if (x?.length !== 32 || y?.length !== 32 || d?.length !== 32) return undefined;
   const jwk = { kty: 'EC', crv: 'P-256', x: x.toString('base64url'), y: y.toString('base64url'), d: d.toString('base64url') };
@@ -333,11 +333,11 @@ function parseJwk(value: unknown): { readonly key: KeyObject; readonly publicKey
 async function loadSubscriptions(file: string, allow: (url: URL) => boolean, log: (line: string) => void): Promise<Map<string, Stored>> {
   const subs = new Map<string, Stored>();
   const entries = await readJson(file, value => {
-    if (!isObject(value) || !isObject(value.subscriptions)) throw new ShapeError('subscriptions must be an object');
+    if (!isRecord(value) || !isRecord(value.subscriptions)) throw new ShapeError('subscriptions must be an object');
     return Object.entries(value.subscriptions);
   }, () => []);
   for (const [endpoint, entry] of entries) {
-    if (!isObject(entry) || !isObject(entry.keys) || typeof entry.createdAt !== 'number'
+    if (!isRecord(entry) || !isRecord(entry.keys) || typeof entry.createdAt !== 'number'
       || (entry.device !== undefined && typeof entry.device !== 'string')
       || subscriptionProblem({ endpoint, keys: entry.keys, expirationTime: entry.expirationTime }, allow)) {
       log(`skipped an unreadable subscription in ${file}`);

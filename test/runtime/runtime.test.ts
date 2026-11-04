@@ -18,7 +18,7 @@ import {
   fauxAssistantMessage, fauxThinking, fauxText, fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux';
 import { NodeSqliteDatabase } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { isRecord } from '../../src/host/config.ts';
+import { isRecord } from '../../src/protocol/util.ts';
 import { AgentsDoc } from '../../src/agents/index.ts';
 import { DEFAULT_ROSTER } from '../../src/agents/roster.ts';
 import { answerText, browserKey, localOnlyBrowser, openInstance, rosterWarnings, transcript } from '../../src/runtime/runtime.ts';

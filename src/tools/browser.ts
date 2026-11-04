@@ -12,6 +12,7 @@ import {
   type BrowserContext, chromium, type ConsoleMessage, type Page, type Request, type Route, type WebSocketRoute,
 } from 'playwright-core';
 import { addressKind, type Lookup, type LookupAddress, lookupAll } from './web-fetch.ts';
+import { errorMessage } from '../protocol/util.ts';
 
 /**
  * Browser tools: a headless Chromium per agent, adapted from the browser extension of Pi Cloud,
@@ -414,7 +415,7 @@ type Browser = {
  * to run `npx playwright install`, a package this one does not have. Any other failure as it is.
  */
 function launchError(error: unknown, executablePath: string | undefined): unknown {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   if (!/executable doesn't exist/i.test(message)) return error;
   if (executablePath) {
     return new Error(`PI_DURABLE_CHROMIUM names ${executablePath}, which does not exist. The user can fix the path, or unset it to use Playwright's Chromium.`);
@@ -691,7 +692,7 @@ export function createBrowserExtension(options: BrowserOptions): BrowserExtensio
       try {
         value = await page.evaluate<unknown>(evalSource(expression));
       } catch (error) {
-        return result(`eval error: ${error instanceof Error ? error.message : String(error)}`, {}, true);
+        return result(`eval error: ${errorMessage(error)}`, {}, true);
       }
       const text = typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? String(value));
       const truncated = text.length > EVAL_LIMIT;

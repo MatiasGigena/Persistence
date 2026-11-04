@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { attachChat, serverAnswers, SERVER_RUNS } from './client/attach.ts';
 import { bridge } from './client/bridge.ts';
 import { remoteChat } from './client/remote.ts';
-import { errorCode, errorMessage, HELP, VERSION, parseArgs, resolveOptions, resolveSocketPath, statePaths } from './host/config.ts';
+import { HELP, VERSION, parseArgs, resolveOptions, resolveSocketPath, statePaths } from './host/config.ts';
+import { errorCode, errorMessage } from './protocol/util.ts';
 import type { Config } from './host/config.ts';
 import { agentsCommand, backupOverSocket, devicesCommand, formatBytes, NoServer, pairCommand } from './server/admin.ts';
 

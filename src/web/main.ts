@@ -3,7 +3,8 @@
 import { imageUrl, toChatImage } from './attach.ts';
 import { ChatView, el, initViewer, play } from './chat-view.ts';
 import { announce } from './copy.ts';
-import { activeAgents, errorText, guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
+import { activeAgents, guessDeviceName, inOrder, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
+import { errorMessage } from '../protocol/util.ts';
 import { Link, RequestError } from './link.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
@@ -359,7 +360,7 @@ function start(): void {
           dropped = restored.dropped;
           drawAttachments();
         }
-        notice(`Not sent: ${errorText(error)}`, 'error');
+        notice(`Not sent: ${errorMessage(error)}`, 'error');
         if (dropped) {
           notice(`${dropped} image${dropped === 1 ? '' : 's'} could not go back into the message (at most ${IMAGE_LIMITS.perMessage}); attach ${dropped === 1 ? 'it' : 'them'} again.`, 'warn');
         }
@@ -377,7 +378,7 @@ function start(): void {
     buzz();
     drawSend();
     link.request('abort', {})
-      .catch((error: unknown) => notice(`Interrupt failed: ${errorText(error)}`, 'error'))
+      .catch((error: unknown) => notice(`Interrupt failed: ${errorMessage(error)}`, 'error'))
       .finally(() => { stopping = false; drawSend(); });
   };
   const submit = (): void => {
@@ -461,7 +462,7 @@ function start(): void {
     drawAttachments();
     readQueue = inOrder(batch, toChatImage, result => {
       if (result.ok) attached = [...attached, result.value];
-      else notice(`Image not attached: ${errorText(result.error)}`, 'error');
+      else notice(`Image not attached: ${errorMessage(result.error)}`, 'error');
       reading--;
       drawAttachments();
     }, readQueue);

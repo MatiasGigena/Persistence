@@ -7,7 +7,7 @@ import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, o
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { errorCode } from '../host/config.ts';
+import { errorCode } from '../protocol/util.ts';
 
 /** How long backups are kept: older stamped directories are deleted after each backup. */
 export const KEEP_MS = 14 * 24 * 60 * 60 * 1000;

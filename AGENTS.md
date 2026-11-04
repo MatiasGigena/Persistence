@@ -9,14 +9,15 @@ TypeScript that Node runs by type stripping: there is no build step.
 
 - `src/cli.ts`: entry. Parses arguments, takes the flock, spawns the host.
 - `src/host/`: `host.ts` (terminal chat, /commands, reply watcher), `config.ts` (CLI options, paths).
-- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`).
+- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks; `roster.ts`: the standing agents and kit names.
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and
   `web-fetch.ts` (`web_fetch`), `autoreview.ts` (the Reviewer's installed skill helper, fixed P0–P2, through guarded/routed execution), `show-image.ts`, and `codemode.ts` (scripts that call the coding tools, ADR 0033).
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
 - `src/ui/`: the terminal UI. `types.ts` is the contract (it imports nothing); `session.ts` turns pi-durable's conversation views, memory and agents into chat items; `tui/` renders them with pi-tui (`tui/panels/` holds /agents, /mem, /model and /effort). The TUI never imports pi-durable.
-- `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`.
+- `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`, `util.ts` (`isRecord`, `errorMessage`,
+  `errorCode`: use these, never a local copy).
 - `src/server/`: `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
 - `src/client/`: attached TUI and SSH connector: `attach.ts`, `remote-session.ts`, `unix-link.ts`; `config.ts` and `remote.ts` select the central server before local chat resolution, `ssh-link.ts` and `bridge.ts` carry the socket over SSH, `machine-executor.ts` runs guarded tools with a durable local ledger.
 - `src/machines/routing.ts`: persisted per-request, run and agent-session execution targets; `src/server/machines.ts`: authenticated connector dispatch, never host fallback.
