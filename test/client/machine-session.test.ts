@@ -5,9 +5,10 @@ import { RemoteSession } from '../../src/client/remote-session.ts';
 import { ClientLink } from '../../src/client/unix-link.ts';
 import type { Connector } from '../../src/client/unix-link.ts';
 import { isParseError, parseClientMessage, parseServerMessage } from '../../src/protocol/parse.ts';
-import type { MachineTarget } from '../../src/protocol/machines.ts';
+import type { MachineCall, MachineTarget } from '../../src/protocol/machines.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
 import { memoryConnector } from './memory-link.ts';
+import { connectMachine } from '../../src/client/machine-link.ts';
 
 const target: MachineTarget = { machineId: 'laptop', label: 'Laptop', cwd: '/local/project' };
 
@@ -90,4 +91,29 @@ test('server-wide tools permission never implies local permission, and failed en
   assert.deepEqual(toggles, [true, false]);
   assert.equal(enabled, false);
   assert.equal(session.status().toolsEnabled, false);
+});
+
+test('connectMachine registers with this process\'s grant, runs the server\'s calls locally, and follows /tools', async t => {
+  const server = new FakeServer();
+  const wire = memoryConnector(server);
+  const link = new ClientLink({ connect: machineConnector(wire.connect), client: 'machine-test' });
+  const ran: string[] = [], grants: boolean[] = [];
+  const runner = {
+    execute: (call: MachineCall) => { ran.push(call.id); return Promise.resolve({ output: [{ type: 'text' as const, text: 'done' }] }); },
+    cancel: () => undefined,
+    setEnabled: (enabled: boolean) => { grants.push(enabled); },
+  };
+  const { session, registered, dispose } = connectMachine(link, target, runner, { enabled: false });
+  t.after(() => { dispose(); return session.close(); });
+  await link.start();
+  await session.ready();
+  await registered();
+  assert.deepEqual(server.machines, [{ op: 'machine.register', enabled: false }], 'no --allow-tools: registered without the grant');
+  wire.peers.at(-1)?.push({ t: 'machine.call', id: 'chat:task-1', target, name: 'read', args: { path: 'a.txt' } });
+  await until(() => wire.sent.some(text => text.includes('"machine.result"')), 'the result');
+  assert.deepEqual(ran, ['chat:task-1']);
+  assert.match(wire.sent.find(text => text.includes('"machine.result"')) ?? '', /"id":"chat:task-1".*"done"/);
+  await session.setTools(true);
+  assert.deepEqual(grants, [true]);
+  assert.deepEqual(server.machines.at(-1), { op: 'machine.set', enabled: true });
 });

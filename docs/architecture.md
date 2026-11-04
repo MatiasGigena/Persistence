@@ -300,6 +300,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/client/remote-session.ts` | `RemoteSession`: a `UiSession` over a `ServerLink`; mirrors, status, notices, requests, `send` resent with its requestId after a reconnect, agent feeds re-opened; `attached` for `TuiInfo` |
 | `src/client/config.ts` | Stable machine identity, private `client.json`, saved SSH destination and fail-closed remote selection |
 | `src/client/remote.ts` | SSH TUI and per-process machine grant, registration/re-registration, call/result handling and drain-on-close |
+| `src/client/machine-link.ts` | `connectMachine`: the SSH TUI's session as an execution machine (register on each `ready` with this process's grant, run `machine.call`s with the local executor, follow `/tools`); the e2e tests use the same wiring |
 | `src/client/ssh-link.ts` | Strict-known-host, noninteractive SSH transport to the native bridge, no forwarding |
 | `src/client/bridge.ts` | Stdio proxy to the existing owner-checked Unix socket; no database, runtime or flock |
 | `src/client/machine-executor.ts` | Native guarded coding/read tools, fsynced intent/result ledger, duplicate joining, crash-unknown refusal and cancellation |

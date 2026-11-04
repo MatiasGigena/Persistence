@@ -228,6 +228,8 @@ export class FakeServer {
   readonly backups: (string | undefined)[] = [];
   readonly subscriptions = new Map<string, PushSubscriptionJson>();
   readonly devices: Device[] = [{ name: 'phone', pairedAt: 1 }];
+  /** Machine connectors' registrations and grants, in the order they arrived (`machine.register`, `machine.set`). */
+  readonly machines: { readonly op: 'machine.register' | 'machine.set'; readonly enabled: boolean }[] = [];
   readonly held = new Set<Op>();
   readonly queue: { readonly op: Op; readonly reply: () => void }[] = [];
   private items: readonly ChatItem[];
@@ -402,6 +404,8 @@ export class FakeServer {
       }
       case 'push.unsubscribe': this.subscriptions.delete(request.params.endpoint); ok(); return;
       case 'admin.backup': this.backups.push(request.params.out); ok({ path: `${request.params.out ?? '/fake/backups'}/backup-1`, bytes: 1234 }); return;
+      case 'machine.register': this.machines.push({ op: request.op, enabled: request.params.registration.enabled }); ok(); return;
+      case 'machine.set': this.machines.push({ op: request.op, enabled: request.params.enabled }); ok(); return;
       case 'admin.pair': ok({ code: 'ABCD-EFGH', expiresAt: Date.now() + 600_000 }); return;
       case 'admin.devices': ok({ devices: this.devices }); return;
       case 'admin.revoke': {

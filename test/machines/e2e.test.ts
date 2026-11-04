@@ -9,12 +9,12 @@ import { MachineExecutor } from '../../src/client/machine-executor.ts';
 import { RemoteSession } from '../../src/client/remote-session.ts';
 import { ClientLink, unixConnector } from '../../src/client/unix-link.ts';
 import { parseArgs, resolveOptions } from '../../src/host/config.ts';
-import { ENABLE_TOOLS } from '../../src/protocol/messages.ts';
 import type { MachineCall, MachineToolResult } from '../../src/protocol/machines.ts';
 import { serve } from '../../src/server/serve.ts';
 import type { MachineTarget } from '../../src/protocol/machines.ts';
 import { call, router, say } from '../fixtures/agents-instance.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
+import { connectMachine } from '../../src/client/machine-link.ts';
 
 async function until(ok: () => boolean | Promise<boolean>, what: string): Promise<void> {
   const deadline = Date.now() + 10_000;
@@ -65,38 +65,24 @@ test('one central chat routes two devices locally; reconnect replays the pinned 
   const targetB: MachineTarget = { machineId: 'device-b', label: 'Device B', cwd: bCwd };
 
   async function attach(target: MachineTarget, initialEnabled = false, dropResult?: (call: MachineCall) => boolean) {
-    let enabled = initialEnabled;
     const calls: MachineCall[] = [], results: MachineToolResult[] = [];
-    const executor = new MachineExecutor({ target, enabled, ledgerDir: join(target.cwd, 'ledger') });
+    const executor = new MachineExecutor({ target, enabled: initialEnabled, ledgerDir: join(target.cwd, 'ledger') });
     executors.push(executor);
     const link = new ClientLink({ connect: unixConnector(socket), client: `test-${target.machineId}` });
-    const session = new RemoteSession(link, { target, requireMachines: true, machineToolsEnabled: () => enabled,
-      setMachineTools: async value => {
-        enabled = value;
-        executor.setEnabled(value);
-        await session.request('machine.set', value ? { enabled: true, confirm: ENABLE_TOOLS } : { enabled: false });
-      } });
-    clients.push(session);
-    let registered: Promise<unknown> = Promise.resolve();
     const dropped = Promise.withResolvers<void>();
-    link.onMessage(message => {
-      if (message.t === 'ready') registered = session.request('machine.register', { registration: { target, enabled } });
-      else if (message.t === 'machine.cancel') executor.cancel(message.id);
-      else if (message.t === 'machine.call') {
-        calls.push(message);
-        void executor.execute(message).then(async result => {
-          results.push(result);
-          if (dropResult?.(message)) {
-            // The native side effect and its ledger are complete, but the server never sees the result.
-            await session.close();
-            dropped.resolve();
-          } else link.send({ t: 'machine.result', id: message.id, result });
-        });
-      }
-    });
+    // The wiring the SSH TUI runs (src/client/machine-link.ts); only the delivery is observed here.
+    const { session, registered } = connectMachine(link, target, executor, { enabled: initialEnabled, deliver: async (call, result, send) => {
+      calls.push(call);
+      results.push(result);
+      if (!dropResult?.(call)) { send(); return; }
+      // The native side effect and its ledger are complete, but the server never sees the result.
+      await session.close();
+      dropped.resolve();
+    } });
+    clients.push(session);
     await link.start();
     await session.ready();
-    await registered;
+    await registered();
     return { session, calls, results, dropped: dropped.promise };
   }
 
