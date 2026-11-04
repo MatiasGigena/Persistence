@@ -18,6 +18,9 @@ export const ROOT_FEED = 'root';
  */
 export const ARCHIVE_TTL_MS = 86_400_000;
 
+/** Every notice level, and every severity of a machine tool's diagnostic. */
+export const NOTICE_LEVELS: readonly NoticeLevel[] = ['info', 'warn', 'error'];
+
 /** Sizes and timings both sides rely on. Lengths are in UTF-16 code units (JavaScript string length). */
 export const LIMITS = {
   /** Longest client message: one WebSocket text frame, or one NDJSON line without its newline. */

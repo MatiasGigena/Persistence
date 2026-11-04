@@ -13,6 +13,7 @@ import { err, ExecutionError, FileError } from '@earendil-works/pi-durable/env';
 import type { BinaryReader, DirReader, ExecutionError as ExecError, FileChange, FileWatcher, Result,
   ShellExecOptions, ShellExecResult, TextLineReader, WatchTarget } from '@earendil-works/pi-durable/env';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
+import { errorCode } from '../protocol/util.ts';
 
 /** What the tools may not touch: `hidden` neither read nor written, `readOnly` read only. Absolute paths. */
 export interface Protection {
@@ -132,7 +133,7 @@ function probe(args: readonly string[]): Promise<string | undefined> {
     const [bin = 'bwrap', ...rest] = args;
     found = new Promise(done => execFile(bin, [...rest, '/bin/sh', '-c', 'true'], { timeout: 10_000 }, (error, _out, stderr) => {
       if (!error) return done(undefined);
-      const missing = 'code' in error && error.code === 'ENOENT';
+      const missing = errorCode(error) === 'ENOENT';
       done(missing ? `${bin} is not installed. Install bubblewrap (sudo apt install bubblewrap, or without root its .deb's`
         + ' usr/bin/bwrap into ~/.local/bin) and restart Pi Durable.'
         : `bubblewrap cannot run here: ${stderr.trim().split('\n').at(-1) ?? error.message}${namespaceHint(stderr)}`);

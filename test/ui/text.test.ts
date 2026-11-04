@@ -60,7 +60,7 @@ test('archived agents are left out of counts and lists', () => {
   assert.deepEqual(activeAgents(agents).map(a => a.name), ['Scout', 'Quill']);
   assert.deepEqual(archivedAgents(agents).map(a => a.name), ['Old']);
   assert.deepEqual(adhocAgents(agents).map(a => a.name), ['Scout']);
-  const standing = { name: 'Scribe', role: 'main' as const, parent: 'Pi', busy: false, standing: true };
+  const standing = { name: 'Scribe', role: 'main' as const, parent: 'Pi', busy: false, standing: true as const };
   assert.deepEqual(adhocAgents([standing]), []);
 });
 

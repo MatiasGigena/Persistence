@@ -15,6 +15,7 @@ import {
 import { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
 import { NotFound } from '../ui/errors.ts';
 import type { ArchiveTarget } from '../ui/types.ts';
+import { isRecord } from '../protocol/util.ts';
 
 export { DEFAULT_ROSTER } from './roster.ts';
 export { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
@@ -248,7 +249,7 @@ async function deliveryTargets(tx: Tx, agents: Readonly<Record<string, AgentReco
     do {
       const page = await tx.scanTasks({ kind: DELIVER_KIND, status }, 64, cursor);
       for (const task of page.items) {
-        const input = typeof task.input === 'object' && task.input !== null && !Array.isArray(task.input) ? task.input : undefined;
+        const input = isRecord(task.input) ? task.input : undefined;
         const memo = task.memos?.[SESSION_MEMO];
         const to = memo ?? input?.conversationId;
         if (to !== undefined) targets.add(to);

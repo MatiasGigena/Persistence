@@ -1,3 +1,5 @@
+import { NOTICE_LEVELS } from './messages.ts';
+import type { NoticeLevel } from './messages.ts';
 import { isRecord, ShapeError } from './util.ts';
 
 /** Where a request's tools run: a machine (`server` is the host itself) and a folder on it, with a label to show. */
@@ -23,7 +25,7 @@ export interface MachineToolResult {
   readonly structuredOutput?: JsonData;
   readonly details?: JsonData;
   readonly isError?: boolean;
-  readonly diagnostics?: { severity: 'info' | 'warn' | 'error'; message: string; code?: string }[];
+  readonly diagnostics?: { severity: NoticeLevel; message: string; code?: string }[];
 }
 
 export interface MachineCall {
@@ -61,7 +63,10 @@ export function jsonData(value: unknown, depth = 0): JsonData {
   if (depth > 64) throw new ShapeError('JSON nesting is too deep');
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (Array.isArray(value)) return (value as unknown[]).map(item => jsonData(item, depth + 1));
+  if (Array.isArray(value)) {
+    const items: readonly unknown[] = value;
+    return items.map(item => jsonData(item, depth + 1));
+  }
   if (!isRecord(value)) throw new ShapeError('Invalid JSON value');
   const entries = Object.entries(value).map(([key, item]) => [key, jsonData(item, depth + 1)] as const);
   return Object.fromEntries(entries);
@@ -75,7 +80,8 @@ export function machineToolResult(value: unknown): MachineToolResult {
   }
   if (value.output !== undefined) {
     if (!Array.isArray(value.output)) throw new ShapeError('Invalid tool output');
-    result.output = (value.output as unknown[]).map(item => {
+    const output: readonly unknown[] = value.output;
+    result.output = output.map(item => {
       if (!isRecord(item)) throw new ShapeError('Invalid output block');
       if (item.type === 'text' && typeof item.text === 'string') return { type: 'text', text: item.text };
       if (item.type === 'image' && typeof item.data === 'string' && typeof item.mimeType === 'string') {
@@ -89,10 +95,12 @@ export function machineToolResult(value: unknown): MachineToolResult {
   if (value.details !== undefined) result.details = jsonData(value.details);
   if (value.diagnostics !== undefined) {
     if (!Array.isArray(value.diagnostics)) throw new ShapeError('Invalid tool diagnostics');
-    result.diagnostics = (value.diagnostics as unknown[]).map(item => {
-      if (!isRecord(item) || (item.severity !== 'info' && item.severity !== 'warn' && item.severity !== 'error') || typeof item.message !== 'string'
+    const diagnostics: readonly unknown[] = value.diagnostics;
+    result.diagnostics = diagnostics.map(item => {
+      const severity = isRecord(item) ? NOTICE_LEVELS.find(level => level === item.severity) : undefined;
+      if (!isRecord(item) || severity === undefined || typeof item.message !== 'string'
         || (item.code !== undefined && typeof item.code !== 'string')) throw new ShapeError('Invalid tool diagnostic');
-      return { severity: item.severity, message: item.message, ...typeof item.code === 'string' ? { code: item.code } : {} };
+      return { severity, message: item.message, ...typeof item.code === 'string' ? { code: item.code } : {} };
     });
   }
   return result;

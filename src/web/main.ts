@@ -4,7 +4,7 @@ import { ChatView, el, play } from './chat-view.ts';
 import { announce } from './copy.ts';
 import { guessDeviceName, LINK_TEXT, LOAD_QUIET_MS, LOAD_SLOW_MS, loadStep, normalizeCode, pairErrorText, shortModel, statusParts } from './format.ts';
 import { activeAgents } from '../ui/text.ts';
-import { errorMessage } from '../protocol/util.ts';
+import { errorMessage, isRecord } from '../protocol/util.ts';
 import { Link } from './link.ts';
 import { RequestError } from '../protocol/request-error.ts';
 import { renderMarkdown } from './markdown.ts';
@@ -182,7 +182,7 @@ async function me(): Promise<Me> {
   // Anything else (a 502 from `tailscale serve` while the server restarts): the tailnet is up, so let the socket try.
   if (!response.ok) return { state: 'ok', device: '' };
   const body: unknown = await response.json().catch(() => undefined);
-  const device = typeof body === 'object' && body !== null && 'device' in body && typeof body.device === 'string' ? body.device : '';
+  const device = isRecord(body) && typeof body.device === 'string' ? body.device : '';
   return { state: 'ok', device };
 }
 
@@ -252,7 +252,7 @@ function pairScreen(onPaired: () => void, why = ''): void {
       async response => {
         if (response.ok) { code.value = ''; afterPairing(); return; }
         const body: unknown = await response.json().catch(() => undefined);
-        fail(pairErrorText(response.status, typeof body === 'object' && body !== null && 'error' in body ? body.error : undefined));
+        fail(pairErrorText(response.status, isRecord(body) ? body.error : undefined));
       },
       () => { fail('Cannot reach the server. Check that Tailscale is connected.'); },
     ).finally(() => busy(false));

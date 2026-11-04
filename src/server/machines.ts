@@ -3,6 +3,7 @@ import type { JsonObject, ToolExecutionResult } from '@earendil-works/pi-durable
 import { MACHINE_TOOLS, jsonData } from '../protocol/machines.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult } from '../protocol/machines.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
+import { isRecord } from '../protocol/util.ts';
 
 export interface MachinePeer {
   readonly isClosed: boolean;
@@ -74,7 +75,7 @@ export class MachineBroker {
     const name = MACHINE_TOOLS.find(each => each === toolName);
     if (!name || target.machineId === 'server') return Promise.reject(new Error('Invalid remote execution destination or tool'));
     const parsed = jsonData(args);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return Promise.reject(new Error('Invalid tool arguments'));
+    if (!isRecord(parsed)) return Promise.reject(new Error('Invalid tool arguments'));
     const call: MachineCall = { t: 'machine.call', id: executionId, target, name, args: parsed };
     const fingerprint = JSON.stringify(call);
     const before = this.pending.get(executionId);

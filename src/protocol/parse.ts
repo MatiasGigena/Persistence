@@ -1,9 +1,9 @@
 // Parsing wire messages from text: JSON, then every field checked and copied by hand from `unknown`. Unknown fields
 // are dropped, so a parsed message holds exactly its type's fields. Shared by Node and the browser.
-import { ENABLE_TOOLS, ERROR_CODES, LIMITS, OPS } from './messages.ts';
+import { ENABLE_TOOLS, ERROR_CODES, LIMITS, NOTICE_LEVELS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
 import type {
-  AgentStatus, AppendField, ArchiveTarget, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
+  AgentStatus, AppendField, ArchiveTarget, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, Op,
   PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, SessionStatus, ToolsPolicy, ViewLine,
 } from './messages.ts';
 import { bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
@@ -21,7 +21,6 @@ export interface ParseError {
 
 export const isParseError = (x: ClientMessage | ServerMessage | ParseError): x is ParseError => 'invalid' in x;
 
-const NOTICE_LEVELS: readonly NoticeLevel[] = ['info', 'warn', 'error'];
 const TOOL_STATUS = ['running', 'done', 'error'] as const;
 const APPEND_FIELDS: readonly AppendField[] = ['text', 'output', 'args'];
 const CONFIRMS: readonly (typeof ENABLE_TOOLS)[] = [ENABLE_TOOLS];
