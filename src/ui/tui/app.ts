@@ -6,14 +6,17 @@ import {
 } from '@earendil-works/pi-tui';
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
 import type { ChatItem, SessionStatus, UiSession } from '../types.ts';
-import { ChatView, toolSummary } from './chat.ts';
+import { ChatView } from './chat.ts';
+import { statusText, toolSummary } from '../text.ts';
 import type { NoticeLevel } from './chat.ts';
 import { Footer, spinnerInterval } from './footer.ts';
-import { activeAgents, openAgentsPanel } from './panels/agents.ts';
+import { openAgentsPanel } from './panels/agents.ts';
+import { activeAgents } from '../text.ts';
 import { confirm } from './panels/frame.ts';
 import { openMemoryPanel } from './panels/memory.ts';
 import { openEffortPanel } from './panels/effort.ts';
-import { modelRef, openModelPanel } from './panels/model.ts';
+import { openModelPanel } from './panels/model.ts';
+import { modelRef } from '../text.ts';
 import { NARROW, theme } from './theme.ts';
 import { errorMessage } from '../../protocol/util.ts';
 
@@ -129,25 +132,6 @@ const SHORT_ROWS = 20;
  * (`/etc/hosts is empty, why?`) is a message for Pi.
  */
 export const isCommand = (line: string): boolean => /^\/[^\s/]*(\s|$)/.test(line);
-
-/** A compact status block, for /status. */
-export function statusText(status: SessionStatus): string {
-  const { memory } = status;
-  const agents = activeAgents(status.agents), archived = status.agents.length - agents.length;
-  const lines = [
-    `model ${status.model} · thinking ${status.thinkingLevel} · tools ${status.toolsEnabled ? 'on' : 'off'}`,
-    ...status.machine ? [`tools run on ${status.machine.label} in ${status.machine.cwd}`] : [],
-    `work ${status.busy ? 'running' : 'idle'}${status.queued ? ` · ${status.queued} queued` : ''}`,
-    memory ? `memory ${memory.messages} msgs · ${memory.unsummarized} unsummarized · view ${memory.viewLines} lines, ${memory.viewBytes} bytes`
-      + ` · ${memory.active} summarizing · ${memory.failed} failed` : 'memory closed',
-  ];
-  if (memory?.lastError) lines.push(`memory error: ${memory.lastError}`);
-  lines.push(agents.length
-    ? `agents ${agents.map(agent => `${agent.name} (${agent.role}, ${agent.busy ? 'busy' : 'idle'})`).join(', ')}`
-    : 'agents none');
-  if (archived) lines.push(`archived ${archived}`);
-  return lines.join('\n');
-}
 
 /** One line computed at render time, hidden below `minWidth` columns. */
 class Line implements Component {

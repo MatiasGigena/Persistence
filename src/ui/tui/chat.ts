@@ -4,6 +4,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import type { ChatFeed, ChatItem } from '../types.ts';
 import { NARROW } from './theme.ts';
 import type { Theme } from './theme.ts';
+import { toolSummary } from '../text.ts';
 
 export type NoticeLevel = Extract<ChatItem, { kind: 'notice' }>['level'];
 
@@ -41,55 +42,6 @@ const PROMPT_END = '\x1b]133;B\x07\x1b]133;C\x07';
 const wrap = (text: string, width: number): string[] => wrapTextWithAnsi(text, Math.max(1, width));
 /** `mark` (one column) and a space, then `lines` indented under it. */
 const gutter = (mark: string, lines: readonly string[]): string[] => lines.map((line, i) => `${i ? ' ' : mark} ${line}`);
-
-/** The argument that says what a call does, by tool name; zoom is handled on its own. */
-const SUMMARY_KEY: Readonly<Record<string, string>> = {
-  bash: 'command', read: 'path', write: 'path', edit: 'path',
-  spawn_agent: 'name', send_message: 'to', last_message: 'name', stop_agent: 'name', delete_agent: 'name', delegate: 'agent',
-};
-/** Longest compact-JSON summary, for tools without a known argument. */
-const SUMMARY_JSON = 60;
-
-/** A string field of possibly partial JSON (arguments stream in), or undefined. */
-function field(args: string, key: string): string | undefined {
-  try {
-    const parsed: unknown = JSON.parse(args);
-    if (typeof parsed !== 'object' || parsed === null) return undefined;
-    const value: unknown = Object.entries(parsed).find(([name]) => name === key)?.[1];
-    return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
-  } catch {
-    const match = new RegExp(`"${key}"\\s*:\\s*(?:"((?:[^"\\\\]|\\\\.)*)|(\\d+))`).exec(args);
-    const raw = match?.[1];
-    return raw === undefined ? match?.[2] : unescape(raw);
-  }
-}
-
-/** A JSON string's body without its escapes; as is when it does not parse (cut mid-escape). */
-function unescape(raw: string): string {
-  try {
-    const value: unknown = JSON.parse(`"${raw}"`);
-    return typeof value === 'string' ? value : raw;
-  } catch {
-    return raw;
-  }
-}
-
-/**
- * One meaningful argument of a tool call, on one line: bash its command, read/write/edit the path, zoom `id+n`
- * or the agent name, agent tools the agent's name; any other tool its arguments as compact JSON, truncated.
- */
-export function toolSummary(name: string, args: string): string {
-  if (name === 'zoom') {
-    const id = field(args, 'id');
-    if (id !== undefined) return /^\d+$/.test(id) ? `${id}+${field(args, 'n') ?? '1'}` : oneLine(id);
-  }
-  const key = SUMMARY_KEY[name];
-  const value = key === undefined ? undefined : field(args, key);
-  if (value !== undefined) return oneLine(value);
-  const json = [...oneLine(args)];
-  if (json.join('') === '{}') return '';
-  return json.length > SUMMARY_JSON ? `${json.slice(0, SUMMARY_JSON - 1).join('')}…` : json.join('');
-}
 
 const sameItem = (a: ChatItem, b: ChatItem): boolean => {
   if (a === b) return true;

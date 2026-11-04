@@ -2,7 +2,7 @@
 // be archived (ADR 0034): one from its conversation, or every ad-hoc one from the list, after a confirmation; the
 // list's "Archived" section shows when each is deleted and restores it.
 import { ChatView, el } from '../chat-view.ts';
-import { activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText } from '../format.ts';
+import { activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
 import { RequestError } from '../link.ts';
 import { byId, fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';

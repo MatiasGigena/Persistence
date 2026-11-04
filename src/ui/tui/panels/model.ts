@@ -6,9 +6,7 @@ import type { ModelChoice, UiSession } from '../../types.ts';
 import { clean, ListView, openPanel, PanelFrame } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
 import { errorMessage } from '../../../protocol/util.ts';
-
-/** "provider/id": what /model takes and SessionStatus.model shows. */
-export const modelRef = (model: { readonly provider: string; readonly id: string }): string => `${model.provider}/${model.id}`;
+import { modelRef } from '../../text.ts';
 
 /**
  * Opens the picker over the chat, filtered by `filter` as if typed. Resolves, once it has closed and the editor has

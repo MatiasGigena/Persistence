@@ -2,7 +2,8 @@
 // are drawn at most once per animation frame, and the list sticks to the bottom while the reader is there.
 import { imageUrl } from './attach.ts';
 import { addCodeCopies, copyButton } from './copy.ts';
-import { prettyArgs, toolCommand, toolSummary } from './format.ts';
+import { prettyArgs } from './format.ts';
+import { toolCommand, toolSummary } from '../ui/text.ts';
 import { renderMarkdown } from './markdown.ts';
 import { turnEnds } from './store.ts';
 import type { ViewItem } from './store.ts';

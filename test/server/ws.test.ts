@@ -41,7 +41,7 @@ async function setup(t: TestContext): Promise<Setup> {
   const web = join(folder, 'web');
   await mkdir(web);
   await writeFile(join(web, 'index.html'), '<!doctype html><title>t</title>');
-  const roots = { web, protocol: join(folder, 'protocol'), uiTypes: join(folder, 'types.ts'), marked: join(folder, 'marked') };
+  const roots = { web, protocol: join(folder, 'protocol'), ui: join(folder, 'ui'), marked: join(folder, 'marked') };
   const devices = await Devices.open(join(folder, 'serve', 'devices.json'));
   const { code } = await devices.pair();
   const paired = devices.redeem(code, 'phone');

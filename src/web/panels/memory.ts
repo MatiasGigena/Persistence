@@ -1,7 +1,8 @@
 // Memory: Pi's memory view, one row per line. A line zooms into its two halves, and a single message (n = 1) opens
 // whole; breadcrumbs lead back up. The top level reloads when the memory's counters change while it is open.
 import { el } from '../chat-view.ts';
-import { lineLabel, memoryHeader, parseMessage, parseZoom } from '../format.ts';
+import { lineLabel, memoryHeader } from '../format.ts';
+import { parseMessage, parseZoom } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
 import { RequestError } from '../link.ts';
 import type { ViewLine } from '../../protocol/messages.ts';

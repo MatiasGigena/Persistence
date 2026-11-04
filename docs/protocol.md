@@ -121,7 +121,8 @@ stops them; the checks hold only together. The server host is assumed to have on
 - The web app calls `/api/me` before opening `/ws`: a browser cannot read why an upgrade failed, and the app must
   tell "pair this device" from "offline".
 - **App files** ([src/server/static.ts](../src/server/static.ts), ADR [0020](decisions/0020-web-client-without-build.md)):
-  `src/web/` at `/` (`/` is `index.html`), `src/protocol/` at `/protocol/`, `src/ui/types.ts` at `/ui/types.ts`, and
+  `src/web/` at `/` (`/` is `index.html`), `src/protocol/` at `/protocol/`, `src/ui/types.ts` and `src/ui/text.ts` under `/ui/` (no other file of
+  `src/ui/`), and
   marked's ESM build at `/vendor/marked.esm.js` (with its source map). So `src/web/x.ts` imports
   `../protocol/messages.ts` as in the source tree, and `marked` through an import map in `index.html`. Served
   extensions: `.html .ts .js .css .json .map .webmanifest .svg .png .ico .woff2`; never dot-files or `tsconfig.json`.

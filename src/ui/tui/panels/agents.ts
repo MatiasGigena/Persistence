@@ -5,63 +5,12 @@ import { Markdown, styleTextWithAnsi, truncateToWidth, wrapTextWithAnsi } from '
 import type { MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { ARCHIVE_TTL_MS } from '../../../protocol/messages.ts';
 import type { AgentStatus, ChatFeed, ChatItem, UiSession } from '../../types.ts';
-import { toolSummary } from '../chat.ts';
+import { activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText, toolSummary } from '../../text.ts';
 import { clean, confirm, ListView, openPanel, PanelFrame, TextView, wrap } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
 import { errorMessage } from '../../../protocol/util.ts';
 
 export type { PanelTheme } from './frame.ts';
-
-/** The agents at work: those not archived. Counts, lists and busy marks read only these. */
-export function activeAgents<T extends { readonly archivedAt?: number }>(agents: readonly T[]): T[] {
-  return agents.filter(agent => agent.archivedAt === undefined);
-}
-
-/** The archived agents, soonest deleted first. */
-export function archivedAgents<T extends { readonly archivedAt?: number }>(agents: readonly T[]): (T & { readonly archivedAt: number })[] {
-  return agents.flatMap(agent => (agent.archivedAt === undefined ? [] : [{ ...agent, archivedAt: agent.archivedAt }]))
-    .sort((a, b) => a.archivedAt - b.archivedAt);
-}
-
-/**
- * When an agent archived at `archivedAt` (ms) is deleted, from `now`: "deleted in 5 h" (whole hours, rounded down),
- * "deleted in 12 min" under an hour (rounded up), "deleted soon" once due. The web app's format.ts says the same.
- */
-export function deletionText(archivedAt: number, now: number): string {
-  const left = archivedAt + ARCHIVE_TTL_MS - now;
-  if (left <= 0) return 'deleted soon';
-  const hours = Math.floor(left / 3_600_000);
-  return hours >= 1 ? `deleted in ${hours} h` : `deleted in ${Math.ceil(left / 60_000)} min`;
-}
-
-/**
- * Whether the status marks an agent as standing (ADR 0027). Read structurally, so a status without the field counts
- * every agent as ad-hoc; the session still refuses to archive a standing one.
- */
-const isStanding = (agent: object): boolean => 'standing' in agent && Boolean(agent.standing);
-
-/** The main agents "archive all ad-hoc agents" takes: not archived, not standing. */
-export function adhocAgents<T extends { readonly role: string; readonly archivedAt?: number }>(agents: readonly T[]): T[] {
-  return activeAgents(agents).filter(agent => agent.role === 'main' && !isStanding(agent));
-}
-
-/** Asked before archiving one agent; `subs` are its sub agents, which go with it. */
-export function archiveQuestion(name: string, subs: readonly string[] = []): string {
-  return `Archive ${name}? It stops now and is deleted in 24 h; restore within the day.`
-    + (subs.length ? ` Its sub agents go with it: ${subs.join(', ')}.` : '');
-}
-
-/** Asked before archiving every ad-hoc main agent, named. */
-export function archiveAdhocQuestion(names: readonly string[]): string {
-  return `Archive all ad-hoc agents: ${names.join(', ')}? They and their sub agents stop now and are deleted in 24 h;`
-    + ' restore within the day. Standing agents stay.';
-}
-
-/** What archiving or restoring did, from the names the session returns. */
-export function archivedText(names: readonly string[], restored = false): string {
-  if (!names.length) return restored ? 'Nothing to restore.' : 'No agents to archive.';
-  return `${restored ? 'Restored' : 'Archived'} ${names.join(', ')}.`;
-}
 
 /** The root list's last row, into the archived agents; no agent name starts with a space. */
 const ARCHIVED_KEY = ' archived';

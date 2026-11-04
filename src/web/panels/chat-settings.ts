@@ -3,7 +3,8 @@
 // or effort applies to Pi and its agents from the next request and is saved as the default; the tools are for this
 // server run only, and turning them on asks first.
 import { el } from '../chat-view.ts';
-import { activeAgents, memoryHeader, modelRef, sortModels } from '../format.ts';
+import { memoryHeader, sortModels } from '../format.ts';
+import { activeAgents, modelRef } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
 import { RequestError } from '../link.ts';
 import { disablePush, enablePush, pushState } from '../push.ts';
