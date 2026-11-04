@@ -21,7 +21,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/server/`: `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
 - `src/client/`: attached TUI and SSH connector: `attach.ts`, `remote-session.ts`, `unix-link.ts`, `admin.ts` (the CLI's admin commands over the socket); `config.ts` and `remote.ts` select the central server before local chat resolution, `ssh-link.ts` and `bridge.ts` carry the socket over SSH, `machine-executor.ts` runs guarded tools with a durable local ledger, `machine-link.ts` wires it to the session.
 - `src/machines/routing.ts`: persisted per-request, run and agent-session execution targets; `src/server/machines.ts`: authenticated connector dispatch, never host fallback.
-- `src/web/`: the phone web app, vanilla DOM TypeScript served type-stripped (own `tsconfig.json`; `sw.ts` and `sw/shell.ts`, the shell decisions it loads with `importScripts`, have `sw/tsconfig.json`). `format.ts`, `store.ts`, `link.ts` and `markdown.ts` stay DOM-free so `test/web/` runs them in Node.
+- `src/web/`: the phone web app, vanilla DOM TypeScript served type-stripped (own `tsconfig.json`; `sw.ts` and `sw/shell.ts`, the shell decisions it loads with `importScripts`, have `sw/tsconfig.json`). `format.ts`, `store.ts`, `link.ts`, `link-state.ts`, `outbox.ts` and `markdown.ts` stay DOM-free so `test/web/` runs them in Node.
 - `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
 - `.agents/skills/`: agent skills installed locally (`npx skills add`), never committed and ignored by lint.
 - `tsconfig.json`, `eslint.config.ts`: the type and lint rules `npm run check` enforces.

@@ -319,6 +319,8 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/server/static.ts` | The web app's files: `src/web/` at `/`, `src/protocol/`, `marked`; type stripping, ETags, the CSP; `assetsHash` for `welcome.assets` |
 | `src/web/index.html`, `manifest.webmanifest`, `offline.html`, `styles.css`, icons | The installable app shell; the only inline script is the `marked` import map, allowed by its CSP hash; `modulepreload` links fetch every startup module at once (ADR 0032) |
 | `src/web/main.ts` | Boots the app: screens changed by view transitions, the first load shown once whole (boot screen, then the chat's skeleton if it takes a while), pairing screen, connection banner, header, composer (one send, steer and stop button), chat settings |
+| `src/web/tray.ts` | `AttachmentTray`: the images attached to the next message, their tiles and the files being read (ADR 0031) |
+| `src/web/outbox.ts`, `link-state.ts` | DOM-free: `Outbox` (sends not yet admitted, resent by request id after a reconnect) and `linkStep` (what a link state means for the banner, pairing, "gone" and reload screens) |
 | `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |
 | `src/web/store.ts` | Mirrors feeds with `applyOps`, status, notices, pending sends (resent with their requestId) |
 | `src/web/chat-view.ts`, `markdown.ts`, `format.ts`, `copy.ts` | Keyed DOM chat, sanitized Markdown, the web app's own text helpers (header status, pairing, load steps); copy buttons on turns and code blocks |

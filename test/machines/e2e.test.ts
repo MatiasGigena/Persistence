@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { MachineExecutor } from '../../src/client/machine-executor.ts';
-import { RemoteSession } from '../../src/client/remote-session.ts';
+import type { RemoteSession } from '../../src/client/remote-session.ts';
 import { ClientLink, unixConnector } from '../../src/client/unix-link.ts';
 import { parseArgs, resolveOptions } from '../../src/host/config.ts';
 import type { MachineCall, MachineToolResult } from '../../src/protocol/machines.ts';
