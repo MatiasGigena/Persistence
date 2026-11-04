@@ -324,6 +324,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/web/chat-view.ts`, `markdown.ts`, `format.ts`, `copy.ts` | Keyed DOM chat, sanitized Markdown, the web app's own text helpers (header status, pairing, load steps); copy buttons on turns and code blocks |
 | `src/web/panels/*` | Sheets: chat settings (model, effort, tools switch with its confirm dialog, notifications), agents, memory zoom; `cache.ts` keeps their lists across openings (chat settings' warmed once connected) |
 | `src/web/push.ts`, `sw.ts` | Push subscribe on a tap; service worker: the shell as whole versioned sets, served stale while revalidating, with an offline page (ADR 0032), and the set in hand while the server answers 502–504 (a restart); push and click handlers |
+| `src/web/sw/shell.ts` | The service worker's shell decisions, loaded with `importScripts`: complete sets, the version-agreed fetch, pruning, which set answers a page load or file, the offline page; over small cache and fetch interfaces, so `test/web/sw.test.ts` runs them against fakes |
 | `src/server/transport-ws.ts` | `startWebListener`: HTTP on 127.0.0.1, `/api/me`, `/api/pair`, the app, and `/ws` WebSockets handed to the hub as `PeerLink`s |
 | `src/server/push.ts` | `createPush`: Web Push on `node:crypto` (VAPID, aes128gcm), the key pair in `serve/vapid.json` and the subscriptions in `serve/push.json`; the `PushNotifier` the hub calls |
 | `tsconfig.json` | Strict TypeScript for `tsc` (no emit): erasable syntax only, `.ts` import specifiers |

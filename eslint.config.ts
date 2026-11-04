@@ -21,5 +21,5 @@ export default tseslint.config(
     },
   },
   // The service worker has its own WebWorker project; src/web/tsconfig.json (DOM) excludes it.
-  { files: ['src/web/sw.ts'], languageOptions: { parserOptions: { projectService: false, project: './src/web/sw/tsconfig.json', tsconfigRootDir: import.meta.dirname } } },
+  { files: ['src/web/sw.ts', 'src/web/sw/*.ts'], languageOptions: { parserOptions: { projectService: false, project: './src/web/sw/tsconfig.json', tsconfigRootDir: import.meta.dirname } } },
 );
