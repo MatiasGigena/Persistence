@@ -313,7 +313,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing; `lineSplitter` |
 | `src/client/admin.ts` | The CLI's admin client: `adminRequest` over the socket (owner checked), `backupOverSocket`, `pairCommand`, `devicesCommand`, `agentsCommand` |
 | `src/server/backup.ts` | `backup` (`VACUUM INTO` and the `.unii` (browser profiles left out) and settings copies in one step, then `prune`), `backupOffline`, `stamp` |
-| `src/server/store.ts` | `writeJson`, `readJson`, `jsonFile`, and narrowing helpers for `serve/`'s JSON files (mode 600, atomic) |
+| `src/server/store.ts` | `writeJson`, `readJson`, and narrowing helpers for `serve/`'s JSON files (mode 600, atomic) |
 | `src/server/link.ts` | The seams: `PeerLink`, `PeerHub`, `DeviceRegistry`, `PushNotifier` |
 | `contrib/systemd/` | `pi-durable.service` (`serve --cwd %h/projects`), `pi-durable-backup.service` and its daily `.timer` |
 | `src/server/auth.ts` | `Devices` (the `DeviceRegistry`: pairing codes, `pd_device` cookies by sha256 in `serve/devices.json`), `gate` and `authenticate` (login allow-list, Origin, device) |

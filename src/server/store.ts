@@ -34,33 +34,6 @@ export async function readJson<T>(file: string, parse: (value: unknown) => T, mi
   }
 }
 
-/** One JSON file with serialized updates: each `update` sees the result of the one before. */
-export interface JsonFile<T> {
-  readonly path: string;
-  load(): Promise<T>;
-  /** Applies `change` to the current value and writes the result; resolves with it. */
-  update(change: (current: T) => T): Promise<T>;
-}
-
-/** A JsonFile at `path`; `parse` narrows what is read, `empty` is the value of a missing file. */
-export function jsonFile<T>(path: string, parse: (value: unknown) => T, empty: () => T): JsonFile<T> {
-  let queue: Promise<unknown> = Promise.resolve();
-  const load = (): Promise<T> => readJson(path, parse, empty);
-  return {
-    path,
-    load,
-    update(change) {
-      const next = queue.then(async () => {
-        const value = change(await load());
-        writeJson(path, value);
-        return value;
-      });
-      queue = next.catch(() => {});
-      return next;
-    },
-  };
-}
-
 // Narrowing helpers for parsers. Each throws a ShapeError naming the field.
 
 /** `value` as an object with its fields still unknown. */

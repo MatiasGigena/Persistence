@@ -16,7 +16,7 @@ import { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
 import { NotFound } from '../ui/errors.ts';
 import type { ArchiveTarget } from '../ui/types.ts';
 
-export { AGENT_NAME, DEFAULT_ROSTER, isAgentName, isKit, KITS, LOCAL_KITS } from './roster.ts';
+export { DEFAULT_ROSTER } from './roster.ts';
 export { agentInputOf, MESSAGE_KIND, REPORT_KIND } from './entries.ts';
 export type { AgentInput } from './entries.ts';
 export type { Kit, Roster, StandingAgent } from './roster.ts';

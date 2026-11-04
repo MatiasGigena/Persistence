@@ -29,8 +29,6 @@ const DRAFT_KEY = 'pd.draft';
 const RELOAD_KEY = 'pd.reloaded';
 /** sessionStorage: how many images a reload for new files dropped, said once the reloaded app is ready. */
 const LOST_KEY = 'pd.lost-images';
-/** How long the link may be reconnecting before the banner says so. */
-
 /** How long after a send the button cannot become stop, so a double tap does not abort what it just sent. */
 const SEND_HUSH_MS = 600;
 /** How long a reload for new files waits for the service worker to revalidate them; past it, a later notice reloads. */
