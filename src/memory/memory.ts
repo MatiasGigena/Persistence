@@ -9,7 +9,7 @@ import { bytes, CAP, cleanLine, clip, cutLine, flat, formatDate, hash, localDay,
 import { appendJson, atomicWrite } from '../runtime/files.ts';
 import { NotFound } from '../protocol/errors.ts';
 import { cutBytes, errorMessage, isRecord } from '../protocol/util.ts';
-import { cut, end, key, name, parentOf, start, View } from './view.ts';
+import { cut, parentOf, posEnd, posKey, posLabel, posStart, View } from './view.ts';
 import type { Pos } from './view.ts';
 
 const KIND_LIST = ['user', 'pi', 'tool', 'echo', 'work', 'note'] as const;
@@ -61,10 +61,10 @@ export const LEAD = 8;      // a leaf starts once fewer than this many leaves be
 export const PAGE = CAP;    // characters per zoom(id, 1) page: a logged text is one page
 
 const opened = new Set<string>();
-const PLACEHOLDER_LINE = (p: Pos): string => `${name(p)}|${PLACEHOLDER}`;
+const PLACEHOLDER_LINE = (p: Pos): string => `${posLabel(p)}|${PLACEHOLDER}`;
 // Work goes in the order the messages came: a node by the end of its context (a leaf's message, a merge's end), a merge
 // before a leaf at a tie (UniiChat Memory.ts `starts`).
-const mergeOrder = (a: Pos, b: Pos): boolean => end(a) < end(b) || (end(a) === end(b) && a.l > b.l);
+const mergeOrder = (a: Pos, b: Pos): boolean => posEnd(a) < posEnd(b) || (posEnd(a) === posEnd(b) && a.l > b.l);
 
 class Heap<T> {
   before: (a: T, b: T) => boolean;
@@ -185,7 +185,7 @@ export class Memory {
     this.summarize = summarize ?? (models
       ? createPiAiSummarizer({ models, model: compactionModel ?? defaultCompactionModel(model, models), reasoning, maxTokens })
       : async () => { throw new Error('unii: no summarizer configured (pass summarize or models)'); });
-    const sizeOf = (p: Pos): number => this.lineSize(p), built = (p: Pos): boolean => this.tree.has(key(p));
+    const sizeOf = (p: Pos): number => this.lineSize(p), built = (p: Pos): boolean => this.tree.has(posKey(p));
     this.mainView = new View({ ...view, sizeOf, built });
     this.cview = new View({ ...compactionView, sizeOf, built });
     for (const sub of ['main', 'tree']) mkdirSync(join(dir, sub), { recursive: true, mode: 0o700 });
@@ -204,8 +204,8 @@ export class Memory {
     });
     const T = this.log.length;
     for (const n of readJsonl(join(this.dir, 'tree'), this.warn)) {
-      if (!isNode(n) || end(n) > T) continue;
-      this.tree.set(key(n), { l: n.l, i: n.i, text: n.text, size: bytes(flat(n.text)) });
+      if (!isNode(n) || posEnd(n) > T) continue;
+      this.tree.set(posKey(n), { l: n.l, i: n.i, text: n.text, size: bytes(flat(n.text)) });
     }
     if (!this.loadViews(T)) {
       // First open (or an unreadable view.json): fold the log once. From then on the view is saved and never rebuilt.
@@ -232,11 +232,11 @@ export class Memory {
       [this.mainView, this.cview].forEach((v, n) => {
         v.parts = pairs(lists[n]).flatMap(p => this.down(p));
         v.shrinking = Array.isArray(shrinking) && Boolean(shrinking[n]);
-        const last = v.parts.at(-1), at = last ? end(last) : 0;
+        const last = v.parts.at(-1), at = last ? posEnd(last) : 0;
         if (!v.tiles(at) || at > T) throw new Error('does not tile the log');
       });
       // The log may be ahead of view.json after a crash: add the missing lines as they would have come.
-      for (let i = end(this.mainView.parts.at(-1) ?? { l: 0, i: -1 }); i < T; i++) this.grow(i);
+      for (let i = posEnd(this.mainView.parts.at(-1) ?? { l: 0, i: -1 }); i < T; i++) this.grow(i);
       return this.cview.tiles(T);
     } catch (error) {
       this.warn(`unii: view.json unreadable (${errorMessage(error)}); folding the log again`);
@@ -246,7 +246,7 @@ export class Memory {
 
   /** A saved line whose node is missing (a tree line lost in a crash) opens into its halves, down to built nodes. */
   private down(p: Pos): Pos[] {
-    if (p.l <= 0 || this.tree.has(key(p))) return [p];
+    if (p.l <= 0 || this.tree.has(posKey(p))) return [p];
     return [{ l: p.l - 1, i: 2 * p.i }, { l: p.l - 1, i: 2 * p.i + 1 }].flatMap(c => this.down(c));
   }
 
@@ -336,10 +336,10 @@ export class Memory {
 
   // ---------------------------------------------------------------- reads
 
-  private text(p: Pos): string | undefined { return this.tree.get(key(p))?.text; }
-  renderLine(p: Pos): string { const text = this.text(p); return text === undefined ? PLACEHOLDER_LINE(p) : `${name(p)}|${flat(text)}`; }
+  private text(p: Pos): string | undefined { return this.tree.get(posKey(p))?.text; }
+  renderLine(p: Pos): string { const text = this.text(p); return text === undefined ? PLACEHOLDER_LINE(p) : `${posLabel(p)}|${flat(text)}`; }
   private lineSize(p: Pos): number {
-    const k = key(p);
+    const k = posKey(p);
     if (!this.tree.has(k)) return bytes(PLACEHOLDER_LINE(p)) + 1;
     let size = this.sizes.get(k);
     if (size === undefined) this.sizes.set(k, size = bytes(this.renderLine(p)) + 1);
@@ -354,7 +354,7 @@ export class Memory {
 
   /** Whether every view line before message k is summarized. */
   ready(k = this.log.length): boolean {
-    return (k >= this.log.length ? this.mainView.parts : cut(this.mainView.parts, k)).every(p => this.tree.has(key(p)));
+    return (k >= this.log.length ? this.mainView.parts : cut(this.mainView.parts, k)).every(p => this.tree.has(posKey(p)));
   }
 
   /**
@@ -395,7 +395,7 @@ export class Memory {
   zoom(id: number, n = 1, page = 1): string {
     const T = this.log.length;
     if (!Number.isSafeInteger(id) || id < 0 || !Number.isSafeInteger(n) || n < 1 || (n & (n - 1)) !== 0 || id % n !== 0 || id + n > T) {
-      throw new NotFound(`No line ${id}+${n}: n is a power of 2, id a multiple of n, and id+n at most ${T}. The tree's roots: ${roots(T).map(name).join(', ') || 'none'}.`);
+      throw new NotFound(`No line ${id}+${n}: n is a power of 2, id a multiple of n, and id+n at most ${T}. The tree's roots: ${roots(T).map(posLabel).join(', ') || 'none'}.`);
     }
     if (n === 1) {
       const record = this.at(id), pages = split(record.text, PAGE);
@@ -407,7 +407,7 @@ export class Memory {
     const l = Math.log2(n) - 1, i = (2 * id) / n;
     return [i, i + 1].map(c => {
       const p = { l, i: c };
-      return this.tree.has(key(p)) ? this.renderLine(p) : `${name(p)}|(not summarized yet: zoom(${start(p)}, ${2 ** l}))`;
+      return this.tree.has(posKey(p)) ? this.renderLine(p) : `${posLabel(p)}|(not summarized yet: zoom(${posStart(p)}, ${2 ** l}))`;
     }).join('\n');
   }
 
@@ -483,11 +483,11 @@ export class Memory {
   /** A merge's source: its halves, each flat, one per line (UniiChat Memory.ts `source`). */
   private joined(p: Pos): string { return `${flat(this.text({ l: p.l - 1, i: 2 * p.i }) ?? '')}\n${flat(this.text({ l: p.l - 1, i: 2 * p.i + 1 }) ?? '')}`; }
   private source(p: Pos): string { return p.l === 0 ? this.leafSource(p.i) : this.joined(p); }
-  private busy(p: Pos): boolean { const k = key(p); return this.tree.has(k) || this.inFlight.has(k) || this.failed.has(k); }
+  private busy(p: Pos): boolean { const k = posKey(p); return this.tree.has(k) || this.inFlight.has(k) || this.failed.has(k); }
 
   /** Node n is built: queue its parent once its sibling is built too. */
   private readyParent(n: Pos): void {
-    if (!this.tree.has(key({ l: n.l, i: n.i ^ 1 }))) return;
+    if (!this.tree.has(posKey({ l: n.l, i: n.i ^ 1 }))) return;
     const p = parentOf(n);
     if (this.busy(p)) return;
     if (bytes(this.joined(p)) <= NODE) this.instant.push(p);
@@ -500,7 +500,7 @@ export class Memory {
     for (let progressed = true; progressed;) {
       progressed = false;
       for (let p = this.instant.pop(); p; p = this.instant.pop()) {
-        if (!this.tree.has(key(p))) { this.finish(p, this.joined(p)); progressed = changed = true; }
+        if (!this.tree.has(posKey(p))) { this.finish(p, this.joined(p)); progressed = changed = true; }
       }
       while (this.retryLeaves.length && this.inFlight.size < this.jobCount) {
         const p = this.retryLeaves.shift();
@@ -512,7 +512,7 @@ export class Memory {
         for (let top = this.merges.peek(); top && this.busy(top); top = this.merges.peek()) this.merges.pop();
         const merge = this.merges.peek(), leaf = this.leafNext < this.log.length && this.leafOpen < this.lead;
         const slot = this.inFlight.size < this.jobCount;
-        if (merge && slot && (!leaf || end(merge) <= this.leafNext)) { this.merges.pop(); this.startCompaction(merge); continue; }
+        if (merge && slot && (!leaf || posEnd(merge) <= this.leafNext)) { this.merges.pop(); this.startCompaction(merge); continue; }
         if (!leaf) break;
         const p = { l: 0, i: this.leafNext }, source = this.leafSource(p.i), free = bytes(source) <= NODE;
         if (!free && !slot) break;
@@ -525,7 +525,7 @@ export class Memory {
   }
 
   private finish(p: Pos, text: string): void {
-    const k = key(p);
+    const k = posKey(p);
     if (this.tree.has(k)) return;
     const node: TreeNode = { l: p.l, i: p.i, text, size: bytes(flat(text)) };
     appendJson(join(this.dir, 'tree', `${localDay(new Date())}.jsonl`), node);
@@ -537,7 +537,7 @@ export class Memory {
   }
 
   private startCompaction(p: Pos): void {
-    const k = key(p);
+    const k = posKey(p);
     const run = this.compact(p).then(line => {
       if (this.controller.signal.aborted) return;
       this.finish(p, line);
@@ -546,7 +546,7 @@ export class Memory {
     }).catch((error: unknown) => {
       if (this.controller.signal.aborted) return;
       this.error = errorMessage(error);
-      this.warn(`unii: compaction ${name(p)} failed: ${this.error}`);
+      this.warn(`unii: compaction ${posLabel(p)} failed: ${this.error}`);
       this.failed.set(k, p);
       clearTimeout(this.retryTimer);
       this.retryTimer = setTimeout(() => { this.retryFailed(); this.schedule(); }, this.retryMs);
@@ -570,9 +570,9 @@ export class Memory {
 
   /** The compaction view up to node p: built lines ending at p (a leaf) or at its last message (a merge). */
   private compactionContext(p: Pos): string {
-    const boundary = p.l === 0 ? start(p) : end(p), lines: string[] = [];
+    const boundary = p.l === 0 ? posStart(p) : posEnd(p), lines: string[] = [];
     for (const q of this.cview.parts) {
-      if (end(q) > boundary || !this.tree.has(key(q))) break;
+      if (posEnd(q) > boundary || !this.tree.has(posKey(q))) break;
       lines.push(`${this.renderLine(q)}\n`);
     }
     return `<chat>\n${lines.join('')}</chat>`;
@@ -592,7 +592,7 @@ export class Memory {
       task = leafTask(p.i, r.kind, r.text);
     } else {
       const [a = '', b = ''] = source.split('\n');
-      task = mergeTask(name({ l: p.l - 1, i: 2 * p.i }), name({ l: p.l - 1, i: 2 * p.i + 1 }), start(p), end(p) - 1, a, b);
+      task = mergeTask(posLabel({ l: p.l - 1, i: 2 * p.i }), posLabel({ l: p.l - 1, i: 2 * p.i + 1 }), posStart(p), posEnd(p) - 1, a, b);
     }
     const { system = PROMPT, tools } = this.compactionPrompt ?? {};
     const prompt = `${this.compactionContext(p)}\n\n${task}`;
@@ -600,7 +600,7 @@ export class Memory {
     const { summarize } = this;
     const ask = async (note?: string): Promise<string> => {
       const messages: CompactionMessage[] = [{ role: 'user', content: note ? `${prompt}\n\n${note}` : prompt }];
-      return cleanLine(String(await summarize(system, messages, { signal: this.controller.signal, tools, node: { l: p.l, i: p.i, name: name(p) } }) ?? ''));
+      return cleanLine(String(await summarize(system, messages, { signal: this.controller.signal, tools, node: { l: p.l, i: p.i, name: posLabel(p) } }) ?? ''));
     };
     let raw;
     try { raw = await ask(); } catch (error) {
@@ -622,7 +622,7 @@ export class Memory {
 
   /** A node the model answered without a line: its source's first 512 bytes, flat (UniiChat Memory.ts `cut`). */
   private clipped(p: Pos, source: string, why: string): string {
-    this.warn(`unii: compaction ${name(p)}: ${why}; its node is its source, clipped`);
+    this.warn(`unii: compaction ${posLabel(p)}: ${why}; its node is its source, clipped`);
     return cutBytes(flat(source), NODE);
   }
 

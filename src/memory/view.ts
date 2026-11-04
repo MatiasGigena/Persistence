@@ -3,11 +3,13 @@
 /** A tree node: level `l` (it covers 2^l messages) and index `i` at that level. */
 export interface Pos { l: number; i: number }
 
-export const start = (p: Pos): number => p.i * 2 ** p.l;
-export const end = (p: Pos): number => (p.i + 1) * 2 ** p.l;
-export const key = (p: Pos): string => `${p.l}/${p.i}`;
+// A position's forms: posStart and posEnd bound the messages it covers; posKey (`l/i`) keys the tree in memory only
+// (tree/*.jsonl and view.json store `l` and `i` themselves); posLabel (`start+count`) is how the view names a line to Pi.
+export const posStart = (p: Pos): number => p.i * 2 ** p.l;
+export const posEnd = (p: Pos): number => (p.i + 1) * 2 ** p.l;
+export const posKey = (p: Pos): string => `${p.l}/${p.i}`;
 export const parentOf = (p: Pos): Pos => ({ l: p.l + 1, i: Math.floor(p.i / 2) });
-export const name = (p: Pos): string => `${start(p)}+${2 ** p.l}`;
+export const posLabel = (p: Pos): string => `${posStart(p)}+${2 ** p.l}`;
 
 export interface ViewOptions { hi: number; lo: number; sizeOf: (p: Pos) => number; built: (p: Pos) => boolean }
 
@@ -67,7 +69,7 @@ export class View {
       const a = parts[j], b = parts[j + 1];
       if (!a || !b || a.l !== b.l || a.i % 2 !== 0 || b.i !== a.i + 1) continue;
       if (onlyBuilt && !this.built(parentOf(a))) continue;
-      const due = (T - (end(b) - 1)) / 2 ** a.l; // exact: division by a power of two
+      const due = (T - (posEnd(b) - 1)) / 2 ** a.l; // exact: division by a power of two
       if (due > bestDue) { best = j; bestDue = due; }
     }
     return best;
@@ -75,7 +77,7 @@ export class View {
 
   tiles(T: number): boolean {
     let at = 0;
-    for (const p of this.parts) { if (start(p) !== at) return false; at = end(p); }
+    for (const p of this.parts) { if (posStart(p) !== at) return false; at = posEnd(p); }
     return at === T;
   }
 }
@@ -84,8 +86,8 @@ export class View {
 export function cut(parts: readonly Pos[], k: number): Pos[] {
   const out: Pos[] = [];
   const add = (p: Pos): void => {
-    if (start(p) >= k) return;
-    if (end(p) <= k) out.push(p);
+    if (posStart(p) >= k) return;
+    if (posEnd(p) <= k) out.push(p);
     else for (const i of [2 * p.i, 2 * p.i + 1]) add({ l: p.l - 1, i });
   };
   for (const p of parts) add(p);

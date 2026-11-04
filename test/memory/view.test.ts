@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { cut, end, start, View } from '../../src/memory/view.ts';
+import { cut, posEnd, posStart, View } from '../../src/memory/view.ts';
 import type { Pos } from '../../src/memory/view.ts';
 
 // Taelin's rollback push (recipe §3.1), the reference for the view's merge order.
@@ -139,6 +139,6 @@ describe('unii view', () => {
     const parts = [{ l: 3, i: 0 }, { l: 1, i: 4 }, { l: 0, i: 10 }];
     assert.deepEqual(cut(parts, 11), parts);
     assert.deepEqual(cut(parts, 10), parts.slice(0, 2));
-    assert.deepEqual(cut(parts, 5).map(p => `${start(p)}-${end(p)}`), ['0-4', '4-5']);
+    assert.deepEqual(cut(parts, 5).map(p => `${posStart(p)}-${posEnd(p)}`), ['0-4', '4-5']);
   });
 });

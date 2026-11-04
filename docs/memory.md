@@ -381,7 +381,7 @@ Directories are created with mode 0700 and files with 0600. `view.json.<pid>.tmp
 |---|---|
 | `src/memory/index.ts` | Public exports: `openMemory`, `Memory`, `KINDS`, `isKind`, `createUniiExtension`, `REPORT_KIND`, `createPiAiSummarizer`, `CompactionRefused`, `defaultCompactionModel`, `PROMPT`, and their types (`Kind`, `MemoryRecord`, `MemoryOptions`, `Summarizer`, `UniiExtensionOptions`, …). |
 | `src/memory/memory.ts` | `Memory`: the log, the tree, both views, the compactor queues, `render`, `settle`, `whole`, `say`, `zoom`, `date`, `previousExchange`, `status`; `openMemory` and its one-open-per-process guard. |
-| `src/memory/view.ts` | `View`: the sawtooth `fit` and the `due` order; node helpers `start`, `end`, `key`, `name`, `parentOf`; `cut` for a view ending before message k. |
+| `src/memory/view.ts` | `View`: the sawtooth `fit` and the `due` order; node helpers `posStart`, `posEnd`, `posKey`, `posLabel`, `parentOf`; `cut` for a view ending before message k. |
 | `src/memory/prompt.ts` | The system prompt `PROMPT`, the compaction tasks `leafTask` and `mergeTask`, `tooLong`, the 512-dash `RULER`, the placeholder text; adapted from upstream's `prompt.txt` and `Memory.ts`. |
 | `src/memory/summarizer.ts` | The default pi-ai summarizer, `CompactionRefused` (an answer with no line), and the compaction model choice (`CHEAP_MODELS`, `defaultCompactionModel`). |
 | `src/memory/extension.ts` | The `uniichat` pi-durable extension: the request rewrite, the logging hooks, the `zoom` and `date` tools, the declined compactions. |

@@ -7,7 +7,7 @@ import { updateSettings } from '../config/settings.ts';
 import { isThinkingLevel } from '../runtime/thinking.ts';
 import { errorMessage } from '../protocol/util.ts';
 import type { Config } from '../config/options.ts';
-import { start } from '../memory/view.ts';
+import { posStart } from '../memory/view.ts';
 import { imagesProblem, modelChooser, thinkingLevels } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
@@ -271,6 +271,6 @@ export function memoryLines({ memory }: Pick<Instance, 'memory'>): ViewLine[] {
   if (!memory) return [];
   return memory.view.parts.map(p => {
     const line = memory.renderLine(p);
-    return { id: start(p), n: 2 ** p.l, text: line.slice(line.indexOf('|') + 1) };
+    return { id: posStart(p), n: 2 ** p.l, text: line.slice(line.indexOf('|') + 1) };
   });
 }
