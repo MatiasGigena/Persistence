@@ -287,7 +287,13 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/tools/schema.ts` | `literal`: the TypeBox-shaped string literal the tools' frozen JSON Schemas use |
 | `src/tools/show-image.ts` | `createShowImageExtension`: `show_image`, an existing image file shown in the chat and given to the model, read through `GuardedEnv` (ADR 0031) |
 | `src/tools/codemode.ts` | The `codemode` extension: model-written scripts in a QuickJS sandbox that call the conversation's tools (`SCRIPT_TOOLS`) as nested tool calls (ADR 0033) |
-| `src/agents/index.ts` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
+| `src/agents/index.ts` | `createAgentsExtension` and the package's public API (re-exports the modules below) |
+| `src/agents/registry.ts` | `AgentsDoc` (roles, parents, conversations, answered calls), the Anchor task, `listAgents` and the lookups the other modules share |
+| `src/agents/setup.ts` | `syncAgents`: each agent's choices derived from Pi's and its roster entry; the standing agents' creation; `missingKits` |
+| `src/agents/delivery.ts` | The Deliver task: every input to an agent, keyed by task ID, and the report back to its parent |
+| `src/agents/lifecycle.ts` | `stopAgents`, `deleteAgent`, `archiveAgents`, `restoreAgent`, `purgeArchived` |
+| `src/agents/transcript.ts` | `agentTranscript`: an agent's whole chat for `zoom("Name")`, in pages |
+| `src/agents/prompts.ts`, `tools.ts` | The role texts of the agents' prompt section; the agent tools and the guard hook |
 | `src/machines/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |
 | `src/protocol/machines.ts` | Machine targets, registrations, tool calls/results/cancels and JSON narrowing shared by server and connector |
 | `src/protocol/messages.ts` | Wire protocol v4: every message, the op table (`Ops`), item ops, error and close codes, limits |

@@ -346,7 +346,7 @@ zoom("Name")
   30,000 characters is several ids; each `zoom(id, 1)` gives one part.
 - Bad arguments are an error that names the tree's roots (a node per power of two in `T`, largest first), where any
   zoom can start, as upstream's `zoom` does: `No line 0+16: …. The tree's roots: 0+8, 8+2.`
-- `zoom("Name")` gives an agent's whole chat, from `agentTranscript` in `src/agents/index.ts`. A string of digits is
+- `zoom("Name")` gives an agent's whole chat, from `agentTranscript` in `src/agents/transcript.ts`. A string of digits is
   read as an id; square brackets around a name are stripped. `zoom("Pi")` gives Pi's own transcript.
 
 The tool's output is limited to 256 KiB and 100,000 lines.
