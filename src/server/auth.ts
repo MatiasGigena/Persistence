@@ -4,8 +4,8 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto
 import type { IncomingHttpHeaders } from 'node:http';
 import type { Device } from '../protocol/messages.ts';
 import type { DeviceRegistry } from './link.ts';
-import { array, number, optionalNumber, readJson, record, string, writeJson } from './store.ts';
-import { ShapeError } from '../protocol/util.ts';
+import { readJson, writeJson } from './store.ts';
+import { list, num, obj, optNum, ShapeError, str } from '../protocol/util.ts';
 
 export const COOKIE = 'pd_device';
 /** 400 days: the longest cookie lifetime browsers keep. */
@@ -49,11 +49,11 @@ export function normalizeCode(x: unknown): string | undefined {
 
 /** devices.json: `{"devices": [{name, hash, pairedAt, lastSeen?}]}`. Throws a ShapeError naming the field. */
 function parseDevices(value: unknown): StoredDevice[] {
-  return array(record(value, 'devices.json'), 'devices', (item, i) => {
-    const d = record(item, `devices[${i}]`);
-    const device = { name: string(d, 'name'), hash: string(d, 'hash'), pairedAt: number(d, 'pairedAt') };
+  return list(obj(value, 'devices.json'), 'devices', (item, i) => {
+    const d = obj(item, `devices[${i}]`);
+    const device = { name: str(d, 'name'), hash: str(d, 'hash'), pairedAt: num(d, 'pairedAt') };
     if (!/^[0-9a-f]{64}$/.test(device.hash)) throw new ShapeError(`devices[${i}].hash must be a sha256 in hex`);
-    const lastSeen = optionalNumber(d, 'lastSeen');
+    const lastSeen = optNum(d, 'lastSeen');
     return lastSeen === undefined ? device : { ...device, lastSeen };
   });
 }
