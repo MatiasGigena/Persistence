@@ -446,8 +446,9 @@ model requests, agent state and delivery stay on the central server; coding/read
 tools and autoreview's fixed helper command run on an immutable `{machineId, cwd, label}` destination:
 
 - A routed user message binds its request ID and root run to its destination. A
-  busy root rejects routed user sends, rather than steering an existing run onto
-  another machine.
+  busy root takes a user send only for the destination its run executes on, as a
+  follow-up or a steer (ADR 0042); it rejects any other, rather than steering an
+  existing run onto another machine.
 - `spawn_agent` inherits the caller's destination in the same transaction that
   creates the child. The pin is separate from its agent config, so `/model`,
   `/effort`, `/tools`, launch cwd and recovery cannot retarget it.

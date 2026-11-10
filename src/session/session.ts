@@ -169,8 +169,9 @@ export async function createUiSession(
           const problem = imagesProblem(instance.models, currentModel());
           if (problem) throw new Error(problem);
         }
-        // Standalone keeps follow-up/steering; routed admission pins the target and explicitly rejects busy runs. An
-        // admitted request ID returns its first submission (dedup), after the route check.
+        // A busy Pi queues or steers; routed admission pins the target first, and a busy run takes only a message for
+        // its own destination (ADR 0042). An admitted request ID returns its first submission (dedup), after the
+        // route check.
         await instance.submit(text, options);
       });
     },

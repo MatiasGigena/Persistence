@@ -111,7 +111,8 @@ host only through the session contract, `src/protocol/session.ts`. The wording i
   `src/client/machine-executor.ts`, the four machine files): binds request IDs, root runs and agent conversations to
   immutable execution destinations, separately from the re-derived agent configuration. Spawn and standing-agent
   delegation inherit the caller's destination. New agent deliveries atomically inherit their exact source session's
-  route, so report-only runs can continue the same task. Busy root sends reject; unmapped/legacy or mixed-machine
+  route, so report-only runs can continue the same task. A busy root takes a user send only for its run's own
+  destination, admitted in the commit that compares them (ADR 0042), and rejects any other; unmapped/legacy or mixed-machine
   inputs and unpinned sessions fail closed. Execution IDs use the persisted chat namespace plus durable tool task ID.
 - **Providers** (`src/providers/`): the `claude-cli` model provider, which runs
   each request through the official `claude` CLI and returns its tool calls to

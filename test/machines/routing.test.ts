@@ -192,11 +192,11 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
     } finally { await instance.close(); }
   });
 
-  test('concurrent UI sends reject busy inputs clearly, but admitted request IDs deduplicate even while busy', async t => {
+  test('concurrent UI sends for two destinations: one starts the run, the other is refused; admitted request IDs deduplicate while busy', async t => {
     const options = await temporary(t);
     const started = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    const catalog = offlineModels([async () => { started.resolve(); await release.promise; return say('done'); }]);
+    const catalog = offlineModels([async () => { started.resolve(); await release.promise; return say('done') ; }]);
     const instance = await openInstance({ ...options, ...catalog, ...recorder() });
     const ui = await createUiSession(instance, { model: catalog.model, thinkingLevel: 'off', allowTools: false });
     const attempts = [{ text: 'one', id: 'one', target: laptop }, { text: 'two', id: 'two', target: other }];
@@ -206,13 +206,15 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
       assert.equal(results.filter(each => each.status === 'fulfilled').length, 1);
       const refused = results.find(each => each.status === 'rejected');
       assert.ok(refused?.status === 'rejected' && refused.reason instanceof Error);
-      assert.match(refused.reason.message, /busy/i);
+      assert.match(refused.reason.message, /^Pi is busy with a run on .*; a message for .* cannot join it\. Wait for it to end, or stop it and send again\.$/);
       const accepted = attempts[results.findIndex(each => each.status === 'fulfilled')];
       assert.ok(accepted);
+      const elsewhere = accepted.target === laptop ? other : laptop;
       await ui.send(accepted.text, { requestId: accepted.id, steer: true, target: accepted.target });
-      await assert.rejects(ui.send('same-target steer', { requestId: 'same-steer', steer: true, target: accepted.target }), /steer.*busy routed run/i);
-      await assert.rejects(ui.send('mixed-target steer', { requestId: 'mixed-steer', steer: true, target: accepted.target === laptop ? other : laptop }), /busy routed run/i);
-      await assert.rejects(ui.send('host follow-up', { requestId: 'host-follow-up' }), /busy/i);
+      await assert.rejects(ui.send('mixed-target steer', { requestId: 'mixed-steer', steer: true, target: elsewhere }), /Pi is busy with a run on/);
+      await assert.rejects(ui.send('mixed-target follow-up', { requestId: 'mixed-follow-up', target: elsewhere }), /Pi is busy with a run on/);
+      await assert.rejects(ui.send('host follow-up', { requestId: 'host-follow-up' }),
+        new RegExp(`a message for server \\(${options.cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\) cannot join it`));
       const inspection = await instance.harness.inspect(instance.context);
       assert.equal(inspection.submissions.length, 1);
       assert.equal(inspection.submissions[0]?.status, 'placed');
@@ -221,6 +223,64 @@ describe('immutable machine routing (offline)', { timeout: 30_000 }, () => {
       await instance.root.waitForIdle(instance.context);
       assert.equal(catalog.faux.state.callCount, 1);
     } finally { release.resolve(); await ui.close(); await instance.close(); }
+  });
+
+  test('a busy run takes messages for its own destination: a steer joins it between its steps, a follow-up runs after it, both on that machine', async t => {
+    const options = await temporary(t);
+    const recorded = recorder();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const seen: string[] = [];
+    const users = (request: { messages: readonly { role: string; content: unknown }[] }): string => request.messages
+      .filter(message => message.role === 'user').map(message => JSON.stringify(message.content)).join(' | ');
+    const catalog = offlineModels([
+      // The first run's first request: held until the test has sent its steer and follow-up, then a tool round.
+      async request => { seen.push(users(request)); started.resolve(); await release.promise; return call(['read', { path: 'a.txt' }]); },
+      // After the tool round the steer has joined; the run answers.
+      request => { seen.push(users(request)); return say('first done'); },
+      // The follow-up is its own run, with a tool round of its own.
+      request => { seen.push(users(request)); return call(['read', { path: 'b.txt' }]); },
+      request => { seen.push(users(request)); return say('follow-up done'); },
+    ]);
+    const instance = await openInstance({ ...options, ...catalog, ...recorded, allowTools: true });
+    const ui = await createUiSession(instance, { model: catalog.model, thinkingLevel: 'off', allowTools: true }, { refreshMs: 20 });
+    try {
+      const first = await instance.submit('first', { requestId: 'first', target: laptop });
+      await started.promise;
+      const steer = await instance.submit('steer it', { requestId: 'steer-1', target: laptop, steer: true });
+      const follow = await instance.submit('then this', { requestId: 'follow-1', target: laptop });
+      assert.equal((await steer.status(instance.context)).status, 'queued');
+      assert.equal((await follow.status(instance.context)).status, 'queued');
+      // A repeat of either returns the same submission, and the status counts both as queued.
+      assert.equal((await instance.submit('steer it', { requestId: 'steer-1', target: laptop, steer: true })).id, steer.id);
+      assert.equal((await instance.submit('then this', { requestId: 'follow-1', target: laptop })).id, follow.id);
+      for (const end = Date.now() + 5_000; ui.status().queued !== 2;) {
+        assert.ok(Date.now() < end, 'the queued messages show in the status');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      release.resolve();
+      for (const submission of [first, steer, follow]) assert.equal((await submission.wait(instance.context)).status, 'done');
+      await instance.root.waitForIdle(instance.context);
+      assert.equal(seen.length, 4);
+      assert.ok(!seen[0]?.includes('steer it') && !seen[0]?.includes('then this'));
+      assert.ok(seen[1]?.includes('steer it') && !seen[1]?.includes('then this'), 'the steer joined the first run after its tool round');
+      assert.ok(seen[2]?.includes('then this'), 'the follow-up started the next run');
+      assert.deepEqual(recorded.calls.map(each => [each.target, each.args.path]), [[laptop, 'a.txt'], [laptop, 'b.txt']]);
+      assert.equal(await errors(instance), '');
+    } finally { release.resolve(); await ui.close(); await instance.close(); }
+  });
+
+  test('two messages for one destination sent together are both admitted: the second waits for the first, before its run stored a pin', async t => {
+    const options = await temporary(t);
+    const recorded = recorder();
+    const catalog = offlineModels([call(['read', { path: 'a.txt' }]), say('one done'), call(['read', { path: 'b.txt' }]), say('two done')]);
+    const instance = await openInstance({ ...options, ...catalog, ...recorded, allowTools: true });
+    try {
+      const both = await Promise.all([instance.submit('one', { requestId: 'one', target: laptop }), instance.submit('two', { requestId: 'two', target: laptop })]);
+      for (const submission of both) assert.equal((await submission.wait(instance.context)).status, 'done');
+      assert.deepEqual(recorded.calls.map(each => each.target), [laptop, laptop]);
+      assert.equal(await errors(instance), '');
+    } finally { await instance.close(); }
   });
 
   test('request history is stored in separate constant-size documents, not a growing namespace map', async t => {

@@ -189,6 +189,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- With a server, a message sent while Pi works is no longer refused (ADR 0042): when it is for the machine and
+  folder Pi's run executes on, it is queued behind the run, and the web app's "Steer Pi…" reaches the run between
+  its steps. Before, every send to a busy Pi on a server failed and had to be typed again. A message for another
+  destination is still refused, now naming both; a run never changes machine. The check and the admission are one
+  commit, with pi-durable 1.5's admission inside a commit.
 - The Pi packages are pinned at 1.5.2 (ADR 0037). It brings pi-durable's fix for a run that could hang while it
   waited on parallel tool calls, fewer SQL statements per commit, and pi-ai 1.5.2's model catalog. Nothing
   migrates: a 1.5.0 checkout still opens the chat. `--version`, `--help` and the unknown-model error name the

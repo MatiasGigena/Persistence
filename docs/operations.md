@@ -151,8 +151,7 @@ disabled. `bridge` proxies stdin/stdout to the existing, owner-checked mode 600
 Unix socket; diagnostics go only to stderr. It opens no database, model runtime,
 Harness, flock, TCP listener or SSH forwarding port. The remote login shell must
 not print banners to stdout for noninteractive commands. Use the same application
-version on both ends (the same `PROTOCOL`); routed sends to a busy root are rejected
-rather than queued or steered. The client also
+version on both ends (the same `PROTOCOL`). The client also
 refuses a server without machine-routing capability before sending a message.
 
 ### Launch routing and permission
@@ -193,10 +192,12 @@ run them on the VPS through your normal SSH shell.
   restart. A standing agent's newly delegated session inherits the delegating run's
   pin; old sessions and their subs keep theirs. Sending an existing agent a
   message does not move it to your machine.
-- Routed user messages are refused while Pi's root run is busy. In particular,
-  another workstation cannot steer an active run onto its own files; wait for
-  the run to finish and send again. A rejected request ID remains bound to its
-  original destination.
+- While Pi works, a message for the machine and folder its run executes on is
+  queued behind the run (Esc withdraws it with the run), and the web app's steer
+  reaches the run between its steps (ADR 0042). A message for any other
+  destination is refused, naming both: another workstation, or the phone, cannot
+  steer an active run onto other files; wait for the run to finish, or stop it,
+  and send again. A rejected request ID remains bound to its original destination.
 - New agent messages/reports carry their exact source session's destination, so
   Pi can continue and delegate review after a report without changing machines.
   Unmapped legacy reports, mixed-machine inputs and older unpinned sessions cannot

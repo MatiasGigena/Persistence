@@ -141,7 +141,8 @@ export interface UiSession {
    * Sends text to Pi: starts a run, or follows up the running one; with `steer`, a busy Pi gets it between its steps
    * instead of after its run. With `requestId`, a repeat of the same id is admitted once (pi-durable's submission
    * dedup), so a client may resend after losing the answer to a reconnect. `images` go to the model with the text;
-   * the text may then be empty. Rejects when Pi's model takes no images, rather than dropping them.
+   * the text may then be empty. Rejects when Pi's model takes no images, rather than dropping them, and, on a server
+   * that routes tools to machines, while Pi is busy with a run on another destination than this message's.
    */
   send(text: string, options?: SendOptions): Promise<void>;
   /** Interrupts Pi's running work (Esc). Durable work stays resumable. */

@@ -226,10 +226,11 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   the send is `failed` and nothing is admitted. With `requestId` (1 to 128 characters, unique per
   message: e.g. `<client>-<random>-<counter>`), the server submits with pi-durable's request id, so a repeat is
   admitted once. A client resends a `send` whose `res` a dropped link lost only with its `requestId`. An idle Pi
-  starts a run. Machine-routed admission rejects a busy-root user send (including `steer: true`)
-  rather than queueing or steering it; rejection is a `failed` response. The optional `steer` field remains
-  parseable, but cannot override this policy. The web app may still request steering while Pi works, and receives
-  the same rejection. A remote TUI always
+  starts a run. A busy Pi queues the message behind its run, or with `steer: true` takes it between its steps.
+  With machine routing (ADR 0042) that holds only for a message whose destination is the busy run's own (machine,
+  folder and label): any other is `failed`, with a message naming both destinations (`Pi is busy with a run on
+  server (/srv/app); a message for My laptop (/home/me/app) cannot join it. …`), and nothing is admitted. A run never
+  changes destination. A remote TUI always
   supplies `target`; without it, a routed server uses its own server destination. Routing binds the request ID
   before admission, and a repeat ID cannot change destination, even if its original admission was rejected.
   See [Machine routing and execution](#machine-routing-and-execution).
@@ -307,9 +308,9 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 `welcome.machines: true` advertises immutable run/session routing and execution
 connectors. It is optional for protocol compatibility, but the remote CLI
 requires it **before sending any user message**; matching the protocol alone does
-not replace this capability check. Routed admission rejects busy-root user sends
-rather than queueing or steering them, so clients and server must run the same
-version (see [Versioning](#versioning)).
+not replace this capability check. Routed admission queues or steers a user send to a
+busy root only when its destination is the run's own, and rejects any other (ADR 0042);
+clients and server run the same version (see [Versioning](#versioning)).
 
 A `MachineTarget` is `{machineId, cwd, label}`. Each field is a nonempty string
 without control characters: `machineId` is at most 128 code units, starting with
@@ -481,7 +482,8 @@ Any other code, or a close without `bye`: reconnect.
 - `PROTOCOL` is 4. `hello` and `welcome` carry it, and the server refuses another (4000), so clients and server
   are updated together. History: v3 made routed `send` admission reject user sends (steering included) while the root
   is busy; v4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034). Added since, without a
-  bump: `status.schedules` and the op `schedule.cancel` (ADR 0038).
+  bump: `status.schedules` and the op `schedule.cancel` (ADR 0038). Relaxed since, without a bump: a routed `send`
+  to a busy root is admitted when its destination is the run's own (ADR 0042), where v3 rejected every one.
 - Additive changes keep the version: a new message type, op, error code, close code or optional field. Receivers
   therefore ignore what they do not know: a message with an unknown `t` is ignored, unknown fields are dropped by
   the parser, an unknown op gets `unknown_op`, an unknown error code reads as `failed`.
