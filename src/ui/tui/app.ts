@@ -34,8 +34,10 @@ export interface TuiInfo {
   readonly terminal?: Terminal;
   /** Called once the TUI is up, with the way to show host text while it runs. */
   readonly onStart?: (show: ShowNotice) => void;
-  /** Read for SSH_CONNECTION, which slows the spinner. Default: process.env. */
+  /** Read for SSH_CONNECTION, which slows the spinner, and PI_DURABLE_BELL (`off`: no bell). Default: process.env. */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** A run of Pi at least this long rings the bell when it ends; default BELL_AFTER_MS. Tests shorten it. */
+  readonly bellAfterMs?: number;
   /**
    * Set when the session is a server's, over its socket: /exit, Ctrl+D and Ctrl+C twice detach at once (the server
    * keeps working, so nothing asks first), the footer shows "reconnecting…" while the link is down, and the TUI exits
@@ -110,6 +112,14 @@ export const EXIT_QUESTION = 'Pi or agents are working. Exit anyway? Work resume
 
 /** Shown, and left in scrollback, when an attached TUI's link closes for good. */
 export const LINK_CLOSED = 'The connection to the server closed; detached. Pi keeps working on the server.';
+
+/**
+ * A run of Pi at least this long rings the terminal bell when it ends: long enough that the user looked away. Most
+ * terminals turn the bell into a tab mark or a desktop notification. PI_DURABLE_BELL=off silences it.
+ */
+export const BELL_AFTER_MS = 30_000;
+/** The program name in status reports to the terminal (OSC 7501). */
+const APP = 'pi-durable';
 
 /** Two Ctrl+C presses within this many ms exit. */
 const DOUBLE_CTRL_C = 1000;
@@ -268,6 +278,25 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (busy && !spinner) spinner = setInterval(() => { footer.tick(); render(); }, spinnerInterval(env, terminal.columns)).unref();
     if (!busy && spinner) { clearInterval(spinner); spinner = undefined; }
   };
+  /** When Pi's current run started here, to tell a long one from a quick answer. */
+  let busySince: number | undefined;
+  const bellAfter = info.bellAfterMs ?? BELL_AFTER_MS, bell = env['PI_DURABLE_BELL']?.toLowerCase() !== 'off';
+  /**
+   * Tells the terminal what Pi is doing (pi-tui sends it only to terminals that take OSC 7501), and rings the bell
+   * when a long run ends, so a terminal in another tab or behind another window says Pi is done.
+   */
+  const attention = (): void => {
+    const busy = session.status().busy;
+    if (busy && busySince === undefined) {
+      busySince = Date.now();
+      terminal.setProgramStatus({ state: 'working', app: APP });
+    } else if (!busy && busySince !== undefined) {
+      const long = Date.now() - busySince >= bellAfter;
+      busySince = undefined;
+      terminal.setProgramStatus({ state: long ? 'done' : 'idle', app: APP });
+      if (long && bell) terminal.write('\x07');
+    }
+  };
 
   const { promise: closed, resolve } = Promise.withResolvers<void>();
   const onLink = (): void => {
@@ -277,7 +306,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   };
   const unsubscribes = [
     session.chat.subscribe(() => { chat.sync(); render(); }),
-    session.onStatus(() => { spin(); render(); }),
+    session.onStatus(() => { spin(); attention(); render(); }),
     session.onNotice((text, level) => show(text, level)),
     ...attached ? [attached.onChange(onLink)] : [],
   ];
@@ -291,6 +320,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     info.signal?.removeEventListener('abort', onAbort);
     process.off('exit', restore);
     for (let i = 0; i < 32 && tui.hasOverlay(); i++) tui.hideOverlay();
+    terminal.setProgramStatus({ state: 'clear' });
     // Leave the chat, without the footer and editor, in the main screen's scrollback.
     tui.setLayoutRoot(document);
     tui.stop();
@@ -442,6 +472,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     tui.setFocus(editor);
     tui.start();
     spin();
+    attention();
     info.onStart?.(show);
     if (attached?.state() === 'closed') onLink();
   } catch (error) {

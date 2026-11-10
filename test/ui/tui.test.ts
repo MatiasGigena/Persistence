@@ -104,7 +104,8 @@ class FakeTerminal implements Terminal {
   clearScreen(): void {}
   setTitle(): void {}
   setProgress(): void {}
-  setProgramStatus(): void {}
+  readonly states: string[] = [];
+  setProgramStatus(status: { readonly state: string }): void { this.states.push(status.state); }
   type(...keys: string[]): void {
     if (!this.onInput) throw new Error('terminal not started');
     for (const key of keys) for (const data of key.length > 1 && !key.startsWith('\x1b') ? [...key] : [key]) this.onInput(data);
@@ -581,6 +582,47 @@ test('/stop interrupts Pi, as Esc does', async () => {
   assert.doesNotMatch(stripTerminalSequences(terminal.output.slice(mark)), /Pi is idle|Nothing to stop/, 'silent while Pi works');
   terminal.type('/exit', '\r');
   await done;
+});
+
+test('a long run rings the bell when it ends and tells the terminal what Pi is doing; a quick one and PI_DURABLE_BELL=off do not ring', async () => {
+  // Bare bells: a BEL that ends an OSC sequence (a prompt mark, a link) is not one.
+  const bells = (terminal: FakeTerminal): number => terminal.output.replace(/\x1b\][^\x07\x1b]*\x07/g, '').split('\x07').length - 1;
+  // Every run counts as long.
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session, undefined, new FakeTerminal(), { bellAfterMs: 0 });
+  const before = bells(terminal);
+  session.update({ busy: true });
+  session.update({ queued: 1 });
+  assert.equal(bells(terminal), before, 'no bell while Pi works');
+  session.update({ busy: false });
+  assert.equal(bells(terminal), before + 1);
+  session.update({ queued: 0 });
+  assert.equal(bells(terminal), before + 1, 'once per run');
+  assert.deepEqual(terminal.states, ['working', 'done']);
+  terminal.type('/exit', '\r');
+  await done;
+  assert.deepEqual(terminal.states, ['working', 'done', 'clear'], 'the status is cleared on exit');
+
+  // The default threshold: a quick answer is not a reason to look.
+  const quick = new FakeSession();
+  const second = await startTui(quick);
+  const quiet = bells(second.terminal);
+  quick.update({ busy: true });
+  quick.update({ busy: false });
+  assert.equal(bells(second.terminal), quiet);
+  assert.deepEqual(second.terminal.states, ['working', 'idle']);
+  second.terminal.type('/exit', '\r');
+  await second.done;
+
+  const silent = new FakeSession();
+  const third = await startTui(silent, undefined, new FakeTerminal(), { bellAfterMs: 0, env: { PI_DURABLE_BELL: 'off' } });
+  const none = bells(third.terminal);
+  silent.update({ busy: true });
+  silent.update({ busy: false });
+  assert.equal(bells(third.terminal), none);
+  assert.deepEqual(third.terminal.states, ['working', 'done'], 'the status report stays');
+  third.terminal.type('/exit', '\r');
+  await third.done;
 });
 
 test('/schedule lists Pi\'s wake-ups, and /schedule cancel N removes one', async () => {

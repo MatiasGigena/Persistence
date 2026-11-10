@@ -75,7 +75,9 @@ host only through the session contract, `src/protocol/session.ts`. The wording i
   for phones (ADR 0014).
   On exit it prints the chat to the main screen, so it stays in scrollback. While it
   runs, the host's console warnings go to the session's `notify()`, and every client shows them as chat
-  notices (`UiSession.onNotice`).
+  notices (`UiSession.onNotice`). When a run of Pi that took `BELL_AFTER_MS` (30 s) or more ends, it rings the
+  terminal bell (unless `PI_DURABLE_BELL=off`), and it reports "working" and "done" to terminals that take program
+  status (OSC 7501, through pi-tui).
 - **Protocol** (`src/protocol/`): the wire protocol of server mode ([protocol.md](protocol.md)): message
   types, parser, and the item diff and mirror that sync a `UiSession` across a link. Plain TypeScript for Node
   and the browser alike. The server (`src/server/`), the attaching client (`src/client/`) and the web app

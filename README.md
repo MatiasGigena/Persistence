@@ -125,7 +125,8 @@ any message), `/schedule` (Pi's scheduled wake-ups; `/schedule cancel N` removes
 applies from the next message and becomes the default for launches without `--model`.
 Keys: Enter sends, Shift+Enter or Alt+Enter adds a line, Esc interrupts Pi, Ctrl+L
 picks a model, Ctrl+O expands tool output, Ctrl+T expands thinking, Ctrl+C twice (the footer says so after the first) or
-Ctrl+D exits (asking first while Pi or an agent is working). On a phone, see
+Ctrl+D exits (asking first while Pi or an agent is working). When a run of 30 seconds or more ends, the terminal bell
+rings, so a terminal in another tab says Pi is done (`PI_DURABLE_BELL=off` silences it). On a phone, see
 [Phone access](docs/operations.md#phone-access-sshmosh).
 `--plain` mode has `/history`, `/agents` and `/status`, but not `/mem`, `/model`, `/effort`, `/tools` or `/stop`; it says what to
 do instead. A line that starts with a path (`/etc/hosts is empty, why?`) is a message for Pi, not a command.
