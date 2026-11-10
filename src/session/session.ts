@@ -3,6 +3,7 @@ import { InboxDoc } from '@earendil-works/pi-durable';
 import type { AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { archiveAgents, listAgents, restoreAgent, stopAgents } from '../agents/index.ts';
+import { cancelSchedule, listSchedules } from '../schedule/index.ts';
 import { updateSettings } from '../config/settings.ts';
 import { isThinkingLevel } from '../runtime/thinking.ts';
 import { errorMessage } from '../protocol/util.ts';
@@ -11,8 +12,9 @@ import { posStart } from '../memory/view.ts';
 import { imagesProblem, modelChooser, thinkingLevels } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
-import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../protocol/session.ts';
+import type { AgentStatus, ChatFeed, NoticeLevel, ScheduleStatus, SessionStatus, UiSession, ViewLine } from '../protocol/session.ts';
 import { Unavailable } from '../protocol/errors.ts';
+import { oneLine } from '../ui/text.ts';
 
 /**
  * The launch choices the status line falls back on until Pi's stored agent says otherwise; `setModel()` saves to
@@ -34,6 +36,12 @@ export interface UiSessionOptions {
 }
 
 const CODING_TOOLS: ReadonlySet<string> = new Set((CodingTools.tools ?? []).map(tool => tool.name));
+/** A schedule's text in the status, which every client gets whole on each change: a preview, not the message. */
+const SCHEDULE_PREVIEW = 200;
+const preview = (text: string): string => {
+  const line = [...oneLine(text)];
+  return line.length > SCHEDULE_PREVIEW ? `${line.slice(0, SCHEDULE_PREVIEW - 1).join('')}…` : line.join('');
+};
 
 /**
  * Open the UI's view of `instance`: a live feed of Pi's conversation, its status, and the memory view. Agents' feeds
@@ -49,6 +57,7 @@ export async function createUiSession(
   const listeners = new Set<() => void>();
   const noticeListeners = new Set<(text: string, level: NoticeLevel) => void>();
   let agents: readonly AgentStatus[] = [];
+  let schedules: readonly ScheduleStatus[] = [];
   const chooser = modelChooser(instance.models, { authFile: config.authFile });
   // This session's switches, shown before Pi's stored agent reports them.
   let chosenModel: ModelRef | undefined;
@@ -90,6 +99,7 @@ export async function createUiSession(
       queued,
       memory: memory?.status(),
       agents,
+      schedules,
     };
   }
 
@@ -106,17 +116,18 @@ export async function createUiSession(
     }
   }
 
-  // One registry read at a time; a request during one reruns it once it ends.
+  // One read of the agents' and the schedules' registries at a time; a request during one reruns it once it ends.
   let reading: Promise<void> | undefined;
   let again = false;
   function refreshAgents(): void {
     if (closed) return;
     if (reading) { again = true; return; }
-    reading = listAgents(harness, context, { includeArchived: true })
+    reading = Promise.all([listAgents(harness, context, { includeArchived: true }), listSchedules(harness, context)])
       // Clients see the contract's shape only: no conversation IDs.
-      .then(list => {
+      .then(([list, wakes]) => {
         agents = list.map(({ name, role, parent, busy, standing, archivedAt }) => ({ name, role, parent, busy,
           ...standing ? { standing: true as const } : {}, ...archivedAt === undefined ? {} : { archivedAt } }));
+        schedules = wakes.map(({ id, text, at, cron }) => ({ id, text: preview(text), at, ...cron === undefined ? {} : { cron } }));
       },
         () => { /* the next poll retries */ })
       .finally(() => {
@@ -126,7 +137,7 @@ export async function createUiSession(
       });
   }
 
-  /** A fresh registry read, settled: the status shows the change once this resolves. */
+  /** A fresh read of both registries, settled: the status shows the change once this resolves. */
   async function agentsRead(): Promise<void> {
     while (reading) await reading;
     refreshAgents();
@@ -177,6 +188,10 @@ export async function createUiSession(
       const names = await restoreAgent(harness, context, name);
       await agentsRead();
       return names;
+    },
+    async cancelSchedule(id) {
+      await cancelSchedule(harness, context, id);
+      await agentsRead();
     },
     async agentChat(name) {
       // Archived agents too: their conversation stays readable until it is deleted.

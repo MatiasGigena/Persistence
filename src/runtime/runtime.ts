@@ -19,6 +19,7 @@ import { LOCAL_KITS, rosterEntry } from '../agents/roster.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
+import { createScheduleExtension } from '../schedule/index.ts';
 import { createAutoreviewExtension } from '../tools/autoreview.ts';
 import { createBrowserExtension } from '../tools/browser.ts';
 import { createShowImageExtension } from '../tools/show-image.ts';
@@ -92,7 +93,10 @@ export interface InstanceOptions {
   readonly dispatcher?: RoutingDispatcher;
   /** A code mode script's deadline when it sets none; default CODEMODE_TIMEOUT_MS. Tests shorten it. */
   readonly codemodeTimeoutMs?: number;
-  /** The time archived agents' age is measured with (ms since the epoch); default `Date.now`. Tests inject it. */
+  /**
+   * The host's clock (ms since the epoch): archived agents' age is measured with it, and it is the Harness's own, on
+   * which schedules sleep. Default `Date.now`. Tests inject it.
+   */
   readonly clock?: () => number;
   /** How often a work launch sweeps archived agents after its launch sweep; default an hour. Tests shorten it. */
   readonly sweepMs?: number;
@@ -162,7 +166,7 @@ async function openHostDatabase(path: string): Promise<HostDatabase> {
   }
 }
 
-/** Pi's enabled tools: memory and agent tools always, the coding tools only when `allowTools`. Agents copy them. */
+/** Pi's enabled tools: memory, agent and schedule tools always, the coding tools only when `allowTools`. Agents copy them. */
 export function piTools(always: readonly { readonly tools?: readonly ToolRegistration[] | undefined }[], allowTools: boolean,
   withTools: readonly { readonly tools?: readonly ToolRegistration[] | undefined }[] = []): ToolRegistration[] {
   return [...always.flatMap(extension => extension.tools ?? []),
@@ -372,8 +376,12 @@ export async function openInstance({
     // Upstream's "Agents at work now", read from the agents' runs so it never drifts from them.
     atWork: async () => opened ? (await listAgents(opened, context)).filter(agent => agent.busy).map(agent => agent.name) : [],
   });
-  // Spawned agents copy Pi's choices, then standing ones their roster entry's; the chat's memory is Pi's alone.
-  const childAgent: AgentChange = { extensions: { remove: [Unii] } };
+  // Scheduled wake-ups (ADR 0038) are Pi's: with routing, each keeps the machine of the run that made it.
+  const Schedule = createScheduleExtension(routing ? { routing: { current: tx => routing.runTarget(tx),
+    pin: (tx, requestId, target) => routing.pinRequest(tx, requestId, target) } } : {});
+  // Spawned agents copy Pi's choices, then standing ones their roster entry's; the chat's memory and its schedules are
+  // Pi's alone.
+  const childAgent: AgentChange = { extensions: { remove: [Unii, Schedule] } };
   // Browser profiles live in the memory directory, which the coding tools cannot read or change (guard.ts); the
   // extensions have no shutdown hook, so close() closes the browsers. Neither opens anything until a tool runs. Every
   // session of an agent shares the agent's browser, so a standing agent's tasks neither lose its logins nor leak one
@@ -412,7 +420,7 @@ export async function openInstance({
     : whileAllowed(createShowImageExtension(), () => toolsAllowed);
   // Code mode comes and goes with the coding tools too: its scripts may call only SCRIPT_TOOLS, each a nested call that
   // resolves among the tools enabled when it runs and keeps its own guards and routing (ADR 0033).
-  const codemode = createCodemode({ others: [...Agents.tools ?? [], ...ShowImage.tools ?? [],
+  const codemode = createCodemode({ others: [...Agents.tools ?? [], ...Schedule.tools, ...ShowImage.tools ?? [],
     ...Object.values(kits).flatMap(kit => kit.tools)].map(tool => tool.name), allowed: () => toolsAllowed,
     ...codemodeTimeoutMs === undefined ? {} : { timeoutMs: codemodeTimeoutMs },
     // A script runs on the server; on a remote destination its output files would be paths the remote read cannot see.
@@ -431,14 +439,15 @@ export async function openInstance({
   registry.install(codingTools);
   registry.install(Unii);
   registry.install(Agents);
+  registry.install(Schedule);
   registry.install(ShowImage);
   registry.install(Codemode);
   for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== codingTools) registry.install(kit.extension);
   /** Pi's tools and the instructions that describe them, with the coding tools on or off. */
   const toolChoice = (on: boolean): AgentChange => ({
-    tools: piTools([Unii, Agents], on, [ShowImage, Codemode]), instructions: piInstructions(cwd, on, routing !== undefined),
+    tools: piTools([Unii, Agents, Schedule], on, [ShowImage, Codemode]), instructions: piInstructions(cwd, on, routing !== undefined),
   });
-  const agent: AgentChange = { cwd, model, thinkingLevel, extensions: [codingTools, Unii, Agents, ShowImage, Codemode], modelTools: null,
+  const agent: AgentChange = { cwd, model, thinkingLevel, extensions: [codingTools, Unii, Agents, Schedule, ShowImage, Codemode], modelTools: null,
     ...toolChoice(allowTools) };
   // What the instance owns besides the harness; they share nothing, so they close together.
   const closeOwned = (): Promise<void> => closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
@@ -460,6 +469,8 @@ export async function openInstance({
       // pi-durable compacts agents, which have no view, so their contexts stay bounded (ADR 0015). Pi's own
       // compactions are declined by the uniichat extension: its view keeps Pi's context a constant size.
       settings: { compaction: { enabled: true }, restartLimit: Infinity },
+      // Sleeping schedules store their times on this clock (ADR 0038). An inspection runs no task, so it never reads it.
+      ...configureAgent ? { now: clock } : {},
     }, context);
     const root = await harness.root(context, configureAgent ? { agent } : undefined);
     if (routing && configureAgent) await routing.initialize(context);

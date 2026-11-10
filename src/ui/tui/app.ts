@@ -7,7 +7,7 @@ import {
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
 import type { AttachedLink, ChatItem, UiSession } from '../../protocol/session.ts';
 import { ChatView } from './chat.ts';
-import { statusText, toolSummary } from '../text.ts';
+import { schedulesText, statusText, toolSummary } from '../text.ts';
 import type { NoticeLevel } from './chat.ts';
 import { Footer, spinnerInterval } from './footer.ts';
 import { openAgentsPanel } from './panels/agents.ts';
@@ -56,6 +56,7 @@ export const COMMANDS: readonly SlashCommand[] = [
   { name: 'tools', description: 'Coding tools for this launch: on or off', argumentHint: '[on|off]' },
   { name: 'agents', description: 'Agents and their conversations' },
   { name: 'mem', description: "Pi's memory view" },
+  { name: 'schedule', description: "Pi's scheduled wake-ups; /schedule cancel N removes one", argumentHint: '[cancel N]' },
   { name: 'status', description: 'Model, work, memory and agents' },
   { name: 'stop', description: 'Interrupt Pi, as Esc does; /stop all or /stop Name stops agents' },
   { name: 'exit', description: 'Close; unfinished work resumes next launch' },
@@ -67,7 +68,7 @@ const HELP_COMMANDS: readonly HelpPair[] = [
   ['/model', 'pick a model (ctrl+l)'], ['/effort', 'reasoning effort'], ['/tools', 'coding tools: on, off'],
   ['/agents', 'agents and their chats'], ['/mem', 'the memory view'],
   ['/status', 'model, work, memory'], ['/stop', 'stop Pi (esc) · all · Name'],
-  ['/exit', 'close (ctrl+d when empty)'],
+  ['/schedule', 'wake-ups · cancel N'], ['/exit', 'close (ctrl+d when empty)'],
 ];
 const HELP_KEYS: readonly HelpPair[] = [
   ['enter', 'send'], ['alt+enter', 'newline (shift+enter)'],
@@ -375,6 +376,14 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     else show(on ? 'Coding tools on for this launch: read, write, edit, bash. /tools off turns them off.'
       : 'Coding tools off. /tools on enables read, write, edit and bash for this launch.');
   };
+  const schedule = (arg: string): void => {
+    if (!arg) { show(schedulesText(session.status().schedules ?? [], Date.now())); return; }
+    const id = /^cancel\s+#?(\d+)$/i.exec(arg)?.[1];
+    if (id === undefined) { show('Usage: /schedule, or /schedule cancel N.', 'warn'); return; }
+    session.cancelSchedule(Number(id)).then(
+      () => show(`Schedule #${id} cancelled.`),
+      (error: unknown) => show(`Not cancelled: ${errorMessage(error)}`, 'error'));
+  };
   const command = (line: string): void => {
     const name = line.slice(1).split(/\s/, 1)[0] ?? '';
     const arg = line.slice(1 + name.length).trim();
@@ -386,6 +395,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     else if (name === 'status') show(statusText(session.status()));
     else if (name === 'agents') panel(openAgentsPanel);
     else if (name === 'mem') panel(openMemoryPanel);
+    else if (name === 'schedule' || name === 'schedules') schedule(arg);
     else if (name === 'exit' || name === 'quit') void exit();
     else show(`Unknown command ${line.split(/\s/, 1)[0] ?? line}. /help lists them.`, 'warn');
   };

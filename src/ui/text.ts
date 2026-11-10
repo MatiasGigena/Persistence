@@ -3,7 +3,7 @@
 // the browser at /ui/text.ts (ADR 0020). Rendering (color, width, markup) stays with each front end.
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
 import { isRecord } from '../protocol/util.ts';
-import type { SessionStatus, ViewLine } from '../protocol/session.ts';
+import type { ScheduleStatus, SessionStatus, ViewLine } from '../protocol/session.ts';
 
 // Control characters other than newline and tab, and terminal escapes, never reach the summary.
 const CONTROL = /\u001b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f]/g;
@@ -122,8 +122,40 @@ export function archivedText(names: readonly string[], restored = false): string
   return `${restored ? 'Restored' : 'Archived'} ${names.join(', ')}.`;
 }
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const two = (n: number): string => String(n).padStart(2, '0');
+
+/**
+ * A time as a client shows it, in the client's own zone, read against `now`: "today 09:00", "tomorrow 09:00",
+ * "Thu 12 Nov 09:00", with the year when it is another one.
+ */
+export function whenText(at: number, now: number): string {
+  const date = new Date(at), today = new Date(now);
+  const time = `${two(date.getHours())}:${two(date.getMinutes())}`;
+  const midnight = (day: Date): number => new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+  const days = Math.round((midnight(date) - midnight(today)) / 86_400_000);
+  if (days === 0) return `today ${time}`;
+  if (days === 1) return `tomorrow ${time}`;
+  const year = date.getFullYear() === today.getFullYear() ? '' : ` ${date.getFullYear()}`;
+  return `${WEEKDAYS[date.getDay()] ?? ''} ${date.getDate()} ${MONTHS[date.getMonth()] ?? ''}${year} ${time}`;
+}
+
+/** When a schedule fires: "today 09:00", or for a repeating one "cron 0 9 * * 1-5 · next today 09:00". */
+export function scheduleWhen(schedule: Pick<ScheduleStatus, 'at' | 'cron'>, now: number): string {
+  const when = whenText(schedule.at, now);
+  return schedule.cron === undefined ? when : `cron ${schedule.cron} · next ${when}`;
+}
+
+/** What /schedule prints: one line per scheduled wake-up, soonest first, and how to cancel one. */
+export function schedulesText(schedules: readonly ScheduleStatus[], now: number): string {
+  if (!schedules.length) return 'No schedules. Ask Pi to remind you of something, or to check back on it later.';
+  return [...schedules.map(each => `#${each.id} · ${scheduleWhen(each, now)} · ${each.text}`),
+    '/schedule cancel N cancels one; ask Pi for a new one.'].join('\n');
+}
+
 /** The full status block that /status prints, in the terminal and the web app. */
-export function statusText(status: SessionStatus): string {
+export function statusText(status: SessionStatus, now: number = Date.now()): string {
   const { memory } = status;
   const agents = activeAgents(status.agents), archived = status.agents.length - agents.length;
   const lines = [
@@ -138,6 +170,8 @@ export function statusText(status: SessionStatus): string {
     ? `agents ${agents.map(agent => `${agent.name} (${agent.role}, ${agent.busy ? 'busy' : 'idle'})`).join(', ')}`
     : 'agents none');
   if (archived) lines.push(`archived ${archived}`);
+  const [next] = status.schedules ?? [];
+  if (next) lines.push(`schedules ${status.schedules?.length ?? 0} · next #${next.id} ${whenText(next.at, now)}`);
   return lines.join('\n');
 }
 

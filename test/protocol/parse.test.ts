@@ -23,6 +23,7 @@ const STATUS: SessionStatus = {
   agents: [{ name: 'Bob', role: 'main', parent: 'Pi', busy: true }, { name: 'Kid', role: 'sub', parent: 'Bob', busy: false },
     { name: 'Old', role: 'main', parent: 'Pi', busy: false, archivedAt: 1_800_000_000_000 },
     { name: 'Coder', role: 'main', parent: 'Pi', busy: false, standing: true }],
+  schedules: [{ id: 3, text: 'Check the deploy.', at: 1_800_000_000_000 }, { id: 4, text: 'Morning summary.', at: 1_800_000_060_000, cron: '0 9 * * 1-5' }],
 };
 
 /** One request per op: the type makes this table list every op. */
@@ -53,7 +54,7 @@ const REQUESTS: { readonly [O in Op]: RequestOf<O> } = {
   'machine.register': { t: 'req', id: 18, op: 'machine.register', params: { registration: {
     target: { machineId: 'pc-1', cwd: '/projects', label: 'PC' }, enabled: false } } },
   'machine.set': { t: 'req', id: 19, op: 'machine.set', params: { enabled: true, confirm: 'enable-tools' } },
-  'machine.list': { t: 'req', id: 20, op: 'machine.list', params: {} },
+  'machine.list': { t: 'req', id: 20, op: 'machine.list', params: {} },  'schedule.cancel': { t: 'req', id: 43, op: 'schedule.cancel', params: { id: 3 } },
 };
 
 /** One successful response per op. */
@@ -87,6 +88,7 @@ const RESPONSES: { readonly [O in Op]: ResponseOf<O> } = {
   'machine.register': { t: 'res', id: 18, op: 'machine.register', ok: true, result: null },
   'machine.set': { t: 'res', id: 19, op: 'machine.set', ok: true, result: null },
   'machine.list': { t: 'res', id: 20, op: 'machine.list', ok: true, result: { machines: [] } },
+  'schedule.cancel': { t: 'res', id: 43, op: 'schedule.cancel', ok: true, result: null },
 };
 
 const CLIENT: readonly ClientMessage[] = [
@@ -202,6 +204,9 @@ describe('parsing', () => {
       ['{"t":"req","id":1,"op":"agents.restore","params":{}}', 'shape'],
       ['{"t":"req","id":1,"op":"agents.restore","params":{"adhoc":true}}', 'shape'],
       ['{"t":"req","id":1,"op":"agents.restore","params":{"name":"  "}}', 'shape'],
+      ['{"t":"req","id":1,"op":"schedule.cancel","params":{}}', 'shape'],
+      ['{"t":"req","id":1,"op":"schedule.cancel","params":{"id":0}}', 'shape'],
+      ['{"t":"req","id":1,"op":"schedule.cancel","params":{"id":"3"}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.open","params":{}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.close","params":{"feed":null}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.resync","params":{"feed":1}}', 'shape'],

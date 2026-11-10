@@ -396,6 +396,26 @@ test('agents.archive and agents.restore: forwarded from both peers, refusals map
     'archived Helper, by socket (socket)'], 'an archive of nothing is not logged');
 });
 
+test('schedule.cancel: forwarded from both peers, an unknown id is not_found, and the other clients learn who cancelled', async t => {
+  const { hub, session, logged, tick, connect, request } = setup(t);
+  session.set({ schedules: [{ id: 3, text: 'Check the deploy.', at: 2_000_000 }, { id: 4, text: 'Morning.', at: 3_000_000, cron: '0 9 * * *' }] });
+  hub.start(session);
+  const web = connect('web'), socket = connect('socket');
+  const cancelled = await request(web, 'schedule.cancel', { id: 3 });
+  assert.equal(cancelled?.t === 'res' && cancelled.ok && cancelled.op === 'schedule.cancel' && cancelled.result, null);
+  assert.ok(socket.got.some(m => m.t === 'notice' && m.text === 'Schedule #3 cancelled, by phone.' && m.level === 'info'));
+  assert.ok(!web.got.some(m => m.t === 'notice'), 'the client that cancelled says so itself');
+  await tick(1_000);
+  const status = web.got.findLast(m => m.t === 'status');
+  assert.deepEqual(status?.t === 'status' && status.status.schedules, [{ id: 4, text: 'Morning.', at: 3_000_000, cron: '0 9 * * *' }]);
+  const unknown = await request(socket, 'schedule.cancel', { id: 3 });
+  assert.deepEqual(unknown?.t === 'res' && !unknown.ok && unknown.error, { code: 'not_found', message: 'No schedule #3.' });
+  const bad = await request(socket, 'schedule.cancel', { id: 0 });
+  assert.equal(bad?.t === 'res' && !bad.ok && bad.error.code, 'bad_request');
+  assert.deepEqual(session.calls, ['cancelSchedule 3', 'cancelSchedule 3']);
+  assert.deepEqual(logged, ['schedule #3 cancelled, by me@example.com/phone (web)']);
+});
+
 test('without idleMinutes (the default) the tools stay on however long nothing runs', async t => {
   const { hub, session, logged, wait, connect, request } = setup(t, { tools: { remote: 'confirm' } });
   hub.start(session);

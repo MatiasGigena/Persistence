@@ -3,7 +3,7 @@
 import { ENABLE_TOOLS, ERROR_CODES, LIMITS, NOTICE_LEVELS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
 import type { AppendField, ClientMessage, Device, ErrorCode, ItemOp, Op, PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, ToolsPolicy } from './messages.ts';
-import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, SessionStatus, ViewLine } from './session.ts';
+import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, ScheduleStatus, SessionStatus, ViewLine } from './session.ts';
 import type { ChatImage } from './images.ts';
 import { bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
 import type { Obj } from './util.ts';
@@ -68,6 +68,11 @@ function agentStatus(x: unknown): AgentStatus {
   return withOptional(base, 'archivedAt', o.archivedAt === undefined ? undefined : int(o, 'archivedAt'));
 }
 
+function scheduleStatus(x: unknown): ScheduleStatus {
+  const o = obj(x, 'schedule');
+  return withOptional({ id: int(o, 'id', 1), text: str(o, 'text'), at: int(o, 'at') }, 'cron', optStr(o, 'cron'));
+}
+
 /** `agents.archive`'s params: exactly one of a nonempty `name` or `adhoc: true`. */
 function archiveTarget(p: Obj): ArchiveTarget {
   if (p.name !== undefined && p.adhoc !== undefined) throw new ShapeError('give either name or adhoc, not both');
@@ -93,6 +98,7 @@ export function sessionStatus(x: unknown): SessionStatus {
     busy: bool(o, 'busy'), queued: int(o, 'queued'),
     memory: o.memory === undefined || o.memory === null ? undefined : memoryStats(o.memory),
     agents: list(o, 'agents', agentStatus),
+    ...o.schedules === undefined ? {} : { schedules: list(o, 'schedules', scheduleStatus) },
     ...o.machine === undefined ? {} : { machine: machineTarget(o.machine) },
   };
 }
@@ -155,6 +161,7 @@ const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
   stopAgents: (id, p) => ({ t: 'req', id, op: 'stopAgents', params: withOptional({}, 'name', optStr(p, 'name')) }),
   'agents.archive': (id, p) => ({ t: 'req', id, op: 'agents.archive', params: archiveTarget(p) }),
   'agents.restore': (id, p) => ({ t: 'req', id, op: 'agents.restore', params: { name: agentName(p) } }),
+  'schedule.cancel': (id, p) => ({ t: 'req', id, op: 'schedule.cancel', params: { id: int(p, 'id', 1) } }),
   'feed.open': (id, p) => ({ t: 'req', id, op: 'feed.open', params: { name: str(p, 'name') } }),
   'feed.close': (id, p) => ({ t: 'req', id, op: 'feed.close', params: { feed: str(p, 'feed') } }),
   'feed.resync': (id, p) => ({ t: 'req', id, op: 'feed.resync', params: { feed: str(p, 'feed') } }),
@@ -185,6 +192,7 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   stopAgents: (id, r) => ({ t: 'res', id, op: 'stopAgents', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
   'agents.archive': (id, r) => ({ t: 'res', id, op: 'agents.archive', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
   'agents.restore': (id, r) => ({ t: 'res', id, op: 'agents.restore', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
+  'schedule.cancel': id => ({ t: 'res', id, op: 'schedule.cancel', ok: true, result: null }),
   'feed.open': (id, r) => ({ t: 'res', id, op: 'feed.open', ok: true, result: { feed: str(obj(r, 'result'), 'feed') } }),
   'feed.close': id => ({ t: 'res', id, op: 'feed.close', ok: true, result: null }),
   'feed.resync': id => ({ t: 'res', id, op: 'feed.resync', ok: true, result: null }),

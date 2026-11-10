@@ -77,6 +77,14 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
       set({ agents: status.agents.map(agent => agent === hit ? { name: agent.name, role: agent.role, parent: agent.parent, busy: agent.busy } : agent) });
       return Promise.resolve([hit.name]);
     },
+    // Schedules in the status cancel; an unknown id is refused as the core does.
+    cancelSchedule(id) {
+      calls.push(`cancelSchedule ${id}`);
+      const left = (status.schedules ?? []).filter(each => each.id !== id);
+      if (left.length === (status.schedules ?? []).length) return Promise.reject(new NotFound(`No schedule #${id}.`));
+      set({ schedules: left });
+      return Promise.resolve();
+    },
     agentChat(name) {
       calls.push(`agentChat ${name}`);
       return Promise.resolve(agents.get(name.toLowerCase()));

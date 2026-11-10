@@ -59,6 +59,13 @@ class FakeSession implements UiSession {
   }
   archiveAgents(): Promise<readonly string[]> { return Promise.resolve([]); }
   restoreAgent(): Promise<readonly string[]> { return Promise.resolve([]); }
+  cancelled: number[] = [];
+  cancelSchedule(id: number): Promise<void> {
+    if (!(this.current.schedules ?? []).some(each => each.id === id)) return Promise.reject(new Error(`No schedule #${id}.`));
+    this.cancelled.push(id);
+    this.update({ schedules: (this.current.schedules ?? []).filter(each => each.id !== id) });
+    return Promise.resolve();
+  }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
   zoom(): Promise<string> { return Promise.resolve(''); }
@@ -519,7 +526,7 @@ test('/help is one column below 72 columns, and two from there', () => {
   for (const width of WIDTHS) {
     const lines = helpText(width).split('\n');
     fits(lines.slice(0, -1), Math.min(width, 72));
-    assert.ok(lines.some(line => (width < 72 ? /^\/stop {4}stop Pi \(esc\) · all · Name$/ : /^\/stop {4}stop Pi \(esc\) · all · Name +\/exit {4}close/).test(line)), lines.join('\n'));
+    assert.ok(lines.some(line => (width < 72 ? /^\/stop +stop Pi \(esc\) · all · Name$/ : /^\/stop +stop Pi \(esc\) · all · Name +\/schedule +wake-ups · cancel N$/).test(line)), lines.join('\n'));
     const view = new ChatView(new FakeFeed(), theme);
     view.notice(helpText(width));
     fits(view.render(width), width);
@@ -572,6 +579,28 @@ test('/stop interrupts Pi, as Esc does', async () => {
   await drawn(terminal, mark);
   assert.equal(session.aborts, 4);
   assert.doesNotMatch(stripTerminalSequences(terminal.output.slice(mark)), /Pi is idle|Nothing to stop/, 'silent while Pi works');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('/schedule lists Pi\'s wake-ups, and /schedule cancel N removes one', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/schedule', '\r');
+  await until(() => /No schedules\. Ask Pi to remind you/.test(terminal.text()), 'the empty list');
+  const tomorrow = Date.now() + 86_400_000;
+  session.update({ schedules: [{ id: 3, text: 'Check the deploy.', at: tomorrow }, { id: 4, text: 'Morning summary.', at: tomorrow, cron: '0 9 * * *' }] });
+  terminal.type('/schedule', '\r');
+  await until(() => /#4 · cron 0 9 \* \* \* · next /.test(terminal.text()), 'the list');
+  assert.match(terminal.text(), /#3 · [^·]+ · Check the deploy\./);
+  terminal.type('/schedule cancel #3', '\r');
+  await until(() => /Schedule #3 cancelled\./.test(terminal.text()), 'the cancel');
+  terminal.type('/schedule cancel 3', '\r');
+  await until(() => /Not cancelled: No schedule #3\./.test(terminal.text()), 'the refusal');
+  terminal.type('/schedule drop 4', '\r');
+  await until(() => /Usage: \/schedule, or \/schedule cancel N\./.test(terminal.text()), 'the usage');
+  assert.deepEqual(session.cancelled, [3]);
+  assert.deepEqual(session.sent, [], 'none of it is sent to Pi');
   terminal.type('/exit', '\r');
   await done;
 });

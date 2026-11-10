@@ -106,6 +106,7 @@ class FakeSession implements UiSession {
     }));
     return Promise.resolve(names);
   }
+  cancelSchedule(): Promise<void> { return Promise.resolve(); }
   agentChat(name: string): Promise<ChatFeed | undefined> { return Promise.resolve(this.feeds.get(name)); }
   memoryView(): Promise<readonly ViewLine[]> { this.viewCalls++; return this.viewResult ?? Promise.resolve(this.view); }
   viewCalls = 0;

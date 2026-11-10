@@ -184,6 +184,8 @@ export class RemoteSession implements UiSession {
     return (await this.request('agents.restore', { name })).names;
   }
 
+  async cancelSchedule(id: number): Promise<void> { await this.request('schedule.cancel', { id }); }
+
   async agentChat(name: string): Promise<ChatFeed | undefined> {
     const known = [...this.agents].find(mirror => !mirror.ended && mirror.name?.toLowerCase() === name.toLowerCase());
     if (known) return this.handle(known);

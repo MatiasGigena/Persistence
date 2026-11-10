@@ -12,6 +12,7 @@ import { PROMPT } from './prompt.ts';
 import { CAP, clip, formatDate, hash } from './util.ts';
 import { agentInputOf } from '../agents/entries.ts';
 import { NotFound } from '../protocol/errors.ts';
+import { scheduleFireOf } from '../schedule/entries.ts';
 
 // Adapted from UniiChat's Server.ts HEAD (Apache-2.0): a turn's head, as a compaction's is "Compaction:", so the one
 // prompt tells the two apart.
@@ -52,7 +53,9 @@ type Content = UserMessage['content'] | ToolResultMessage['content'];
  * the model's context (aborted, or the last of a failed run), logged with a cut mark.
  */
 interface Item { m: UserMessage | AssistantMessage | ToolResultMessage; run: boolean; src: string; report?: ReportInput | undefined;
-  calls?: string[]; cut?: boolean }
+  calls?: string[]; cut?: boolean;
+  /** A scheduled wake-up (ADR 0038): a background task's word, not the user's, so it is logged as `work`. */
+  wake?: boolean }
 
 /** A run's request head, computed once: [view, turn state, previous exchange], and the message's tail for a huge input. */
 interface Frozen { blocks: TextContent[]; message: string | undefined }
@@ -135,7 +138,7 @@ function headed(content: UserMessage['content']): (TextContent | ImageContent)[]
  *   is rendered once per run, ending before the run's message (logged first, so a huge one's first parts go to the
  *   view and only its tail is sent), after waiting up to `settleMs` for pending summaries (then placeholders). A run
  *   starts after the last final answer, or after the last reply of an earlier (failed or stopped) run.
- * - Logs user messages (an input entry of kind `agents.report` as `work`), replies, and each tool call with its result,
+ * - Logs user messages (an input entry of kind `agents.report` or `schedule.fire` as `work`), replies, and each tool call with its result,
  *   each keyed (entry id, message timestamp, tool call id) so a replay never logs twice. A reply cut by a stop or a
  *   failure is logged by the next run, with `[cut off: why]`; a call left without a result, alone.
  * - Tools `zoom(id, n)` / `zoom("Name")` / `date(id)`; `resolveAgentChat(name, page)` answers `zoom("Name")`.
@@ -188,8 +191,10 @@ export function createUniiExtension({
    */
   function items(body: readonly Message[], view: ContextEntries | undefined, taskId: number | undefined): { all: Item[]; start: number } {
     const all: Item[] = [];
-    const add = (m: Message, input: { report: ReportInput | undefined; src: string } | undefined, run: boolean): void => {
-      if (m.role === 'user') all.push({ m, run, report: input?.report, src: input?.src ?? `u:${m.timestamp}:${hash(textOf(m.content))}` });
+    const add = (m: Message, input: { report: ReportInput | undefined; src: string; wake?: boolean } | undefined, run: boolean): void => {
+      if (m.role === 'user') {
+        all.push({ m, run, report: input?.report, src: input?.src ?? `u:${m.timestamp}:${hash(textOf(m.content))}`, ...input?.wake ? { wake: true } : {} });
+      }
       else if (m.role === 'assistant') all.push({ m, run, src: replySrc(m), calls: callsOf(m).map(c => `c:${c.id}`) });
       else if (m.role === 'toolResult') all.push({ m, run, src: `r:${m.toolCallId}` });
     };
@@ -204,9 +209,9 @@ export function createUniiExtension({
     for (let j = Math.max(0, bounds.end); j < entries.length; j++) {
       const entry = entries[j];
       if (!entry) continue;
-      const report = reportOf(entry);
+      const report = reportOf(entry), wake = scheduleFireOf(entry) !== undefined;
       const messages = contributions[j] ?? [];
-      messages.forEach((m, n) => add(m, m.role === 'user' ? { report, src: report ? reportSrc(report) : userSrc(entry, n) } : undefined, j >= bounds.from));
+      messages.forEach((m, n) => add(m, m.role === 'user' ? { report, src: report ? reportSrc(report) : userSrc(entry, n), wake } : undefined, j >= bounds.from));
       const cut = messages.length === 0 && j === bounds.end ? entry.model?.find(isCut) : undefined;
       if (cut) all.push({ m: cut, run: false, src: replySrc(cut), cut: true });
     }
@@ -228,7 +233,7 @@ export function createUniiExtension({
       if (m.role === 'user') {
         unanswered();
         if (item.report) open().report(item.report);
-        else open().append({ kind: 'user', text: textOf(m.content), date: m.timestamp, src: item.src });
+        else open().append({ kind: item.wake ? 'work' : 'user', text: textOf(m.content), date: m.timestamp, src: item.src });
       } else if (m.role === 'assistant') {
         logReply(open(), m, item.cut);
         for (const call of callsOf(m)) calls.set(call.id, { call, date: m.timestamp ?? Date.now() });

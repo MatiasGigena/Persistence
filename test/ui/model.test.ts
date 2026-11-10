@@ -53,6 +53,7 @@ class FakeSession implements UiSession {
   }
   archiveAgents(): Promise<readonly string[]> { return Promise.resolve([]); }
   restoreAgent(): Promise<readonly string[]> { return Promise.resolve([]); }
+  cancelSchedule(): Promise<void> { return Promise.resolve(); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
   zoom(): Promise<string> { return Promise.resolve(''); }
@@ -363,10 +364,10 @@ describe('/model and /tools in the chat', () => {
     const session = new FakeSession();
     const { terminal, done } = await startTui(session);
     terminal.type('/help', KEY.enter);
-    await until(() => /\/model {3}pick a model/.test(terminal.text()), 'the help');
-    assert.match(terminal.text(), /\/model {3}pick a model \(ctrl\+l\)/);
-    assert.match(terminal.text(), /\/tools {3}coding tools: on, off/);
-    assert.match(terminal.text(), /\/stop {4}stop Pi \(esc\) · all · Name/);
+    await until(() => /\/model +pick a model/.test(terminal.text()), 'the help');
+    assert.match(terminal.text(), /\/model +pick a model \(ctrl\+l\)/);
+    assert.match(terminal.text(), /\/tools +coding tools: on, off/);
+    assert.match(terminal.text(), /\/stop +stop Pi \(esc\) · all · Name/);
     assert.ok(TOOLS_QUESTION.includes('user permissions'));
     terminal.type('/exit', KEY.enter);
     await done;

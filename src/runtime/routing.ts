@@ -67,6 +67,13 @@ export interface MachineRouting {
   pinSpawn(tx: Tx, parent: ConversationId, child: ConversationId): Promise<void>;
   /** Persist a new root delivery's exact source-session route in the transaction that creates its task. */
   pinDelivery(tx: Tx, source: ConversationId, destination: ConversationId, requestId: string): Promise<void>;
+  /** The pinned destination of the root's current run, read in the commit of `tx`; undefined when it has none. */
+  runTarget(tx: Tx): Promise<MachineTarget | undefined>;
+  /**
+   * Bind root request `requestId` to `target` (the server itself without one) before it is submitted: write-once, as
+   * `submit` binds a user's message. For inputs the host itself schedules (src/schedule).
+   */
+  pinRequest(tx: Tx, requestId: string, target?: MachineTarget): Promise<void>;
 }
 
 /** Routing is launch-local policy around the original tools, not a replay-safety upgrade. */
@@ -178,6 +185,12 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
     })],
   };
 
+  /** The root's current run's pin, as its first request stored it. */
+  const runTarget = async (tx: Tx): Promise<Target | undefined> => {
+    const run = (await tx.doc(LiveDoc, ROOT_CONVERSATION_ID)).run;
+    return run ? (await tx.doc(RunRouteDoc, run.taskId)).target : undefined;
+  };
+
   return {
     tools,
     initialize: context => harness().commit(async tx => { await tx.doc(RoutingDoc); }, context),
@@ -236,12 +249,15 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
       if (route.target) requireSame(route.target, inherited);
       else route.target = detached(inherited);
     },
+    runTarget,
+    async pinRequest(tx, requestId, target = host) {
+      isHost(target); // throws for a server target other than this host
+      const route = await tx.doc(SubmissionRouteDoc, ROOT_CONVERSATION_ID, requestKey(requestId), null);
+      if (route.target) requireSame(route.target, target);
+      else route.target = detached(target);
+    },
     async pinSpawn(tx, parent, child) {
-      let inherited: Target | undefined;
-      if (parent === ROOT_CONVERSATION_ID) {
-        const run = (await tx.doc(LiveDoc, parent)).run;
-        if (run) inherited = (await tx.doc(RunRouteDoc, run.taskId)).target;
-      } else inherited = (await tx.doc(AgentRouteDoc, parent)).target;
+      const inherited = parent === ROOT_CONVERSATION_ID ? await runTarget(tx) : (await tx.doc(AgentRouteDoc, parent)).target;
       if (!inherited) throw new Error('Spawner has no pinned machine destination; spawning or delegation is blocked. Start from an explicitly targeted user turn.');
       const route = await tx.doc(AgentRouteDoc, child);
       if (route.target) requireSame(route.target, inherited);

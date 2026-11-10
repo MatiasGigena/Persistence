@@ -337,6 +337,12 @@ export class FakeServer {
         return;
       }
       case 'abort': this.aborts++; ok(); return;
+      case 'schedule.cancel': {
+        const schedules = this.status.schedules ?? [];
+        if (!schedules.some(each => each.id === request.params.id)) { no('not_found', `No schedule #${request.params.id}`); return; }
+        ok(null, () => this.setStatus({ schedules: schedules.filter(each => each.id !== request.params.id) }));
+        return;
+      }
       case 'stopAgents': {
         const { name } = request.params;
         const names = name === undefined ? [...this.agents.keys()] : [this.agentNamed(name)].filter(each => each !== undefined);

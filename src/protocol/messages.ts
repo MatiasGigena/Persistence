@@ -138,6 +138,8 @@ export interface Ops {
   readonly 'agents.archive': { readonly params: ArchiveTarget; readonly result: { readonly names: readonly string[] } };
   /** Restores an archived agent (and a main agent's sub agents); stopped work stays stopped. Names restored. */
   readonly 'agents.restore': { readonly params: { readonly name: string }; readonly result: { readonly names: readonly string[] } };
+  /** Cancels a scheduled wake-up (ADR 0038) by its id, as `status.schedules` lists it. `not_found` for no such schedule. */
+  readonly 'schedule.cancel': { readonly params: { readonly id: number }; readonly result: null };
   /** Opens an agent's conversation as a feed; a `snapshot` for it follows the `res`. `not_found` for no such agent. */
   readonly 'feed.open': { readonly params: { readonly name: string }; readonly result: { readonly feed: string } };
   /** Closes an agent feed this peer opened. The root feed cannot be closed. */
@@ -179,7 +181,7 @@ export type Result<O extends Op> = Ops[O]['result'];
 export const OPS: readonly Op[] = [
   'send', 'abort', 'stopAgents', 'agents.archive', 'agents.restore', 'feed.open', 'feed.close', 'feed.resync', 'memory.view', 'memory.zoom', 'models',
   'model.set', 'tools.set', 'thinking.levels', 'thinking.set', 'push.subscribe', 'push.unsubscribe', 'admin.backup', 'admin.pair', 'admin.devices',
-  'admin.revoke', 'machine.register', 'machine.set', 'machine.list',
+  'admin.revoke', 'machine.register', 'machine.set', 'machine.list', 'schedule.cancel',
 ];
 /** Ops only socket peers may call; web peers get `forbidden`. */
 export const SOCKET_ONLY: ReadonlySet<Op> = new Set<Op>(['admin.backup', 'admin.pair', 'admin.devices', 'admin.revoke', 'machine.register', 'machine.set']);

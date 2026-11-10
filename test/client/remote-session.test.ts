@@ -280,6 +280,13 @@ test('archive and restore go to the real hub as agents.archive and agents.restor
   assert.deepEqual(await session.archiveAgents({ adhoc: true }), ['Bob']);
   assert.deepEqual(sent, ['agents.archive', 'agents.archive', 'agents.restore', 'agents.restore', 'agents.archive']);
   assert.deepEqual(state.calls, ['archive bob', 'archive Coder', 'restore Nobody', 'restore Bob', 'archive adhoc']);
+  // Schedules come with the status, and a cancel goes as schedule.cancel.
+  state.set({ schedules: [{ id: 3, text: 'Check the deploy.', at: 2_000_000 }] });
+  await until(() => session.status().schedules?.length === 1, 'the schedule in the status');
+  await session.cancelSchedule(3);
+  await until(() => session.status().schedules?.length === 0, 'the schedule gone from the status');
+  await assert.rejects(session.cancelSchedule(3), { code: 'not_found', message: 'No schedule #3.' });
+  assert.deepEqual(sent.slice(-2), ['schedule.cancel', 'schedule.cancel']);
   await session.close();
   await hub.close(CloseCode.restart, 'done');
 });

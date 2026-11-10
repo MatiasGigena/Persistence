@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { WAKE_KIND } from '../schedule/index.ts';
 import { answerText } from './runtime.ts';
 import type { Instance } from './runtime.ts';
 
@@ -23,8 +24,12 @@ export async function resumeInstance(
   await root.waitForIdle(context);
 }
 
-/** Whether `task` is work still underway: each agent's anchor task lives as long as the agent, so it is not. */
-export const isWork = (task: { readonly record: { readonly kind: string } }): boolean => task.record.kind !== 'agents.anchor';
+/**
+ * Whether `task` is work still underway. Each agent's anchor task lives as long as the agent, so it is not; nor is a
+ * schedule asleep until its time (ADR 0038), which would otherwise keep `--resume` waiting for a date.
+ */
+export const isWork = (task: { readonly record: { readonly kind: string }; readonly state?: { readonly kind: string } }): boolean =>
+  task.record.kind !== 'agents.anchor' && !(task.record.kind === WAKE_KIND && task.state?.kind === 'sleeping');
 
 // Agents work in background tasks that outlive the root's runs.
 export async function settleAgents(
