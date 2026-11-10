@@ -87,6 +87,11 @@ export interface ScheduleRouting {
 /** Options of `createScheduleExtension()`. */
 export interface ScheduleOptions {
   readonly routing?: ScheduleRouting;
+  /**
+   * Aborts a cancelled schedule's sleeping task (the Harness's `abortTask`), so it does not linger until its time. A
+   * tool cannot abort a task it does not own; without this, the task ends by itself when it next wakes.
+   */
+  readonly abortTask?: (id: TaskId, context: Context) => Promise<unknown>;
 }
 
 /** The schedule extension; its `tools` are what the host enables for Pi. */
@@ -285,7 +290,7 @@ const SECTION = [
  * machine for its wake-ups; one made on the server follows the server.
  */
 export function createScheduleExtension(options: ScheduleOptions = {}): ScheduleExtension {
-  const { routing } = options;
+  const { routing, abortTask } = options;
   const { Wake } = wakes(options);
 
   const schedule = defineTool({
@@ -351,12 +356,16 @@ export function createScheduleExtension(options: ScheduleOptions = {}): Schedule
     replay: 'safe',
     execute: async ({ id }, api, context) => {
       if (api.conversationId !== ROOT_CONVERSATION_ID) return reply(PI_ONLY);
-      return once(api, context, async (_tx, registry) => {
+      const taskId = (await api.snapshot(ScheduleDoc, context))?.items[String(id)]?.taskId;
+      const result = await once(api, context, async (_tx, registry) => {
         const item = remove(registry, id);
         if (item) return `Cancelled #${id} (${item.cron === undefined ? 'once' : `cron "${item.cron}"`}): ${item.text}`;
         const ids = Object.keys(registry.items);
         return `No schedule #${id}. ${ids.length ? `Schedules: ${ids.map(each => `#${each}`).join(', ')}.` : 'There are none.'}`;
       });
+      // Best effort, after the record is gone: a task still asleep finds none when it wakes, and ends.
+      if (taskId !== undefined) await abortTask?.(taskId, context).catch(() => undefined);
+      return result;
     },
   });
 

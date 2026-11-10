@@ -60,7 +60,8 @@ schedule(...)  ─►  schedule.registry: { next, items: { "3": { taskId, text, 
   does, so a call rerun after a crash schedules nothing twice.
 - A delivery that fails (not a closing host, which just reruns it) is reported and tried again a minute later, five
   times; then the schedule is dropped with a report, rather than listed forever without firing.
-- An aborted `schedule.wake` task removes its record.
+- Cancelling removes the record, then aborts the sleeping task. A task that could not be aborted finds no record
+  when it wakes, and ends without submitting. An aborted `schedule.wake` task removes its record.
 - The message is `[Schedule #3] text`, a blank line, and `(A wake-up you scheduled on …, due …[; delivered late, at
   …: the host was not running then].[ It repeats (cron "…", next …); cancel_schedule(3) stops it.])`. Late means more
   than two minutes after it was due.

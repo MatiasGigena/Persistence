@@ -209,9 +209,9 @@ describe('scheduled wake-ups (offline)', { concurrency: false, timeout: 60_000 }
     assert.equal(await ask(host, 'Stop it.'), 'Cancelled #1 (cron "0 9 * * *"): Morning summary.');
     assert.equal(await ask(host, 'Stop it again.'), 'No schedule #1. There are none.');
     assert.deepEqual(await listSchedules(host.instance.harness, host.instance.context), []);
-    // Its task wakes at the next morning, finds no record, and ends without a word.
-    await advance(host, day(5));
+    // Its sleeping task is aborted with it, and the next morning brings nothing.
     await until(async () => (await wakeTasks(host)).length === 0, 'the cancelled task to end');
+    await advance(host, day(5));
     assert.equal((await fires(host)).length, 2);
   });
 

@@ -377,8 +377,10 @@ export async function openInstance({
     atWork: async () => opened ? (await listAgents(opened, context)).filter(agent => agent.busy).map(agent => agent.name) : [],
   });
   // Scheduled wake-ups (ADR 0038) are Pi's: with routing, each keeps the machine of the run that made it.
-  const Schedule = createScheduleExtension(routing ? { routing: { current: tx => routing.runTarget(tx),
-    pin: (tx, requestId, target) => routing.pinRequest(tx, requestId, target) } } : {});
+  const Schedule = createScheduleExtension({
+    abortTask: async (id, abortContext) => { await opened?.abortTask(id, abortContext); },
+    ...routing ? { routing: { current: tx => routing.runTarget(tx), pin: (tx, requestId, target) => routing.pinRequest(tx, requestId, target) } } : {},
+  });
   // Spawned agents copy Pi's choices, then standing ones their roster entry's; the chat's memory and its schedules are
   // Pi's alone.
   const childAgent: AgentChange = { extensions: { remove: [Unii, Schedule] } };
