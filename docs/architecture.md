@@ -131,7 +131,7 @@ host only through the session contract, `src/protocol/session.ts`. The wording i
    - waits up to 8 s for pending summaries, then uses placeholders;
    - replaces the request with: system prompt, the view in `<chat>` tags, a
      `<turn>` block with the current date and time (and the agents at work, when the
-     host passes `atWork`), the previous exchange (at most 16,000 bytes), the run's new
+     host passes `atWork`, and Pi's schedules, when it has any), the previous exchange (at most 16,000 bytes), the run's new
      message after `Turn: the user's new message:` (only its last parts when it is
      over 128,000 bytes, the first ones summarized into the view), and the run's own
      steps.

@@ -42,6 +42,8 @@ export interface UniiExtensionOptions {
   resolveAgentChat?: (name: string, page: number) => string | Promise<string>;
   /** The names of the agents working now, for the turn state; without it, the turn state does not list them. */
   atWork?: () => readonly string[] | Promise<readonly string[]>;
+  /** More lines of the turn state, each `name: value` (the host's: Pi's schedules); an empty list adds none. */
+  turnState?: () => readonly string[] | Promise<readonly string[]>;
   settleMs?: number;
   prevBytes?: number;
   now?: () => Date;
@@ -133,7 +135,7 @@ function headed(content: UserMessage['content']): (TextContent | ImageContent)[]
  * UniiChat as a pi-durable extension (recipe §5-§6), for the root conversation only.
  *
  * - Adds the recipe's system prompt as a section; the conversation's `instructions` (the user's) render after it.
- * - `beforeRequest` replaces each request of a run with [system] [view] [turn state: date/time, agents at work]
+ * - `beforeRequest` replaces each request of a run with [system] [view] [turn state: date/time, agents at work, the host's lines]
  *   [previous exchange] [`Turn: the user's new message:` and the run's new message] + the run's own steps. The view
  *   is rendered once per run, ending before the run's message (logged first, so a huge one's first parts go to the
  *   view and only its tail is sent), after waiting up to `settleMs` for pending summaries (then placeholders). A run
@@ -147,11 +149,11 @@ function headed(content: UserMessage['content']): (TextContent | ImageContent)[]
  *   so this decline is what keeps Pi uncompacted: its view keeps its context a constant size.
  *
  * Options: `memory` (from openMemory), `isRoot(conversationId)` (default: pi-durable's ROOT_CONVERSATION_ID),
- * `resolveAgentChat(name, page) → string`, `atWork() → names`, `settleMs` (8000), `prevBytes` (16000), `now()`,
+ * `resolveAgentChat(name, page) → string`, `atWork() → names`, `turnState() → lines`, `settleMs` (8000), `prevBytes` (16000), `now()`,
  * `name` ('uniichat').
  */
 export function createUniiExtension({
-  memory, isRoot = id => id === ROOT_CONVERSATION_ID, resolveAgentChat = name => Promise.reject(new NotFound(`No agent named ${name}.`)), atWork,
+  memory, isRoot = id => id === ROOT_CONVERSATION_ID, resolveAgentChat = name => Promise.reject(new NotFound(`No agent named ${name}.`)), atWork, turnState,
   settleMs = 8_000, prevBytes = 16_000, now = () => new Date(), name = 'uniichat',
 }: UniiExtensionOptions): UniiExtension {
   const open = (): Memory => {
@@ -269,9 +271,9 @@ export function createUniiExtension({
     // Later records of a resumed run count in firstWhole() too; the clamp keeps the input's last part whole.
     const k = end > from ? Math.min(memory.firstWhole(from), end - 1) : from;
     if (!memory.ready(k)) await memory.settle(settleMs, signal, k);
-    const working = atWork ? await atWork() : undefined;
+    const [working, more] = await Promise.all([atWork?.(), turnState?.()]);
     const state = ['<turn>', `now: ${formatDate(now())}`,
-      ...(working ? [`agents at work: ${working.length ? working.join(', ') : 'none'}`] : []), '</turn>'].join('\n');
+      ...(working ? [`agents at work: ${working.length ? working.join(', ') : 'none'}`] : []), ...more ?? [], '</turn>'].join('\n');
     const blocks = [memory.render(k), state, memory.previousExchange(k, prevBytes)]
       .filter(Boolean).map((text): TextContent => ({ type: 'text', text }));
     return { blocks, message: k > from ? memory.joinedText(k, end) : undefined };

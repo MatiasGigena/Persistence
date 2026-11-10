@@ -14,7 +14,7 @@ import type { MachineTarget } from '../../src/protocol/machines.ts';
 import { isWork, resumeInstance } from '../../src/runtime/recovery.ts';
 import { openInstance, transcript, type Instance, type InstanceOptions } from '../../src/runtime/runtime.ts';
 import {
-  cancelSchedule, FIRE_KIND, fireText, firstFire, LATE_MS, listSchedules, MAX_SCHEDULES, MAX_TEXT, scheduleFireOf, WAKE_KIND,
+  cancelSchedule, FIRE_KIND, fireText, firstFire, LATE_MS, listSchedules, MAX_SCHEDULES, MAX_TEXT, scheduleFireOf, schedulesLine, WAKE_KIND,
 } from '../../src/schedule/index.ts';
 import { NotFound } from '../../src/protocol/errors.ts';
 import { call, router, say, type Script, type Turn } from '../fixtures/agents-instance.ts';
@@ -194,6 +194,10 @@ describe('scheduled wake-ups (offline)', { concurrency: false, timeout: 60_000 }
     assert.match(said(host.seen.at(-1)?.user ?? ''), new RegExp(`It repeats \\(cron "0 9 \\* \\* \\*", next ${formatDate(day(2)).replace(/[+()]/g, '\\$&')}\\)`));
     assert.equal(await ask(host, 'What is scheduled?'),
       `now: ${formatDate(day(1))}\n#1 cron "0 9 * * *", next ${formatDate(day(2))}: Morning summary.`);
+    // Each run's turn state names what is scheduled; the first run, before anything was, said nothing of schedules.
+    const turnState = (turn: Turn | undefined): string => /<turn>[\s\S]*?<\/turn>/.exec(turn?.user ?? '')?.[0] ?? '';
+    assert.match(turnState(host.seen.at(-1)), new RegExp(`\nschedules: #1 cron "0 9 \\* \\* \\*", next ${formatDate(day(2)).replace(/[+()]/g, '\\$&')}\n</turn>`));
+    assert.doesNotMatch(turnState(host.seen[0]), /schedules:/);
 
     // The host is closed over three mornings and reopens at 10:00 on the fourth day: one wake-up, late.
     await host.instance.close();
@@ -327,6 +331,15 @@ describe('scheduled wake-ups (offline)', { concurrency: false, timeout: 60_000 }
     assert.deepEqual(await route(1), { machineId: 'server', cwd: host.cwd, label: 'server' });
     assert.equal(calls.length, 1);
   });
+});
+
+test('the turn state names the soonest five schedules and counts the rest; with none it says nothing', () => {
+  const at = local(2026, 11, 12, 9);
+  assert.equal(schedulesLine([]), undefined);
+  assert.equal(schedulesLine([{ id: 3, text: 'x', at }, { id: 4, text: 'y', at: at + DAY, cron: '0 9 * * 1-5' }]),
+    `schedules: #3 ${formatDate(at)}; #4 cron "0 9 * * 1-5", next ${formatDate(at + DAY)}`);
+  const many = Array.from({ length: 7 }, (_, n) => ({ id: n + 1, text: 'x', at: at + n * MINUTE }));
+  assert.match(schedulesLine(many) ?? '', /^schedules: #1 [^;]+; #2 [^;]+; #3 [^;]+; #4 [^;]+; #5 [^;]+; and 2 more \(list_schedules\)$/);
 });
 
 test('a wake-up entry decodes only from its own kind and shape', () => {

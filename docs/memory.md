@@ -290,8 +290,10 @@ The extension's `beforeRequest` hook replaces every request of a Pi run with:
   `agents` (Pi's role text) and `instructions` (the host's instructions for this launch).
 - **view**: `memory.render(k)`, the view of messages `[0, k)`.
 - **turn state**: `<turn>\nnow: 2026-10-19 13:54:01 -03:00 (Monday)\n</turn>`, plus a line
-  `agents at work: A, B` (or `none`) when the host passes `atWork()`. Dates and state never go into the system
-  prompt.
+  `agents at work: A, B` (or `none`) when the host passes `atWork()`, and the lines of the host's `turnState()`: this
+  host adds `schedules: #3 2026-11-12 09:00:00 -03:00 (Thursday); #4 cron "0 9 * * 1-5", next …` while Pi has
+  schedules ([schedules.md](schedules.md)), the soonest five and a count of the rest, and nothing when it has none.
+  Dates and state never go into the system prompt.
 - **previous exchange**: the last user or work message(s) and the `pi` reply that ends right before `k`, whole, in
   `<previous_exchange>` tags. It is omitted when message `k-1` is not a `pi` reply, or when the block would exceed
   16,000 bytes. Tool steps between them are left out.

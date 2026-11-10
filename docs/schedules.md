@@ -68,6 +68,13 @@ schedule(...)  ─►  schedule.registry: { next, items: { "3": { taskId, text, 
 - The entry's data is `{ id, text, due, cron? }`. The memory logs the message as `work`
   ([memory.md](memory.md#kinds)); the feed shows a `report` item from `Schedule #3` with the text alone.
 
+## What Pi sees
+
+Besides its tools and the section of its system prompt that describes them, each of Pi's runs has, in its `<turn>`
+block, one line naming what is scheduled, while anything is: `schedules: #3 2026-11-12 09:00:00 -03:00 (Thursday); #4
+cron "0 9 * * 1-5", next 2026-11-11 09:00:00 -03:00 (Wednesday)`. It names the soonest five and counts the rest. So Pi
+knows what is pending without a tool call, and does not schedule the same thing twice.
+
 ## Machines
 
 With machine routing ([ADR 0028](decisions/0028-remote-machines-over-ssh.md)) every input of Pi's needs a pinned

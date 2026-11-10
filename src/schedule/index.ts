@@ -165,6 +165,21 @@ export function fireText(id: number, item: Pick<ScheduleItem, 'text' | 'createdA
   return `[${fireName(id)}] ${item.text}\n\n(A wake-up you scheduled on ${formatDate(item.createdAt)}, due ${formatDate(due)}${late}.${repeats})`;
 }
 
+/** How many schedules the turn state names; the rest are counted. */
+const TURN_SCHEDULES = 5;
+
+/**
+ * Pi's schedules as one line of its turn state, so it knows what is already scheduled without a tool call:
+ * `schedules: #3 2026-11-12 09:00:00 -03:00 (Thursday); #4 cron "0 9 * * 1-5", next …`, the soonest five and a count of
+ * the rest. Undefined when there are none: the turn state then says nothing about schedules.
+ */
+export function schedulesLine(schedules: readonly ScheduleInfo[]): string | undefined {
+  if (!schedules.length) return undefined;
+  const named = schedules.slice(0, TURN_SCHEDULES).map(each => `#${each.id} ${each.cron === undefined ? '' : `cron "${each.cron}", next `}${formatDate(each.at)}`);
+  const rest = schedules.length - named.length;
+  return `schedules: ${named.join('; ')}${rest ? `; and ${rest} more (list_schedules)` : ''}`;
+}
+
 /** The schedules, soonest first. */
 export async function listSchedules(source: DocumentReader, context: Context): Promise<ScheduleInfo[]> {
   return sorted((await source.snapshot(ScheduleDoc, context))?.items ?? {});

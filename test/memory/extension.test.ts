@@ -240,12 +240,12 @@ describe('unii extension in a real Harness (faux model)', { concurrency: false, 
       contributions: [[asked], [], [next]], // pi-durable keeps the aborted reply out of the model's context
     };
     const api: RequestApi = { conversationId: ROOT_CONVERSATION_ID, taskId: 9, context: async () => view };
-    const out = await beforeRequestOf({ memory, atWork: () => ['Bob', 'Ann'] })(
+    const out = await beforeRequestOf({ memory, atWork: () => ['Bob', 'Ann'], turnState: () => ['schedules: #3 soon'] })(
       { messages: [{ role: 'system', content: 'S', timestamp: 0 }, asked, next] }, api, context);
     assert.deepEqual(out?.messages.map(m => m.role), ['system', 'user']);
     const [shown, state, message] = texts(out?.messages[1]);
     assert.equal(shown, '<chat>\n0+1|user: Q1\n1+1|pi: partial [cut off: stopped]\n2+1|tool: date {"id":0}\n</chat>');
-    assert.match(state ?? '', /\nagents at work: Bob, Ann\n<\/turn>$/);
+    assert.match(state ?? '', /\nagents at work: Bob, Ann\nschedules: #3 soon\n<\/turn>$/);
     assert.equal(message, `${TURN_HEAD}Q2`);
     assert.deepEqual(memory.log.map(r => r.src), ['e:1', `a:2:${hash('partial')}`, 'c:call-p', 'e:3']);
   });

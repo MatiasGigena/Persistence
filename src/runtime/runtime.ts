@@ -19,7 +19,7 @@ import { LOCAL_KITS, rosterEntry } from '../agents/roster.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
-import { createScheduleExtension } from '../schedule/index.ts';
+import { createScheduleExtension, listSchedules, schedulesLine } from '../schedule/index.ts';
 import { createAutoreviewExtension } from '../tools/autoreview.ts';
 import { createBrowserExtension } from '../tools/browser.ts';
 import { createShowImageExtension } from '../tools/show-image.ts';
@@ -375,6 +375,11 @@ export async function openInstance({
     },
     // Upstream's "Agents at work now", read from the agents' runs so it never drifts from them.
     atWork: async () => opened ? (await listAgents(opened, context)).filter(agent => agent.busy).map(agent => agent.name) : [],
+    // What is already scheduled (ADR 0038), so Pi neither schedules it twice nor needs a tool call to know.
+    turnState: async () => {
+      const line = opened ? schedulesLine(await listSchedules(opened, context)) : undefined;
+      return line === undefined ? [] : [line];
+    },
   });
   // Scheduled wake-ups (ADR 0038) are Pi's: with routing, each keeps the machine of the run that made it.
   const Schedule = createScheduleExtension({
