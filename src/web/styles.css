@@ -717,6 +717,9 @@ dialog::backdrop { background: var(--scrim); }
 .rows li:first-child .archived-row { border-top: 0; }
 .archived-row .row-label { color: var(--muted); }
 .archived-row .btn { flex: none; min-height: var(--tap); }
+/* A schedule's text is what it is for: full strength, where an archived agent's name is muted. */
+.schedule-row .row-label { color: var(--ink); white-space: normal; overflow-wrap: anywhere; }
+.schedule-row .row-detail { white-space: normal; }
 .agent-chat { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); border-top: 1px solid var(--line); }
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 1rem/1.6 var(--serif); }
 .skeleton-lines { padding: 2px 0; }

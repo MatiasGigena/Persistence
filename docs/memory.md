@@ -58,7 +58,7 @@ warning; a line that parses but lacks one of these fields (with its type) is dro
 | `pi` | Pi's assistant messages | the text blocks, joined by newlines; thinking is never logged |
 | `tool` | each tool call in an assistant message | `` `${name} ${JSON.stringify(arguments)}` `` |
 | `echo` | each tool result | `` `${toolName}: ${isError ? 'error: ' : ''}${text}` ``; image blocks become `[image]` |
-| `work` | an input entry of kind `agents.report`, or `memory.report()` | as Pi sees the report: `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with the entry's `data.session` (a standing agent's session) (upstream `report_text`); `append` rejects a `work` text that does not start with `[Name]` |
+| `work` | an input entry of kind `agents.report` or `schedule.fire`, or `memory.report()` | a scheduled wake-up as Pi sees it, `[Schedule #n] text` and its line of context ([schedules.md](schedules.md)); a report as Pi sees it: `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with the entry's `data.session` (a standing agent's session) (upstream `report_text`); `append` rejects a `work` text that does not start with `[Name]` |
 | `note` | nothing in this host | reserved for memories imported from before the chat |
 
 Each `tool` record comes right before its `echo` (call, result, call, result), as upstream logs a call with its

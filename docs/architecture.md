@@ -24,6 +24,8 @@ agents, and each agent is another conversation in the same database.
              read/write/edit/bash                         beforeRequest builds view     spawn_agent, list_agents,
              (on unless --no-tools)                       logs every message            send_message, last_message,
                                                           zoom, date                    stop_agent; Deliver tasks
+                                                                                        schedule (src/schedule)
+                                                                                        schedule, list, cancel; Wake tasks
                                                                 │
                                                                 ▼
                                           chat.unii/  log (main/), tree (tree/), view.json
@@ -96,6 +98,9 @@ host only through the session contract, `src/protocol/session.ts`. The wording i
   `uniichat` extension that feeds the view to Pi.
 - **Agents** (`src/agents/`): the agent registry, the agent tools, and the
   `agents.deliver` tasks that move messages and reports between conversations.
+- **Schedules** (`src/schedule/`, [ADR 0038](decisions/0038-scheduled-wake-ups.md)): Pi's `schedule`,
+  `list_schedules` and `cancel_schedule` tools, and the `schedule.wake` tasks that sleep until a schedule is due and
+  then submit its message to Pi. See [schedules.md](schedules.md).
 - **Tools** (`src/tools/`, [ADR 0027](decisions/0027-standing-agents.md)): extensions behind the standing agents'
   `browser`, `web_fetch` and `autoreview` kits. `autoreview.ts` exposes only the installed skill helper, always through P2,
   using the guarded/routed bash implementation without offering bash to the Reviewer (ADR 0029). `browser.ts` drives a headless Chromium per agent, shared by all its sessions (Playwright, a
@@ -184,11 +189,26 @@ declines every compaction of the root ([ADR 0015](decisions/0015-agent-compactio
 
 Details: [agents.md](agents.md), [decisions/](decisions/).
 
+## Scheduled wake-ups
+
+- `schedule` creates a background `schedule.wake` task in Pi's conversation and a record in the `schedule.registry`
+  doc, in one commit. The task sleeps durably (pi-durable's `sleepUntil`) until the schedule is due.
+- Due, it submits `[Schedule #n] text` to Pi as a follow-up input, placed as a `schedule.fire` entry, with the
+  request ID `schedule:<task id>:<occurrence>`; the next commit puts a repeating schedule back to sleep or removes a
+  one-off. The request ID makes a rerun after a crash return the first submission.
+- The memory logs the wake-up as `work`; the feed shows it as a report from `Schedule #n`; the hub pushes it as it
+  pushes an agent's report.
+- With machine routing, the wake-up's request is pinned before it is submitted: to the remote machine of the run
+  that made the schedule, else to the server.
+- Agents have no schedules: the host removes the `schedule` extension from them, as it does `uniichat`.
+
+Details: [schedules.md](schedules.md).
+
 ## Persistence boundaries
 
 | Store | Holds | Written by | Durability |
 |---|---|---|---|
-| `chat.sqlite` (with `-wal`, `-shm`) | every conversation (Pi and agents), entries, tasks, submissions, docs such as the agent registry and each conversation's agent config | the Harness | WAL, `synchronous = FULL` |
+| `chat.sqlite` (with `-wal`, `-shm`) | every conversation (Pi and agents), entries, tasks (sleeping schedules among them), submissions, docs such as the agent registry, the schedule registry and each conversation's agent config | the Harness | WAL, `synchronous = FULL` |
 | `chat.unii/main/YYYY-MM-DD.jsonl` | the memory log: one record `{ i, kind, text, size, date, src? }` per message | `Memory.append` | appended and fsynced per line |
 | `chat.unii/tree/YYYY-MM-DD.jsonl` | tree nodes `{ l, i, text }` | the compactor | appended and fsynced per node |
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
@@ -275,7 +295,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/memory/summarizer.ts` | Cheap compaction model choice and the pi-ai summarizer |
 | `src/memory/extension.ts` | The `uniichat` extension: `beforeRequest` view, logging hooks, `zoom` and `date` tools |
 | `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates |
-| `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
+| `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), schedule times and `/schedule`'s list, zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
 | `src/ui/tui/app.ts`, `chat.ts`, `footer.ts`, `theme.ts` | The terminal chat: pi-tui layout and editor, the chat blocks, the one-line status, the palette |
 | `src/ui/tui/panels/*` | The `/agents`, `/mem`, `/model` and `/effort` overlays and their shared frame, lists and confirmation box |
 | `src/providers/claude-cli.ts` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
@@ -296,7 +316,10 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/agents/lifecycle.ts` | `stopAgents`, `deleteAgent`, `archiveAgents`, `restoreAgent`, `purgeArchived` |
 | `src/agents/transcript.ts` | `agentTranscript`: an agent's whole chat for `zoom("Name")`, in pages |
 | `src/agents/prompts.ts`, `tools.ts` | The role texts of the agents' prompt section; the agent tools and the guard hook |
-| `src/runtime/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |
+| `src/schedule/index.ts` | The `schedule` extension (ADR 0038): the `schedule.registry` doc, the `schedule.wake` task (sleep, deliver once, repeat), Pi's three tools; `firstFire`, `fireText`, `listSchedules`, `cancelSchedule` |
+| `src/schedule/cron.ts` | `parseCron`, `nextAfter`, `shortestGap`: five-field cron expressions in the host's local time |
+| `src/schedule/entries.ts` | `FIRE_KIND` and `scheduleFireOf`: the wake-up entry and the one decoder of its data, read by the memory, the feed and the terminal host |
+| `src/runtime/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution; `runTarget` and `pinRequest` for the inputs the host itself schedules |
 | `src/protocol/machines.ts` | Machine targets, registrations, tool calls/results/cancels and JSON narrowing shared by server and connector |
 | `src/protocol/messages.ts` | Wire protocol v4: every message, the op table (`Ops`), item ops, error and close codes, limits |
 | `src/protocol/parse.ts` | `parseClientMessage`, `parseServerMessage`: JSON checked field by field from `unknown` |
@@ -338,7 +361,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |
 | `src/web/store.ts` | Mirrors feeds with `applyOps`, status, notices, pending sends (resent with their requestId) |
 | `src/web/chat-view.ts`, `markdown.ts`, `format.ts`, `copy.ts` | Keyed DOM chat, sanitized Markdown, the web app's own text helpers (header status, pairing, load steps); copy buttons on turns and code blocks |
-| `src/web/panels/*` | Sheets: chat settings (model, effort, tools switch with its confirm dialog, notifications), agents, memory zoom; `cache.ts` keeps their lists across openings (chat settings' warmed once connected) |
+| `src/web/panels/*` | Sheets: chat settings (model, effort, tools switch with its confirm dialog, notifications), agents, memory zoom, schedules; `cache.ts` keeps their lists across openings (chat settings' warmed once connected) |
 | `src/web/push.ts`, `sw.ts` | Push subscribe on a tap; service worker: the shell as whole versioned sets, served stale while revalidating, with an offline page (ADR 0032), and the set in hand while the server answers 502–504 (a restart); push and click handlers |
 | `src/web/sw/shell.ts` | The service worker's shell decisions, loaded with `importScripts`: complete sets, the version-agreed fetch, pruning, which set answers a page load or file, the offline page; over small cache and fetch interfaces, so `test/web/sw.test.ts` runs them against fakes |
 | `src/server/transport-ws.ts` | `startWebListener`: HTTP on 127.0.0.1, `/api/me`, `/api/pair`, the app, and `/ws` WebSockets handed to the hub as `PeerLink`s |
@@ -349,6 +372,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `test/runtime/` | Reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript, protected folders, Pi's SSH agent |
 | `test/memory/` | Log, tree, view, compactor, extension |
 | `test/agents/` | Roles, messaging, stops, reports, `zoom("Name")` pages, exactly-once delivery across close and SIGKILL; an agent's view and compaction through the host wiring |
+| `test/schedule/` | Cron expressions on fixed local dates; schedules through the host wiring on a clock the test moves: a one-off, a repeating one, a late delivery after a closed host, cancelling, refusals, routing, and that agents have none |
 | `test/client/` | `RemoteSession` against the fake server (snapshot and ops, resync, status and notices, request errors, reconnects, resent sends), the link over real sockets (framing, probe failures, pings, `bye`, backoff), attach routing and the launcher's exit 75 hint, and an end-to-end attach to `serve` with a restart |
 | `test/machines/` | Immutable routing, session inheritance and fail-closed targets; connector ledger replay/crash behavior |
 | `test/protocol/` | Machine messages and targets; random feed sequences through `diffItems` and `applyOps`, clipping, every message through JSON and the parsers, malformed input |

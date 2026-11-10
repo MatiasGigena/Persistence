@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Scheduled wake-ups (ADR 0038): ask Pi to remind you of something or to check back later, once or on a cron
+  expression. Pi's `schedule`, `list_schedules` and `cancel_schedule` tools leave it a message that arrives as a
+  new turn, `[Schedule #n] …`, when it is due, also while no client is attached; a phone gets a push. Delivery is
+  exactly-once across crashes, and a host that was closed delivers late at its next launch, a repeating schedule
+  once. `/schedule` lists them and `/schedule cancel N` removes one; the web app lists them under `N scheduled`;
+  `/status` names the next. With machine routing a schedule keeps the workstation it was made on. New optional
+  status field `schedules` and op `schedule.cancel`; `PROTOCOL` stays 4. Times are the host's local time: set `TZ`
+  for a server in another zone.
 - Archiving agents (ADR 0034): the `/agents` panel, the web app's Agents sheet and `pi-durable serve agents
   --archive NAME | --archive-adhoc | --restore NAME` archive ad-hoc agents and restore them within the day. An
   archived agent is stopped, hidden and unreachable; a day later it is deleted as `delete_agent` does, its chat kept

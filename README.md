@@ -121,7 +121,7 @@ as the model takes; `/effort xhigh` sets it directly; saved as the default), `/t
 `y` enables read, write, edit and bash for this launch), `/tools off`, `/agents` (list
 agents, open any agent's live chat; `a` archives the selected one, `A` every ad-hoc one, and the Archived row
 restores them within the day), `/mem` (browse the memory view and zoom down to
-any message), `/status`, `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
+any message), `/schedule` (Pi's scheduled wake-ups; `/schedule cancel N` removes one), `/status`, `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
 applies from the next message and becomes the default for launches without `--model`.
 Keys: Enter sends, Shift+Enter or Alt+Enter adds a line, Esc interrupts Pi, Ctrl+L
 picks a model, Ctrl+O expands tool output, Ctrl+T expands thinking, Ctrl+C twice (the footer says so after the first) or
@@ -190,6 +190,15 @@ within that team. Delivery is exactly-once across crashes, not arbitrary shell e
 Agents work only while a host is open: in chat, their reports print as they arrive;
 after `-p`, run `pi-durable --resume` to let them finish. Details: [docs/agents.md](docs/agents.md).
 
+## Schedules
+
+Ask Pi to remind you of something or to check back on it later ("remind me on Friday at 10", "look at the build
+again in 20 minutes", "every weekday at 9, tell me what changed overnight"). Pi leaves itself a message with its
+`schedule` tool; when it is due, the message arrives as a new turn, `[Schedule #n] …`, and Pi answers it, also while
+you are away. With `pi-durable serve` and push notifications, your phone is told. `/schedule` lists the schedules
+and cancels one. Delivery is exactly-once across crashes; a host that was closed delivers late at its next launch.
+Details: [docs/schedules.md](docs/schedules.md).
+
 ## Safety
 
 Coding tools (read, write, edit, bash) are on for local launches and `pi-durable serve`, unless you pass
@@ -221,6 +230,7 @@ src/host/           terminal chat, /commands, reply watcher; CLI options and pat
 src/runtime/        Harness, extensions, Pi's agent config; resume and agent settling
 src/memory/         UniiChat memory: log, tree, view, compactor, extension
 src/agents/         standing roster, hierarchy, sessions and messaging
+src/schedule/       Pi's scheduled wake-ups: tools, cron, the wake task
 src/tools/          browser, web_fetch and autoreview kits; show_image; code mode
 src/machines/       persistent target routing for runs and spawned agents
 src/client/         socket/SSH TUI, stdio bridge, local execution ledger
@@ -242,6 +252,7 @@ docs/               architecture, operations, models, memory, agents, decisions,
 - [docs/models.md](docs/models.md): model routes, the Claude policy, how `claude-cli` works
 - [docs/memory.md](docs/memory.md): UniiChat memory and recipe deviations
 - [docs/agents.md](docs/agents.md): agent roles, messaging, delivery and execution targets
+- [docs/schedules.md](docs/schedules.md): scheduled wake-ups: the tools, delivery, machines
 - [docs/protocol.md](docs/protocol.md): native socket, SSH and web protocol
 - [docs/decisions/](docs/decisions/): architecture decision records
 - [CONTRIBUTING.md](CONTRIBUTING.md): development, tests, rules

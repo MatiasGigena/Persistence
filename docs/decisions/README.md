@@ -41,6 +41,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0035](0035-pi-1-5-0.md) | Pi 1.5.0: conversation views instead of events, pi-schema tools, a one-way chat migration (amends 0012) |
 | [0036](0036-shared-code-homes.md) | One home for code that several layers share (amends 0020) |
 | [0037](0037-pi-1-5-2.md) | Pi 1.5.2: Chord's foundations from their subpaths, one `SDK` constant, no migration |
+| [0038](0038-scheduled-wake-ups.md) | Scheduled wake-ups: Pi leaves itself a message for later, once or on a cron (extends 0005, 0006) |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".

@@ -524,6 +524,7 @@ PI_DURABLE_ALLOW_LOGIN=me@github
 # PI_DURABLE_UNPROTECT=~/.ssh      # let the tools use these protected paths (':'-separated)
 # PI_DURABLE_PROTECT=~/secrets     # hide more paths from the tools (':'-separated)
 # PI_DURABLE_PUSH_PREVIEW=off      # on: notifications show the reply's first words
+# TZ=America/Argentina/Buenos_Aires  # the zone schedules and the times Pi sees are in; default: the system's
 # PI_DURABLE_DATA_DIR=/home/me/.local/state/pi-durable
 # PI_DURABLE_CHROMIUM=/opt/google/chrome/chrome  # the browser tools' Chromium, not a snap; default: Playwright's, in ~/.cache/ms-playwright
 ```
@@ -670,9 +671,27 @@ the admin console, before enabling HTTPS.
 - The pairing screen keeps coming back: the device is not paired (or was revoked); pair it.
 - The server's log (`journalctl --user -u pi-durable`) shows `web: …` lines for pairings and failures.
 
+## Schedules
+
+Pi can leave itself a message for later, once or repeating ("remind me on Friday at 10", "every weekday at 9, tell me
+what changed overnight"); see [schedules.md](schedules.md). `/schedule` lists them and `/schedule cancel N` removes
+one; the web app lists them under `N scheduled`.
+
+- A schedule fires only while a host runs. Under `pi-durable serve` that is always; a local chat delivers what came
+  due while it was closed at its next launch, marked late.
+- Times are the host's local time. A VPS is usually on UTC: set your zone in `~/.config/pi-durable/env`
+  (`TZ=America/Argentina/Buenos_Aires`) and restart the service. Pi reads the zone from the time in each turn.
+- A schedule made from a workstation keeps that workstation for its tools: if the workstation is offline when the
+  schedule fires, Pi's run starts and waits at its first coding tool call, and the chat is busy until the
+  workstation connects or you stop the run. Schedule from the phone, or in a turn sent without a workstation, for
+  work that must run on the server.
+- Each wake-up is a model run against your plan or key. At most 32 schedules; a repeating one at most every 5
+  minutes.
+- Backups hold the schedules: they are tasks and a document in `chat.sqlite`.
+
 ## Push notifications
 
-`pi-durable serve` can notify a phone when Pi answers or an agent reports while no client is visible
+`pi-durable serve` can notify a phone when Pi answers, an agent reports or a schedule fires while no client is visible
 (ADR 0021). It needs the web app on its HTTPS origin (`PI_DURABLE_ORIGIN`).
 
 - Android (Chrome, Firefox) and desktop browsers subscribe from the web app. On iPhone and iPad, push works

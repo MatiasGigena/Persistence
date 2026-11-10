@@ -14,6 +14,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends), `console.ts` (stray console output as chat notices), `routing.ts` (machine routing).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/`: `index.ts` builds the `agents` extension and is the package's API; `registry.ts` (the AgentsDoc registry, the Anchor task, shared lookups), `setup.ts` (agents derived from Pi and the roster, `syncAgents`), `delivery.ts` (the Deliver task), `lifecycle.ts` (stop, delete, archive, restore, purge), `transcript.ts`, `prompts.ts`, `tools.ts` (the agent tools and their guard); `roster.ts`: the standing agents and kit names; `entries.ts`: the input entry kinds and their decoder, and `text`/`assistantText` (a message's text).
+- `src/schedule/`: Pi's scheduled wake-ups: `index.ts` (the `schedule` extension: tools, the `schedule.wake` task, the registry), `cron.ts`, `entries.ts` (the wake-up entry and its decoder).
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and
   `web-fetch.ts` (`web_fetch`), `autoreview.ts` (the Reviewer's installed skill helper, fixed P0–P2, through guarded/routed execution), `show-image.ts`, and `codemode.ts` (scripts that call the coding tools, ADR 0033).
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
@@ -45,8 +46,8 @@ A change is done when both pass and the docs below still match the code.
 - **Memory is Pi's alone.** The `uniichat` extension acts only on the root
   conversation; spawned agents get it removed.
 - **Exactly-once delivery.** Agent messages and reports travel in `agents.deliver`
-  tasks keyed by task ID, and memory appends are keyed by `src`. Keep every replay
-  path idempotent.
+  tasks keyed by task ID, scheduled wake-ups in `schedule.wake` tasks keyed by task ID
+  and occurrence, and memory appends are keyed by `src`. Keep every replay path idempotent.
 - **Tools on, held to protected folders.** A local launch and `serve` start with coding tools on unless
   `--no-tools` is passed (ADR 0025). Every tool runs through `GuardedEnv` (`src/runtime/guard.ts`): the chat's
   state and credentials hidden, system folders read-only, bash in bubblewrap; never hand the tools a bare
@@ -82,6 +83,7 @@ A change is done when both pass and the docs below still match the code.
 - Changing install, paths, recovery, or backups: [docs/operations.md](docs/operations.md).
 - Changing `src/memory/`: [docs/memory.md](docs/memory.md); keep its recipe deviations list current.
 - Changing `src/agents/`: [docs/agents.md](docs/agents.md).
+- Changing `src/schedule/`: [docs/schedules.md](docs/schedules.md).
 - Changing `src/providers/` or model routes: [docs/models.md](docs/models.md).
 - Changing `src/protocol/`, or what the server or a client sends: [docs/protocol.md](docs/protocol.md); bump
   `PROTOCOL` for anything not additive.

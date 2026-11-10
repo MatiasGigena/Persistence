@@ -180,7 +180,11 @@ with `archivedAt` (milliseconds since the epoch; a sub agent of an archived main
 show them apart, in an "Archived" section with their deletion time (`archivedAt + ARCHIVE_TTL_MS`, a day, from
 [messages.ts](../src/protocol/messages.ts)), and leave them out of counts and busy checks. An active agent has no
 `archivedAt` key. A standing agent (ADR 0027) carries `standing: true`, which an ad-hoc one leaves out, so a client
-knows which agents "archive all ad-hoc agents" would take.
+knows which agents "archive all ad-hoc agents" would take. `status.schedules` (ADR 0038) lists Pi's scheduled
+wake-ups, soonest first, each `{id, text, at, cron?}`: `text` is a one-line preview of at most 200 characters, `at`
+when it next fires, `cron` a repeating schedule's expression in the host's local time. The field is optional: a
+server from before ADR 0038 sends none, and a client then shows no schedules. A wake-up that fires is a `report`
+item in Pi's feed whose `from` is `Schedule #n`.
 
 ## Ops
 
@@ -194,6 +198,7 @@ knows which agents "archive all ad-hoc agents" would take.
 | `stopAgents` | `name?` | `{names}` | both | |
 | `agents.archive` | `name` or `adhoc: true` | `{names}` | both | `not_found`, `failed` |
 | `agents.restore` | `name` | `{names}` | both | `not_found`, `failed` |
+| `schedule.cancel` | `id` (≥ 1) | `null` | both | `not_found` |
 | `feed.open` | `name` | `{feed}` | both | `not_found` |
 | `feed.close` | `feed` | `null` | both | `not_found` |
 | `feed.resync` | `feed` | `null` | both | `not_found` |
@@ -242,6 +247,10 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   - Every change that names an agent is broadcast as an `info` `notice` naming who made it (`Archived Helper, by
     phone.`), and written to the server's log, as tool switches are. Both peers may call them, so `pi-durable serve
     agents` uses them over the socket.
+- **`schedule.cancel`** is `UiSession.cancelSchedule` (ADR 0038): it removes the schedule `id` of `status.schedules`,
+  so it never fires again; an unknown id is `not_found` (`No schedule #3.`). The other clients get an `info`
+  `notice` naming who cancelled (`Schedule #3 cancelled, by phone.`), and the server logs it. There is no op that
+  creates a schedule: the user asks Pi.
 - **`feed.open`** opens an agent's conversation by name (case-insensitive) and returns its feed id, an opaque
   string (`ROOT_FEED`, `"root"`, is Pi's). A `snapshot` of it follows the `res`. Opening an open feed again returns
   the same id and sends a fresh snapshot. The server ends the feed with `feed.end` if the agent disappears: once
@@ -471,7 +480,8 @@ Any other code, or a close without `bye`: reconnect.
 
 - `PROTOCOL` is 4. `hello` and `welcome` carry it, and the server refuses another (4000), so clients and server
   are updated together. History: v3 made routed `send` admission reject user sends (steering included) while the root
-  is busy; v4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034).
+  is busy; v4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034). Added since, without a
+  bump: `status.schedules` and the op `schedule.cancel` (ADR 0038).
 - Additive changes keep the version: a new message type, op, error code, close code or optional field. Receivers
   therefore ignore what they do not know: a message with an unknown `t` is ignored, unknown fields are dropped by
   the parser, an unknown op gets `unknown_op`, an unknown error code reads as `failed`.
