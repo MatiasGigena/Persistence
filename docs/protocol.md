@@ -499,7 +499,8 @@ Any other code, or a close without `bye`: reconnect.
 - `PROTOCOL` is 4. `hello` and `welcome` carry it, and the server refuses another (4000), so clients and server
   are updated together. History: v3 made routed `send` admission reject user sends (steering included) while the root
   is busy; v4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034). Added since, without a
-  bump: `status.schedules` and the op `schedule.cancel` (ADR 0038). Relaxed since, without a bump: a routed `send`
+  bump: `status.schedules` and the op `schedule.cancel` (ADR 0038), and the ops `usage` (ADR 0039) and `memory.search`
+  (ADR 0040). Relaxed since, without a bump: a routed `send`
   to a busy root is admitted when its destination is the run's own (ADR 0042), where v3 rejected every one.
 - Additive changes keep the version: a new message type, op, error code, close code or optional field. Receivers
   therefore ignore what they do not know: a message with an unknown `t` is ignored, unknown fields are dropped by

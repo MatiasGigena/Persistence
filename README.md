@@ -235,6 +235,7 @@ src/runtime/        Harness, extensions, Pi's agent config; resume and agent set
 src/memory/         UniiChat memory: log, tree, view, compactor, extension
 src/agents/         standing roster, hierarchy, sessions and messaging
 src/schedule/       Pi's scheduled wake-ups: tools, cron, the wake task
+src/usage/          the usage report: spend per model, sampled into daily buckets
 src/tools/          browser, web_fetch and autoreview kits; show_image; code mode
 src/machines/       persistent target routing for runs and spawned agents
 src/client/         socket/SSH TUI, stdio bridge, local execution ledger
