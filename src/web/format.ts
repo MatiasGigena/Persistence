@@ -52,7 +52,7 @@ export function memoryHeader(memory: MemoryStats | undefined): string {
   return `${memory.messages} messages · ${(memory.viewBytes / 1024).toFixed(1)} KB view · ${memory.active} summarizing · ${memory.failed} failed`;
 }
 
-export const lineLabel = (line: ViewLine): string => `${line.id}+${line.n}`;
+export const lineLabel = (line: Pick<ViewLine, 'id' | 'n'>): string => `${line.id}+${line.n}`;
 
 /** The current model first, then available, then unavailable: the terminal picker's order. */
 export function sortModels(models: readonly ModelChoice[], current: string): ModelChoice[] {

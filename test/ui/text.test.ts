@@ -4,6 +4,7 @@ import {
   activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText, parseMessage,
   parseZoom, schedulesText, scheduleWhen, statusText, tokenCount, toolCommand, toolSummary, usageText, whenText,
 } from '../../src/ui/text.ts';
+import { hitLabel, SEARCH_HINT, SEARCH_USAGE, searchHeader } from '../../src/ui/text.ts';
 import type { SessionStatus, UsageReport } from '../../src/protocol/session.ts';
 
 const STATUS: SessionStatus = {
@@ -141,4 +142,19 @@ test('usageText: each period\'s sum, then its models aligned, and since when day
     'Costs are catalog prices; on a subscription plan they are not what you pay.',
   ].join('\n'), 'no since before the first sample');
   assert.match(usageText({ ...report, since: new Date(2026, 10, 5, 9).getTime() }, now), /Daily counting began Thu 5 Nov 09:00\.$/);
+});
+
+test('a search hit is labelled with its id, its time in the client\'s zone and its kind; the header counts the matches', () => {
+  const at = (year: number, month: number, day: number, hour: number): string => new Date(year, month - 1, day, hour).toISOString();
+  const now = new Date(2026, 10, 14, 12).getTime();
+  assert.equal(hitLabel({ id: 1234, kind: 'user', date: at(2026, 11, 12, 9) }, now), '#1234 · Thu 12 Nov 09:00 · user');
+  assert.equal(hitLabel({ id: 0, kind: 'pi', date: at(2026, 11, 14, 8) }, now), '#0 · today 08:00 · pi');
+  assert.equal(hitLabel({ id: 7, kind: 'work', date: at(2025, 12, 31, 23) }, now), '#7 · Wed 31 Dec 2025 23:00 · work');
+  assert.equal(searchHeader('deploy', 12, 12), '12 matches for "deploy"');
+  assert.equal(searchHeader('deploy', 1, 1), '1 match for "deploy"');
+  assert.equal(searchHeader('deploy', 50, 312), '50 of 312 matches for "deploy" (newest first)');
+  assert.equal(searchHeader('deploy', 0, 0), 'No message matches "deploy".');
+  assert.equal(searchHeader(' "exactly this"\n deploy ', 2, 2), '2 matches for "exactly this" deploy', 'a quoted phrase shows as typed, on one line');
+  assert.match(SEARCH_USAGE, /\/find words.*"a phrase".*kind:user/);
+  assert.match(SEARCH_HINT, /"a phrase".*kind:user/);
 });

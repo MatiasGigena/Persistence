@@ -24,6 +24,7 @@ record that decides what the model sees.
 - [The compactor](#the-compactor)
 - [A turn's request](#a-turns-request)
 - [Tools: zoom and date](#tools-zoom-and-date)
+- [Searching the log](#searching-the-log)
 - [On-disk layout](#on-disk-layout)
 - [Module map](#module-map)
 - [Deviations from UniiChat](#deviations-from-uniichat)
@@ -361,6 +362,36 @@ The tool's output is limited to 256 KiB and 100,000 lines.
 `date(id)` returns the time of message `id` in the host's local zone, for example
 `2026-01-03 12:00:00 -03:00 (Saturday)`.
 
+## Searching the log
+
+The chat never ends and a client shows only its newest items, so the way back to "where did we talk about X" would
+otherwise be zooming the tree by hand. The user can search instead: `/find words` in the terminal UI, and the "Search
+all messages" field of the web app's Memory sheet. Both call `Memory.search(query)` (`src/memory/search.ts`) through
+`UiSession.search` ([ADR 0040](decisions/0040-search-the-log.md)).
+
+**This is for the user only. Pi has no search tool, and must not get one.** The recipe's prompt tells the model
+"Never grep or search memories manually; zoom is your only allowed mechanism" (`src/memory/prompt.ts`), and the
+search changes nothing the model sees: not its tools, its prompt, its view or the log.
+
+The search reads the log as written, not the summaries: a hit is a message whose own text holds the words, even
+when its view line no longer mentions them.
+
+| Query | Finds |
+|---|---|
+| `deploy friday` | Messages that hold both words, in any order. Every term must occur. |
+| `Deploy` | The same as `deploy`: case is ignored. A term matches inside a word too (`arbo` finds "harbor"). |
+| `"exactly this" deploy` | The phrase as written (spaces included), and `deploy`. |
+| `deploy kind:user` | Only messages of that [kind](#kinds): `user`, `pi`, `tool`, `echo`, `work` or `note`. |
+
+- A query needs at least one term; `kind:` alone is refused (`Search for at least one word.`), as is an unknown kind.
+- The answer is the 50 newest matches, newest first, and the count of all of them. Each hit carries the message id,
+  its kind, its date and a one-line snippet: about 160 characters around the first term's first occurrence, with `…`
+  where it was cut. `zoom(id, 1)` gives the message whole, which is what Enter on a hit (or a tap) opens.
+- A text logged as several messages (see [Clipping and splitting](#clipping-and-splitting)) is searched part by
+  part: each part is its own hit, and a phrase cut by the split is not found.
+- There is no index. A search lower-cases each record once and looks for substrings, in the host process, without
+  reading the disk: the log is already in memory. Nothing is written.
+
 ## On-disk layout
 
 The memory directory sits beside the database: the database path with `.sqlite` replaced by `.unii` (or `.unii`
@@ -385,11 +416,12 @@ Directories are created with mode 0700 and files with 0600. `view.json.<pid>.tmp
 | File | Contents |
 |---|---|
 | `src/memory/index.ts` | Public exports: `openMemory`, `Memory`, `KINDS`, `isKind`, `createUniiExtension`, `REPORT_KIND`, `createPiAiSummarizer`, `CompactionRefused`, `defaultCompactionModel`, `PROMPT`, and their types (`Kind`, `MemoryRecord`, `MemoryOptions`, `Summarizer`, `UniiExtensionOptions`, …). |
-| `src/memory/memory.ts` | `Memory`: the log, the tree, both views, the compactor queues, `render`, `settle`, `whole`, `say`, `zoom`, `date`, `previousExchange`, `status`; `openMemory` and its one-open-per-process guard. |
+| `src/memory/memory.ts` | `Memory`: the log, the tree, both views, the compactor queues, `render`, `settle`, `whole`, `say`, `zoom`, `date`, `search`, `previousExchange`, `status`; `openMemory` and its one-open-per-process guard. |
 | `src/memory/view.ts` | `View`: the sawtooth `fit` and the `due` order; node helpers `posStart`, `posEnd`, `posKey`, `posLabel`, `parentOf`; `cut` for a view ending before message k. |
 | `src/memory/prompt.ts` | The system prompt `PROMPT`, the compaction tasks `leafTask` and `mergeTask`, `tooLong`, the 512-dash `RULER`, the placeholder text; adapted from upstream's `prompt.txt` and `Memory.ts`. |
 | `src/memory/summarizer.ts` | The default pi-ai summarizer, `CompactionRefused` (an answer with no line), and the compaction model choice (`CHEAP_MODELS`, `defaultCompactionModel`). |
 | `src/memory/extension.ts` | The `uniichat` pi-durable extension: the request rewrite, the logging hooks, the `zoom` and `date` tools, the declined compactions. |
+| `src/memory/search.ts` | The user's search of the log: `parseQuery` (terms, phrases, `kind:`), `searchLog` (matches newest first, snippets), `SEARCH_LIMIT`. No tool of Pi's. |
 | `src/memory/util.ts` | `NODE`, `CAP`, `clip`, `split`, `cutLine`, `cleanLine`, `bytes`, `flat`, `hash`, date formatting. (`cutBytes` is in `src/protocol/util.ts`.) |
 
 ## Deviations from UniiChat

@@ -210,6 +210,10 @@ export async function createUiSession(
       if (!memory) throw new Unavailable('Memory is not open (inspection only).');
       return memory.zoom(id, n);
     },
+    async search(query) {
+      if (!memory) throw new Unavailable('Memory is not open (inspection only).');
+      return memory.search(query);
+    },
     models: () => chooser.list(currentModel()),
     setModel(provider, id) {
       return serially(async () => {

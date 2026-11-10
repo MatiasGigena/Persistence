@@ -7,13 +7,14 @@ import {
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
 import type { AttachedLink, ChatItem, UiSession } from '../../protocol/session.ts';
 import { ChatView } from './chat.ts';
-import { schedulesText, statusText, toolSummary, usageText } from '../text.ts';
+import { schedulesText, SEARCH_USAGE, statusText, toolSummary, usageText } from '../text.ts';
 import type { NoticeLevel } from './chat.ts';
 import { Footer, spinnerInterval } from './footer.ts';
 import { openAgentsPanel } from './panels/agents.ts';
 import { activeAgents } from '../text.ts';
 import { confirm } from './panels/frame.ts';
 import { openMemoryPanel } from './panels/memory.ts';
+import { openFindPanel } from './panels/find.ts';
 import { openEffortPanel } from './panels/effort.ts';
 import { openModelPanel } from './panels/model.ts';
 import { modelRef } from '../text.ts';
@@ -58,6 +59,7 @@ export const COMMANDS: readonly SlashCommand[] = [
   { name: 'tools', description: 'Coding tools for this launch: on or off', argumentHint: '[on|off]' },
   { name: 'agents', description: 'Agents and their conversations' },
   { name: 'mem', description: "Pi's memory view" },
+  { name: 'find', description: 'Search every message of the log', argumentHint: 'words "a phrase" kind:user' },
   { name: 'schedule', description: "Pi's scheduled wake-ups; /schedule cancel N removes one", argumentHint: '[cancel N]' },
   { name: 'status', description: 'Model, work, memory and agents' },
   { name: 'usage', description: 'Tokens and cost per model: today, 7 days, all time' },
@@ -67,13 +69,13 @@ export const COMMANDS: readonly SlashCommand[] = [
 
 type HelpPair = readonly [name: string, description: string];
 
+// In pairs, as a wide terminal shows them: the left of each pair has the long descriptions, so two columns fit 72.
 const HELP_COMMANDS: readonly HelpPair[] = [
   ['/model', 'pick a model (ctrl+l)'], ['/effort', 'reasoning effort'], ['/tools', 'coding tools: on, off'],
-  ['/agents', 'agents and their chats'], ['/mem', 'the memory view'],
-  ['/status', 'model, work, memory'], ['/stop', 'stop Pi (esc) · all · Name'],
-  ['/schedule', 'wake-ups · cancel N'], ['/exit', 'close (ctrl+d when empty)'],
-  // Last, beside /exit: the right-hand column has no room for /exit's own text.
-  ['/usage', 'tokens per model'],
+  ['/agents', 'agents and their chats'], ['/mem', 'the memory view'], ['/find', 'search the log'],
+  ['/schedule', 'wake-ups · cancel N'], ['/usage', 'tokens per model'],
+  ['/stop', 'stop Pi (esc) · all · Name'], ['/status', 'model, work, memory'],
+  ['/exit', 'close (ctrl+d when empty)'],
 ];
 const HELP_KEYS: readonly HelpPair[] = [
   ['enter', 'send'], ['alt+enter', 'newline (shift+enter)'],
@@ -417,6 +419,10 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
       () => show(`Schedule #${id} cancelled.`),
       (error: unknown) => show(`Not cancelled: ${errorMessage(error)}`, 'error'));
   };
+  const find = (query: string): void => {
+    if (query) panel((ui, chatSession, panelTheme) => openFindPanel(ui, chatSession, panelTheme, query));
+    else show(SEARCH_USAGE);
+  };
   const command = (line: string): void => {
     const name = line.slice(1).split(/\s/, 1)[0] ?? '';
     const arg = line.slice(1 + name.length).trim();
@@ -431,6 +437,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     }
     else if (name === 'agents') panel(openAgentsPanel);
     else if (name === 'mem') panel(openMemoryPanel);
+    else if (name === 'find') find(arg);
     else if (name === 'schedule' || name === 'schedules') schedule(arg);
     else if (name === 'exit' || name === 'quit') void exit();
     else show(`Unknown command ${line.split(/\s/, 1)[0] ?? line}. /help lists them.`, 'warn');

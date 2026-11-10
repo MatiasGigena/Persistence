@@ -99,7 +99,7 @@ Give each test its own temporary data directory.
   - the doc kind `agents.registry`, and its agents' fields, `standing`, `past`, `session` and `archivedAt` among them;
   - the `agents.deliver` task memo field `session` (the conversation a message delivery chose);
   - the optional `session` number (from 1) in `agents.report` entry data;
-  - the protocol ops `agents.archive` and `agents.restore` (ADR 0034), and `schedule.cancel` (ADR 0038);
+  - the protocol ops `agents.archive` and `agents.restore` (ADR 0034), `schedule.cancel` (ADR 0038) and `memory.search` (ADR 0040);
   - the doc kind `host.usage`, its fields `since`, `last`, `days` and `extra`, and the protocol op `usage` (ADR 0039);
   - tool names `zoom`, `date`, `spawn_agent`, `list_agents`, `send_message`,
     `last_message`, `stop_agent`, `delegate`, `schedule`, `list_schedules`, `cancel_schedule`, `web_fetch`, `autoreview`, and the browser's `browser_goto`,

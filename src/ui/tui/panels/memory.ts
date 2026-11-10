@@ -14,7 +14,7 @@ import { parseMessage, parseZoom } from '../../text.ts';
 export const LOADING = 'Loading…';
 
 /** What a level shows: lines, still loading, or why they failed. */
-type Loaded<T> = { readonly state: 'loading' } | { readonly state: 'done'; readonly value: T } | { readonly state: 'failed'; readonly error: string };
+export type Loaded<T> = { readonly state: 'loading' } | { readonly state: 'done'; readonly value: T } | { readonly state: 'failed'; readonly error: string };
 
 /** Opens the memory panel over the chat; resolves when it closes and the editor has focus again. */
 export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme): Promise<void> {
@@ -65,36 +65,38 @@ export function openMemoryPanel(tui: TUI, session: UiSession, theme: PanelTheme)
     });
   }
 
-  /** The state of `promise`, read on every frame; a render follows when it settles. */
-  function track<T>(promise: Promise<T>): () => Loaded<T> {
-    let loaded: Loaded<T> = { state: 'loading' };
-    promise.then(
-      value => { loaded = { state: 'done', value }; },
-      (error: unknown) => { loaded = { state: 'failed', error: errorMessage(error) }; },
-    ).finally(() => tui.requestRender());
-    return () => loaded;
-  }
-
   /** Opens a level for `line` at once, showing LOADING until its zoom resolves. */
   function zoomInto(line: ViewLine): void {
-    if (line.n > 1) {
-      frame.push(level(label(line), track(session.zoom(line.id, line.n).then(parseZoom)), false));
-      return;
-    }
-    const message = track(session.zoom(line.id, line.n));
-    frame.push(new TextView({ title: label(line), lines: width => {
-      const out = message();
-      if (out.state === 'loading') return [theme.dim(LOADING)];
-      if (out.state === 'failed') return wrap(out.error, width).map(theme.error);
-      const { note, body } = parseMessage(out.value);
-      return [...(note ? [theme.dim(note)] : []), ...wrap(body, width)];
-    } }));
+    if (line.n > 1) frame.push(level(label(line), track(tui, session.zoom(line.id, line.n).then(parseZoom)), false));
+    else frame.push(messageView(tui, session, theme, line.id));
   }
 
   return openPanel(tui, frame);
 }
 
-const label = (line: ViewLine): string => `${line.id}+${line.n}`;
+const label = (line: Pick<ViewLine, 'id' | 'n'>): string => `${line.id}+${line.n}`;
+
+/** The state of `promise`, read on every frame; a render follows when it settles. */
+export function track<T>(tui: TUI, promise: Promise<T>): () => Loaded<T> {
+  let loaded: Loaded<T> = { state: 'loading' };
+  promise.then(
+    value => { loaded = { state: 'done', value }; },
+    (error: unknown) => { loaded = { state: 'failed', error: errorMessage(error) }; },
+  ).finally(() => tui.requestRender());
+  return () => loaded;
+}
+
+/** Message `id` whole, as `zoom(id, 1)` gives it: LOADING until it comes, and a long message's page note above it. */
+export function messageView(tui: TUI, session: UiSession, theme: PanelTheme, id: number): TextView {
+  const message = track(tui, session.zoom(id, 1));
+  return new TextView({ title: label({ id, n: 1 }), lines: width => {
+    const out = message();
+    if (out.state === 'loading') return [theme.dim(LOADING)];
+    if (out.state === 'failed') return wrap(out.error, width).map(theme.error);
+    const { note, body } = parseMessage(out.value);
+    return [...(note ? [theme.dim(note)] : []), ...wrap(body, width)];
+  } });
+}
 
 /** Messages, view size, summaries in flight, and failures; `narrow` abbreviates them. */
 export function memoryHeader(memory: MemoryStats | undefined, theme: PanelTheme, narrow = false): string {

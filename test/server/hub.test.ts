@@ -429,6 +429,28 @@ test('usage: both peers get the session\'s report, and none before a session', a
   assert.deepEqual(session.calls, ['usage', 'usage']);
 });
 
+test('memory.search: forwarded from both peers; a blank or overlong query is bad_request, one without a word failed, a closed memory unavailable', async t => {
+  const { hub, session, connect, request } = setup(t);
+  hub.start(session);
+  const web = connect('web'), socket = connect('socket');
+  const closed = await request(web, 'memory.search', { query: 'deploy' });
+  assert.deepEqual(closed?.t === 'res' && !closed.ok && closed.error, { code: 'unavailable', message: 'Memory is not open (inspection only).' });
+  session.set({ memory: { messages: 9, unsummarized: 0, active: 0, failed: 0, lastError: undefined, viewBytes: 300, viewLines: 4 } });
+  const hits = [{ id: 0, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: '…say deploy again…' }];
+  assert.deepEqual(await request(web, 'memory.search', { query: 'deploy' }), { t: 'res', id: 2, op: 'memory.search', ok: true, result: { hits, total: 3 } });
+  const terminal = await request(socket, 'memory.search', { query: 'deploy', limit: 1 });
+  assert.deepEqual(terminal?.t === 'res' && terminal.ok && terminal.result, { hits, total: 3 });
+  for (const query of ['', ' \n ', 'x'.repeat(LIMITS.searchQuery + 1), 7]) {
+    const bad = await request(socket, 'memory.search', { query });
+    assert.equal(bad?.t === 'res' && !bad.ok && bad.error.code, 'bad_request', JSON.stringify(query).slice(0, 20));
+  }
+  const longest = await request(socket, 'memory.search', { query: 'x'.repeat(LIMITS.searchQuery) });
+  assert.equal(longest?.t === 'res' && longest.ok, true);
+  const filters = await request(socket, 'memory.search', { query: 'kind:user' });
+  assert.deepEqual(filters?.t === 'res' && !filters.ok && filters.error, { code: 'failed', message: 'Search for at least one word.' });
+  assert.deepEqual(session.calls, ['search deploy', 'search deploy', 'search deploy', `search ${'x'.repeat(LIMITS.searchQuery)}`, 'search kind:user']);
+});
+
 test('without idleMinutes (the default) the tools stay on however long nothing runs', async t => {
   const { hub, session, logged, wait, connect, request } = setup(t, { tools: { remote: 'confirm' } });
   hub.start(session);

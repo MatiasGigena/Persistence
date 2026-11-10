@@ -3,7 +3,7 @@
 import { ENABLE_TOOLS, ERROR_CODES, LIMITS, NOTICE_LEVELS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
 import type { AppendField, ClientMessage, Device, ErrorCode, ItemOp, Op, PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, ToolsPolicy } from './messages.ts';
-import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, ScheduleStatus, SessionStatus, UsageReport, UsageRow, ViewLine } from './session.ts';
+import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, ScheduleStatus, SearchHit, SessionStatus, UsageReport, UsageRow, ViewLine } from './session.ts';
 import type { ChatImage } from './images.ts';
 import { amount, bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
 import type { Obj } from './util.ts';
@@ -120,6 +120,19 @@ function viewLine(x: unknown): ViewLine {
   return { id: int(o, 'id'), n: int(o, 'n', 1), text: str(o, 'text') };
 }
 
+/** `memory.search`'s query: not blank, and at most LIMITS.searchQuery characters. */
+function searchQuery(p: Obj): string {
+  const v = str(p, 'query');
+  if (!v.trim()) throw new ShapeError('query must not be empty');
+  if (v.length > LIMITS.searchQuery) throw new ShapeError(`query must be at most ${LIMITS.searchQuery} characters`);
+  return v;
+}
+
+function searchHit(x: unknown): SearchHit {
+  const o = obj(x, 'hit');
+  return { id: int(o, 'id'), kind: str(o, 'kind'), date: str(o, 'date'), snippet: str(o, 'snippet') };
+}
+
 function modelChoice(x: unknown): ModelChoice {
   const o = obj(x, 'model');
   return withOptional({ provider: str(o, 'provider'), id: str(o, 'id'), name: str(o, 'name'), available: bool(o, 'available') },
@@ -192,6 +205,7 @@ const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
   'admin.devices': id => ({ t: 'req', id, op: 'admin.devices', params: {} }),
   'admin.revoke': (id, p) => ({ t: 'req', id, op: 'admin.revoke', params: { name: str(p, 'name') } }),
   usage: id => ({ t: 'req', id, op: 'usage', params: {} }),
+  'memory.search': (id, p) => ({ t: 'req', id, op: 'memory.search', params: { query: searchQuery(p) } }),
 };
 
 /** Each op's successful response, from its id and raw result. */
@@ -230,6 +244,10 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   'admin.devices': (id, r) => ({ t: 'res', id, op: 'admin.devices', ok: true, result: { devices: list(obj(r, 'result'), 'devices', device) } }),
   'admin.revoke': id => ({ t: 'res', id, op: 'admin.revoke', ok: true, result: null }),
   usage: (id, r) => ({ t: 'res', id, op: 'usage', ok: true, result: { report: usageReport(obj(r, 'result').report) } }),
+  'memory.search': (id, r) => {
+    const o = obj(r, 'result');
+    return { t: 'res', id, op: 'memory.search', ok: true, result: { hits: list(o, 'hits', searchHit), total: int(o, 'total') } };
+  },
 };
 
 /** A string list item: an agent's name or a thinking level. */

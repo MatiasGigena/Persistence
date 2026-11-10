@@ -418,6 +418,7 @@ export class Hub implements PeerHub {
       },
       'memory.view': async () => ({ lines: await this.requireSession().memoryView() }),
       'memory.zoom': async ({ id, n }) => ({ text: await this.requireSession().zoom(id, n) }),
+      'memory.search': async ({ query }) => this.requireSession().search(query),
       models: async () => ({ models: await this.requireSession().models() }),
       'model.set': async ({ provider, id }) => { await this.requireSession().setModel(provider, id); return null; },
       'tools.set': ({ enabled, confirm }, connection) => this.setTools(connection, enabled, confirm),

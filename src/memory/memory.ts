@@ -10,6 +10,8 @@ import { appendJson, atomicWrite } from '../runtime/files.ts';
 import { NotFound } from '../protocol/errors.ts';
 import { cutBytes, errorMessage, isRecord } from '../protocol/util.ts';
 import { cut, parentOf, posEnd, posKey, posLabel, posStart, View } from './view.ts';
+import { SEARCH_LIMIT, searchLog } from './search.ts';
+import type { SearchResult } from './search.ts';
 import type { Pos } from './view.ts';
 
 const KIND_LIST = ['user', 'pi', 'tool', 'echo', 'work', 'note'] as const;
@@ -418,6 +420,12 @@ export class Memory {
     if (!Number.isSafeInteger(id) || !record) throw new NotFound(`No message ${id}.`);
     return formatDate(record.date);
   }
+
+  /**
+   * The user's search of the log as written (search.ts, ADR 0040): the newest `limit` messages that hold every word
+   * of `query`, and how many do in all. Throws a readable Error for a query without a word. Never a tool of Pi's.
+   */
+  search(query: string, limit = SEARCH_LIMIT): SearchResult { return searchLog(this.log, query, limit); }
 
   /**
    * The exchange right before message k, whole: the last user (or work) message and the reply that ends just before k,

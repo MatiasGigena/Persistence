@@ -134,6 +134,24 @@ export interface ViewLine {
   readonly text: string;
 }
 
+/** One message a search found (ADR 0040). */
+export interface SearchHit {
+  /** The message's id in the log: `zoom(id, 1)` opens it whole. */
+  readonly id: number;
+  /** Its memory kind: user, pi, tool, echo, work or note. */
+  readonly kind: string;
+  /** When it was logged, ISO 8601. */
+  readonly date: string;
+  /** One line of its text around the match, with … where it was cut. */
+  readonly snippet: string;
+}
+
+/** A search's matches, newest first and at most 50, and how many messages matched in all. */
+export interface SearchResult {
+  readonly hits: readonly SearchHit[];
+  readonly total: number;
+}
+
 /** What a conversation looks like to the UI: the root (Pi) or one agent. */
 export interface ChatFeed {
   /** The current items, oldest first. */
@@ -200,6 +218,13 @@ export interface UiSession {
    * Rejects with a readable message for an unknown line, or while the memory is not open.
    */
   zoom(id: number, n: number): Promise<string>;
+  /**
+   * Searches the log as written, for the user (Pi has no such tool): the messages that hold every word of `query`,
+   * whatever the case. A part in double quotes is one phrase, and `kind:user` (or pi, tool, echo, work, note) limits
+   * the kind. Rejects with Unavailable while the memory is not open, and with a readable message for a query
+   * without a word or with an unknown kind.
+   */
+  search(query: string): Promise<SearchResult>;
   /** Models to pick from, the current one included. */
   models(): Promise<readonly ModelChoice[]>;
   /**

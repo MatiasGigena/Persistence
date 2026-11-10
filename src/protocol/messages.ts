@@ -2,7 +2,7 @@
 // its clients (src/client/, src/web/).
 // docs/protocol.md is the prose spec; this file is its types and constants. Shared by Node and the browser, so it
 // holds plain types and constants only: no Node or DOM imports, and no runtime imports at all.
-import type { ArchiveTarget, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UsageReport, ViewLine } from './session.ts';
+import type { ArchiveTarget, ChatItem, ModelChoice, NoticeLevel, SearchResult, SessionStatus, UsageReport, ViewLine } from './session.ts';
 import type { ChatImage } from './images.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult, MachineTarget } from './machines.ts';
 
@@ -40,6 +40,8 @@ export const LIMITS = {
   connectMs: 10_000,
   /** Back in front (a phone woken up), a client pings at once and drops a link that does not answer within this. */
   wakeMs: 5_000,
+  /** Longest `memory.search` query. */
+  searchQuery: 500,
 } as const;
 
 /** Error codes of a failed `res`. A client treats a code it does not know as `failed`. */
@@ -174,6 +176,13 @@ export interface Ops {
   readonly 'admin.revoke': { readonly params: { readonly name: string }; readonly result: null };
   /** Tokens and catalog cost per model (ADR 0039): today, the last 7 days and all time, in the server's local days. */
   readonly usage: { readonly params: NoParams; readonly result: { readonly report: UsageReport } };
+  /**
+   * Searches the memory's log as written, for the user (ADR 0040): `query` is words that must all occur, whatever the
+   * case, with "a phrase" in double quotes and an optional `kind:user`. At most 50 hits, newest first, and the count
+   * of all matches. `bad_request` for a blank query or one over LIMITS.searchQuery, `failed` with a readable message
+   * for one without a word or with an unknown kind, `unavailable` while the memory is not open.
+   */
+  readonly 'memory.search': { readonly params: { readonly query: string }; readonly result: SearchResult };
 }
 export type Op = keyof Ops;
 export type Params<O extends Op> = Ops[O]['params'];
@@ -184,6 +193,7 @@ export const OPS: readonly Op[] = [
   'send', 'abort', 'stopAgents', 'agents.archive', 'agents.restore', 'feed.open', 'feed.close', 'feed.resync', 'memory.view', 'memory.zoom', 'models',
   'model.set', 'tools.set', 'thinking.levels', 'thinking.set', 'push.subscribe', 'push.unsubscribe', 'admin.backup', 'admin.pair', 'admin.devices',
   'admin.revoke', 'machine.register', 'machine.set', 'machine.list', 'schedule.cancel', 'usage',
+  'memory.search',
 ];
 /** Ops only socket peers may call; web peers get `forbidden`. */
 export const SOCKET_ONLY: ReadonlySet<Op> = new Set<Op>(['admin.backup', 'admin.pair', 'admin.devices', 'admin.revoke', 'machine.register', 'machine.set']);

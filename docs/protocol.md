@@ -204,6 +204,7 @@ item in Pi's feed whose `from` is `Schedule #n`.
 | `feed.resync` | `feed` | `null` | both | `not_found` |
 | `memory.view` | — | `{lines: ViewLine[]}` | both | |
 | `memory.zoom` | `id`, `n` (≥ 1) | `{text}` | both | `not_found`, `unavailable` |
+| `memory.search` | `query` (not blank, at most 500 characters) | `{hits: SearchHit[], total}` | both | `failed`, `unavailable` |
 | `models` | — | `{models: ModelChoice[]}` | both | |
 | `model.set` | `provider`, `id` | `null` | both | `failed` |
 | `tools.set` | `enabled`, `confirm?: 'enable-tools'` | `null` | both | `forbidden`, `failed` |
@@ -269,6 +270,14 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   come with the most tokens first, and a model that spent nothing in a period has no row. `since` is when the server
   began counting by day; spend before it is only in `all`, and a chat never sampled has no `since`. The server
   samples the spend before it answers, so the report is current.
+- **`memory.search`** is `UiSession.search`: the user's search of the memory's log as written
+  ([memory.md](memory.md#searching-the-log), ADR 0040). `query` is words that must all occur, whatever the case, with
+  `"a phrase"` in double quotes and an optional `kind:user` (or `pi`, `tool`, `echo`, `work`, `note`). `hits` are at
+  most 50 `SearchHit`s, newest first: `{id, kind, date, snippet}`, with `id` the message's (`memory.zoom` with
+  `n: 1` gives it whole), `date` its ISO 8601 time and `snippet` one line around the match; `total` counts every
+  match. A blank `query` or one over `LIMITS.searchQuery` (500 code units) is `bad_request`; one without a word, or
+  with an unknown kind, is `failed` with the reason; `unavailable` while the memory is not open. Pi cannot call it:
+  it is no tool. Added without a version change, so a server from before it answers `unknown_op`.
 - **`model.set`** is `UiSession.setModel`; `failed` carries the readable reason (unknown model, no credentials,
   or saved but not written as the default).
 - **`thinking.levels`** and **`thinking.set`** are `UiSession.thinkingLevels` and `setThinkingLevel`: the reasoning

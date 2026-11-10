@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { drawn, until } from '../fixtures/until.ts';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
-import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
+import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SearchResult, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
 import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui } from '../../src/ui/tui/app.ts';
 import { statusText } from '../../src/ui/text.ts';
 import type { TuiInfo } from '../../src/ui/tui/app.ts';
@@ -71,7 +71,13 @@ class FakeSession implements UiSession {
   usage(): Promise<UsageReport> { return this.report instanceof Error ? Promise.reject(this.report) : Promise.resolve(this.report); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
-  zoom(): Promise<string> { return Promise.resolve(''); }
+  zoom(id: number): Promise<string> { return Promise.resolve(`${id}+1|user: the whole message ${id}`); }
+  readonly searches: string[] = [];
+  search(query: string): Promise<SearchResult> {
+    this.searches.push(query);
+    if (query === 'kind:user') return Promise.reject(new Error('Search for at least one word.'));
+    return Promise.resolve({ hits: [{ id: 41, kind: 'user', date: new Date().toISOString(), snippet: `…about the ${query} then…` }], total: 1 });
+  }
   private readonly noticeListeners = new Set<(text: string, level: NoticeLevel) => void>();
   onNotice(listener: (text: string, level: NoticeLevel) => void): () => void {
     this.noticeListeners.add(listener);
@@ -530,7 +536,7 @@ test('/help is one column below 72 columns, and two from there', () => {
   for (const width of WIDTHS) {
     const lines = helpText(width).split('\n');
     fits(lines.slice(0, -1), Math.min(width, 72));
-    assert.ok(lines.some(line => (width < 72 ? /^\/stop +stop Pi \(esc\) · all · Name$/ : /^\/stop +stop Pi \(esc\) · all · Name +\/schedule +wake-ups · cancel N$/).test(line)), lines.join('\n'));
+    assert.ok(lines.some(line => (width < 72 ? /^\/stop +stop Pi \(esc\) · all · Name$/ : /^\/stop +stop Pi \(esc\) · all · Name +\/status +model, work, memory$/).test(line)), lines.join('\n'));
     const view = new ChatView(new FakeFeed(), theme);
     view.notice(helpText(width));
     fits(view.render(width), width);
@@ -669,6 +675,30 @@ test('/usage prints the report per model, and says when it fails', async () => {
   terminal.type('/usage', '\r');
   await until(() => /Usage failed: The server is busy\./.test(terminal.text()), 'the failure');
   assert.deepEqual(session.sent, [], 'none of it is sent to Pi');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('/find words opens the hits, Enter the message whole, and Esc goes back and closes; /find alone says how', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/find', '\r');
+  await until(() => /Search the log: \/find words, with "a phrase" in double quotes, and kind:user/.test(terminal.text()), 'the usage');
+  assert.deepEqual(session.searches, [], 'nothing is searched without words');
+  terminal.type('/find  "tide tables" Deploy', '\r');
+  await until(() => /1 match for "tide tables" Deploy/.test(terminal.text()), 'the hits');
+  assert.deepEqual(session.searches, ['"tide tables" Deploy'], 'the words go as typed');
+  assert.match(terminal.text(), /#41 · today \d\d:\d\d · user {2}…about the "tide tables" Deploy then…/);
+  terminal.type('\r');
+  await until(() => /user: the whole message 41/.test(terminal.text()), 'the message');
+  assert.match(terminal.text(), /Find › 41\+1/);
+  terminal.type('\x1b', '\x1b'); // back to the hits, then close: neither Esc reaches Pi
+  terminal.type('/find kind:user', '\r');
+  await until(() => /Search for at least one word\./.test(terminal.text()), 'the refusal');
+  terminal.type('\x1b');
+  terminal.type('after find', '\r');
+  assert.deepEqual(session.sent, ['after find'], 'the editor has focus back, and no command went to Pi');
+  assert.equal(session.aborts, 0);
   terminal.type('/exit', '\r');
   await done;
 });

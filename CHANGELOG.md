@@ -19,6 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tokens (input, output, cache read, cache written) and the catalog cost per model, today, over the last 7 days and
   all time, for Pi, its agents and the memory's compactions. Days are the host's local days, counted from the first
   launch with this version; earlier spend shows in "all time" only. New protocol op `usage`; `PROTOCOL` stays 4.
+- Searching the log (ADR 0040): `/find words` in the terminal UI and a "Search all messages" field in the web app's
+  Memory sheet list the messages that hold every word, newest first, each with its date, kind and a line around the
+  match; a hit opens the message whole. `"a phrase"` in double quotes matches as written and `kind:user` (or `pi`,
+  `tool`, `echo`, `work`, `note`) keeps one kind. It reads the log as written, not the summaries, and is for the
+  user only: Pi gets no search tool, since zoom stays the model's only way through its memory. New protocol op
+  `memory.search`, added without a version change.
 - Archiving agents (ADR 0034): the `/agents` panel, the web app's Agents sheet and `pi-durable serve agents
   --archive NAME | --archive-adhoc | --restore NAME` archive ad-hoc agents and restore them within the day. An
   archived agent is stopped, hidden and unreachable; a day later it is deleted as `delete_agent` does, its chat kept

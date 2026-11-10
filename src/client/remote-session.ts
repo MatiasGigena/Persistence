@@ -8,7 +8,7 @@ import type {
 } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
 import type {
-  ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, UsageReport, ViewLine,
+  ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SearchResult, SendOptions, SessionStatus, UiSession, UsageReport, ViewLine,
 } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
@@ -205,6 +205,8 @@ export class RemoteSession implements UiSession {
   async memoryView(): Promise<readonly ViewLine[]> { return (await this.request('memory.view', {})).lines; }
 
   async zoom(id: number, n: number): Promise<string> { return (await this.request('memory.zoom', { id, n })).text; }
+
+  search(query: string): Promise<SearchResult> { return this.request('memory.search', { query }); }
 
   async models(): Promise<readonly ModelChoice[]> { return (await this.request('models', {})).models; }
 

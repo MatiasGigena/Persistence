@@ -66,8 +66,8 @@ agents, and each agent is another conversation in the same database.
 - **Terminal UI** (`src/ui/tui/`): `app.ts` runs pi-tui in Pi's default full-screen
   (alternate screen) layout: the chat (`chat.ts`) scrolls above a one-line status
   (`footer.ts`) and the editor; `theme.ts` is its palette, and `panels/` holds the
-  `/agents`, `/mem`, `/model` and `/effort` overlays (`panels/model.ts` is the model picker, `panels/effort.ts` the
-  reasoning effort picker;
+  `/agents`, `/mem`, `/find`, `/model` and `/effort` overlays (`panels/model.ts` is the model picker, `panels/effort.ts` the
+  reasoning effort picker, `panels/find.ts` the user's search of the memory's log;
 `panels/frame.ts` also has the one-key confirmation `/tools on` and archiving in `/agents` ask). It knows the
 host only through the session contract, `src/protocol/session.ts`. The wording it shares with the web app (tool summaries, archive prompts,
 `/status`, zoom parsing) is in `src/ui/text.ts`, which both import.
@@ -297,10 +297,11 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/memory/prompt.ts` | The recipe's system prompt and the leaf and merge compaction tasks |
 | `src/memory/summarizer.ts` | Cheap compaction model choice and the pi-ai summarizer |
 | `src/memory/extension.ts` | The `uniichat` extension: `beforeRequest` view, logging hooks, `zoom` and `date` tools |
+| `src/memory/search.ts` | The user's full-text search of the log (`/find`, the web app's Memory sheet): query parsing, matches newest first, snippets; never a tool of Pi's (ADR 0040) |
 | `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates |
-| `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), schedule times and `/schedule`'s list, `usageText` (`/usage`), zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
+| `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), schedule times and `/schedule`'s list, `usageText` (`/usage`), zoom parsing, search hit labels and headers; no DOM, Node or pi-tui, served at `/ui/text.ts` |
 | `src/ui/tui/app.ts`, `chat.ts`, `footer.ts`, `theme.ts` | The terminal chat: pi-tui layout and editor, the chat blocks, the one-line status, the palette |
-| `src/ui/tui/panels/*` | The `/agents`, `/mem`, `/model` and `/effort` overlays and their shared frame, lists and confirmation box |
+| `src/ui/tui/panels/*` | The `/agents`, `/mem`, `/find`, `/model` and `/effort` overlays and their shared frame, lists and confirmation box |
 | `src/providers/claude-cli.ts` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
 | `src/providers/claude-cli-mcp.ts` | Stub stdio MCP server that lists Pi's tools to the CLI and runs none |
 | `src/providers/anthropic.ts` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
@@ -365,7 +366,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |
 | `src/web/store.ts` | Mirrors feeds with `applyOps`, status, notices, pending sends (resent with their requestId) |
 | `src/web/chat-view.ts`, `markdown.ts`, `format.ts`, `copy.ts` | Keyed DOM chat, sanitized Markdown, the web app's own text helpers (header status, pairing, load steps); copy buttons on turns and code blocks |
-| `src/web/panels/*` | Sheets: chat settings (model, effort, tools switch with its confirm dialog, notifications), agents, memory zoom, schedules, usage; `cache.ts` keeps their lists across openings (chat settings' warmed once connected) |
+| `src/web/panels/*` | Sheets: chat settings (model, effort, tools switch with its confirm dialog, notifications), agents, memory zoom and search, schedules, usage; `cache.ts` keeps their lists across openings (chat settings' warmed once connected) |
 | `src/web/push.ts`, `sw.ts` | Push subscribe on a tap; service worker: the shell as whole versioned sets, served stale while revalidating, with an offline page (ADR 0032), and the set in hand while the server answers 502–504 (a restart); push and click handlers |
 | `src/web/sw/shell.ts` | The service worker's shell decisions, loaded with `importScripts`: complete sets, the version-agreed fetch, pruning, which set answers a page load or file, the offline page; over small cache and fetch interfaces, so `test/web/sw.test.ts` runs them against fakes |
 | `src/server/transport-ws.ts` | `startWebListener`: HTTP on 127.0.0.1, `/api/me`, `/api/pair`, the app, and `/ws` WebSockets handed to the hub as `PeerLink`s |

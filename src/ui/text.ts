@@ -3,7 +3,7 @@
 // the browser at /ui/text.ts (ADR 0020). Rendering (color, width, markup) stays with each front end.
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
 import { isRecord } from '../protocol/util.ts';
-import type { ScheduleStatus, SessionStatus, UsageReport, UsageRow, ViewLine } from '../protocol/session.ts';
+import type { ScheduleStatus, SearchHit, SessionStatus, UsageReport, UsageRow, ViewLine } from '../protocol/session.ts';
 
 // Control characters other than newline and tab, and terminal escapes, never reach the summary.
 const CONTROL = /\u001b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f]/g;
@@ -209,6 +209,28 @@ export function usageText(report: UsageReport, now: number): string {
     const rows = report[key];
     return [`${label.padEnd(9)}${rows.length ? spend(usageSum(rows)) : 'nothing yet'}`, ...rows.map(row => `  ${row.model.padEnd(width)}  ${spend(row)}`)];
   }), usageNote(report, now)].join('\n');
+}
+
+/** How to search, for /find without words and a search that found nothing. */
+export const SEARCH_USAGE = 'Search the log: /find words, with "a phrase" in double quotes, and kind:user (or pi, tool, echo, work, note) for one kind.';
+
+/** Under a search that found nothing. */
+export const SEARCH_HINT = 'Try other words, "a phrase" in quotes, or kind:user.';
+
+/** A search hit's label: `#1234 · Thu 12 Nov 09:00 · user`, the time in the client's own zone, read against `now`. */
+export function hitLabel(hit: Pick<SearchHit, 'id' | 'kind' | 'date'>, now: number): string {
+  return `#${hit.id} · ${whenText(Date.parse(hit.date), now)} · ${hit.kind}`;
+}
+
+/**
+ * What heads a search's results: `12 matches for "deploy"`, `50 of 312 matches for "deploy" (newest first)` when only
+ * `shown` of them are listed, or `No message matches "deploy".`. A query with a quoted phrase shows as typed.
+ */
+export function searchHeader(query: string, shown: number, total: number): string {
+  const line = oneLine(query), asked = line.includes('"') ? line : `"${line}"`;
+  if (!total) return `No message matches ${asked}.`;
+  if (shown < total) return `${shown} of ${total} matches for ${asked} (newest first)`;
+  return `${total} ${total === 1 ? 'match' : 'matches'} for ${asked}`;
 }
 
 /** The full status block that /status prints, in the terminal and the web app. */

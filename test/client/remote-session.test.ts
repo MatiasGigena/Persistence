@@ -117,11 +117,16 @@ test('status and notices flow; tools on carries the confirmation, off does not',
 });
 
 test('requests map to ops, and failures reject with the server\'s readable message', async () => {
-  const { server, session } = await attach({ agents: { Bob: [] } }, { requestTimeoutMs: 100 });
+  const { server, session, requests } = await attach({ agents: { Bob: [] } }, { requestTimeoutMs: 100 });
   assert.deepEqual(await session.memoryView(), [{ id: 0, n: 1, text: 'hello' }, { id: 1, n: 1, text: 'world' }]);
   assert.equal(await session.zoom(1, 1), 'zoomed world');
   await assert.rejects(session.zoom(9, 9), (error: unknown) => error instanceof RequestError && error.code === 'not_found'
     && /No line 9\+9/.test(error.message));
+  assert.deepEqual(await session.search('WORLD'), { hits: [{ id: 1, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: 'world' }], total: 1 });
+  assert.deepEqual(await session.search('o'), { hits: [{ id: 1, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: 'world' },
+    { id: 0, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: 'hello' }], total: 2 });
+  await assert.rejects(session.search('  '), { code: 'bad_request' });
+  assert.deepEqual(requests('memory.search'), [{ query: 'WORLD' }, { query: 'o' }, { query: '  ' }]);
   assert.equal((await session.models()).length, 3);
   await session.setModel('faux', 'model-2');
   await until(() => session.status().model === 'faux/model-2', 'the model');

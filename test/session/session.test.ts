@@ -16,6 +16,7 @@ import type { Instance } from '../../src/runtime/runtime.ts';
 import { createUiSession } from '../../src/session/session.ts';
 import type { UiSessionHandle } from '../../src/session/session.ts';
 import type { ChatFeed, ChatItem } from '../../src/protocol/session.ts';
+import { Unavailable } from '../../src/protocol/errors.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 import type { OfflineModels } from '../fixtures/faux-model.ts';
 
@@ -269,6 +270,14 @@ describe('UI session over a real instance (faux model)', { concurrency: false, t
     assert.equal(await session.zoom(2, 1), '2+1|user: second');
     await assert.rejects(session.zoom(9, 1), /No line 9\+1/);
     await until(() => session.status().memory?.messages === 4, 'the memory status');
+    // The user's search reads the log as written, newest first.
+    const found = await session.search('SECOND');
+    assert.deepEqual(found, { hits: [{ id: 2, kind: 'user', date: found.hits[0]?.date, snippet: 'second' }], total: 1 });
+    assert.match(found.hits[0]?.date ?? '', /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    assert.deepEqual((await session.search('a kind:pi')).hits.map(hit => [hit.id, hit.snippet]), [[3, 'A2'], [1, 'A1']]);
+    assert.deepEqual(await session.search('"first second"'), { hits: [], total: 0 });
+    await assert.rejects(session.search('kind:pi'), { message: 'Search for at least one word.' });
+    await assert.rejects(session.search('a kind:robot'), /No kind "robot"/);
   });
 
   test('abort interrupts the streaming answer; it stays shown, no longer streaming', async (t) => {
@@ -583,5 +592,6 @@ describe('switching the model and the tools', { concurrency: false, timeout: 30_
     await assert.rejects(session.setTools(true), /inspection cannot change/);
     await assert.rejects(session.setThinkingLevel('off'), /inspection cannot change/);
     await assert.rejects(stat(settingsPath), { code: 'ENOENT' });
+    await assert.rejects(session.search('ok'), (error: unknown) => error instanceof Unavailable && /Memory is not open/.test(error.message));
   });
 });

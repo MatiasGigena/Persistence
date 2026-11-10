@@ -381,6 +381,16 @@ export class FakeServer {
         ok({ text: `zoomed ${line.text}` });
         return;
       }
+      case 'memory.search': {
+        // The view's lines stand in for the log: a line that holds the query is a hit, newest first.
+        const needle = request.params.query.toLowerCase();
+        if (!needle.trim() || needle.length > 500) { no('bad_request', 'The query must be 1 to 500 characters'); return; }
+        if (!this.status.memory) { no('unavailable', 'The memory is not open'); return; }
+        const hits = this.view.filter(line => line.text.toLowerCase().includes(needle)).reverse()
+          .map(line => ({ id: line.id, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: line.text }));
+        ok({ hits, total: hits.length });
+        return;
+      }
       case 'models': ok({ models: this.models }); return;
       case 'model.set': {
         const { provider, id } = request.params;

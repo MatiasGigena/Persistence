@@ -5,7 +5,7 @@ import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { PeerLink, PushNotifier } from '../../src/server/link.ts';
 import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
-import { NotFound } from '../../src/protocol/errors.ts';
+import { NotFound, Unavailable } from '../../src/protocol/errors.ts';
 
 export class FakeFeed implements ChatFeed {
   list: ChatItem[];
@@ -101,6 +101,13 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
     },
     memoryView: () => Promise.resolve(lines),
     zoom(id, n) { return id === 0 ? Promise.resolve(`zoom ${id}+${n}`) : Promise.reject(new NotFound(`No line ${id}+${n}.`)); },
+    // One hit of three with the memory open; a query of filters alone is refused as the core does.
+    search(query) {
+      calls.push(`search ${query}`);
+      if (!status.memory) return Promise.reject(new Unavailable('Memory is not open (inspection only).'));
+      if (/^kind:\S*$/.test(query)) return Promise.reject(new Error('Search for at least one word.'));
+      return Promise.resolve({ hits: [{ id: 0, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: `…say ${query} again…` }], total: 3 });
+    },
     models: () => Promise.resolve(models),
     setModel(provider, id) {
       return provider === 'faux' ? Promise.resolve() : Promise.reject(new Error(`Unknown model ${provider}/${id}`));
