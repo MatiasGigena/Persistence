@@ -740,7 +740,48 @@ The default path depends on `$HOME` and `XDG_STATE_HOME`; an explicit `--databas
 avoids those differences. Never let two hosts write the same database. The host is
 meant for a local filesystem, not shared or NFS multi-writer storage.
 
+## Checking an install (`pi-durable doctor`)
+
+`pi-durable doctor` checks what this machine needs to run the host, and says what is wrong and how to fix it
+(ADR 0041). Run it after an install or an update, on the server and on each workstation, and first when something
+does not work.
+
+```
+$ pi-durable doctor --local
+ok    Node.js: 22.23.1 (needs 22.19 or newer)
+ok    flock: on PATH (a local chat and serve lock the chat with it)
+ok    bubblewrap: bash runs in its sandbox
+skip  SSH keys: PI_DURABLE_SSH_KEYS is not set
+ok    settings.json: none at /home/me/.local/state/pi-durable/settings.json; the defaults apply
+ok    model openai-codex/gpt-6.1-sol (the default): credentials found
+warn  standing agents: Standing agent Reviewer cannot browse: Playwright's Chromium is not installed (…)
+      Fix: npx --no-install playwright-core install chromium in /home/me/pi-durable-instance, or set PI_DURABLE_CHROMIUM
+ok    autoreview: the skill at /home/me/.pi/agent/skills/autoreview, python3 and the Codex CLI found
+ok    chat: /home/me/.local/state/pi-durable/chat.sqlite, 192.0 KiB; no server answers on its socket
+ok    memory: 2 day files in /home/me/.local/state/pi-durable/chat.unii/main; view.json parses
+warn  backups: no backup in /home/me/.local/state/pi-durable/backups
+      Fix: pi-durable backup; for a daily one, the timer in contrib/systemd/ (docs/operations.md, Backups)
+skip  remote: --local bypasses a saved remote
+skip  server: no systemd user unit and no web settings here
+No problems, 2 warnings.
+```
+
+- `ok` is fine; `skip` does not apply on this machine, and says why; `warn` is what a launch would only warn about;
+  `FAIL` stops a launch or a tool. A `warn` or `FAIL` has a `Fix:` line. The exit status is 1 when a check FAILs.
+- It only reads: no lock, no database connection, no model request, nothing created. It is safe while the server
+  runs, and before anything is installed.
+- On a workstation with a saved remote it skips what the server needs (the model, the standing agents, backups) and
+  names the server; run `doctor` on the server for those, or `pi-durable doctor --local` for this machine's own chat.
+- `pi-durable doctor --remote-check` also tries the SSH login to the saved server, with the options the chat itself
+  uses (no prompt, known host keys only); it is the only check that leaves the machine.
+- `pi-durable doctor --json` prints the checks as a JSON array of `{id, level, subject, detail, fix?}`.
+- Under systemd the server reads `~/.config/pi-durable/env`; a shell does not, so the `server` check reads that file
+  itself, and the others see the shell's environment. A `PATH` set only in that file (for `claude`, say) is not the
+  doctor's.
+
 ## Troubleshooting
+
+Run [`pi-durable doctor`](#checking-an-install-pi-durable-doctor) first: it finds most of these.
 
 | Symptom | Cause and fix |
 |---|---|

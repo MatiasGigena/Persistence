@@ -128,14 +128,23 @@ function parseOrigin(value: string): string {
   return url.origin;
 }
 
-/** The bridge only locates the existing socket: no directories, model settings or credentials are loaded. */
-export async function resolveSocketPath(options: { readonly database?: string | undefined; readonly dataDir?: string | undefined },
-  env: NodeJS.ProcessEnv = process.env): Promise<string> {
+/** Where a launch's chat is, creating nothing: its data dir, and its database path with symlinks resolved when it exists. */
+export async function chatLocation(options: { readonly database?: string | undefined; readonly dataDir?: string | undefined },
+  env: NodeJS.ProcessEnv = process.env): Promise<{ dataDir: string; databasePath: string }> {
   const dataDir = dataDirOf(options.dataDir, env);
   let databasePath = resolve(options.database ?? join(dataDir, 'chat.sqlite'));
   try { databasePath = await realpath(databasePath); }
   catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
-  const socket = statePaths(databasePath, env).socket;
+  return { dataDir, databasePath };
+}
+
+/** Pi's own directory (its `auth.json` and skills): PI_CODING_AGENT_DIR, else `~/.pi/agent`. */
+export const piAgentDir = (env: NodeJS.ProcessEnv = process.env, home = homedir()): string => env.PI_CODING_AGENT_DIR || join(home, '.pi', 'agent');
+
+/** The bridge only locates the existing socket: no directories, model settings or credentials are loaded. */
+export async function resolveSocketPath(options: { readonly database?: string | undefined; readonly dataDir?: string | undefined },
+  env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const socket = statePaths((await chatLocation(options, env)).databasePath, env).socket;
   if (socket === undefined) throw new Error('This chat has no server socket: its path is too long and XDG_RUNTIME_DIR is unset');
   return socket;
 }

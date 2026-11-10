@@ -22,6 +22,7 @@ npm ci --ignore-scripts
 npm exec -- pi                 # in Pi: /login, then exit
 mkdir -p ~/.local/bin
 ln -s "$HOME/pi-durable-instance/bin/pi-durable" "$HOME/.local/bin/pi-durable"
+pi-durable doctor              # checks the install: what is missing, and its fix
 cd /path/to/project && pi-durable
 ```
 
@@ -48,6 +49,7 @@ pi-durable --status                         # print storage and pending work; no
 pi-durable --resume                         # finish interrupted work, wait for agents, print history
 pi-durable --request-id my-job-1 --print 'Summarize the design'
 pi-durable --model openai/gpt-4o-mini --thinking off
+pi-durable doctor                           # check what this machine needs; reads only (--remote-check, --json)
 pi-durable --help                           # every flag
 ```
 

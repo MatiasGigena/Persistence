@@ -1,7 +1,6 @@
 // The command line and the resolved launch configuration: parseArgs reads argv, resolveOptions applies the environment
 // and settings.json, and src/cli.ts hands the result (Config) to the host or the server as JSON.
 import { access, mkdir, realpath, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
@@ -10,7 +9,7 @@ import type { Roster } from '../agents/roster.ts';
 import { errorCode, isRecord } from '../protocol/util.ts';
 import { SDK } from '../runtime/sdk.ts';
 import { isThinkingLevel, THINKING } from '../runtime/thinking.ts';
-import { chromiumPath, dataDirOf, parsePort, serveSettings, statePaths } from './paths.ts';
+import { chromiumPath, dataDirOf, parsePort, piAgentDir, serveSettings, statePaths } from './paths.ts';
 import type { ServeSettings } from './paths.ts';
 import { DEFAULT_THINKING, parseModel, readRoster, readSettings } from './settings.ts';
 import type { Settings } from './settings.ts';
@@ -28,12 +27,14 @@ Usage: pi-durable [options] [prompt]
        pi-durable backup [--out DIR]             Online backup of the chat
        pi-durable connect SSH_HOST [options]     Save the default remote server
        pi-durable bridge                        Proxy the local server socket over stdio
+       pi-durable doctor [--json] [--remote-check] [--local]
+                                                 Check what this machine needs to run
 
 No prompt opens interactive chat. There is one chat, and it never ends:
 every launch, from any directory, reopens it. Tools run in the directory
 you launch from (or --cwd). When a server runs for the chat, interactive
 chat attaches to it instead (the server's model, tools and directory apply).
-A prompt whose first word is serve, backup, connect or bridge needs -p.
+A prompt whose first word is serve, backup, connect, bridge or doctor needs -p.
 
   -p, --print TEXT       Send one prompt, print its answer, exit
   --resume               Finish interrupted work, print transcript, exit
@@ -64,6 +65,8 @@ A prompt whose first word is serve, backup, connect or bridge needs -p.
   --archive-adhoc        serve agents: archive every ad-hoc main agent
   --restore NAME         serve agents: restore an archived agent
   --out DIR              backup: where to write it (default: backups/ beside the chat)
+  --json                 doctor: print the checks as a JSON array
+  --remote-check         doctor: also try the SSH login to the saved remote
   --auth-file PATH       Pi-compatible credentials (default: Pi auth.json)
   --request-id ID        Deduplicate a one-shot prompt, including after restart
   -h, --help             Show this help
@@ -112,12 +115,13 @@ Server environment:
 `;
 
 type Flag = 'help' | 'version' | 'allowTools' | 'noTools' | 'resume' | 'history' | 'status' | 'plain' | 'local' | 'attach'
-  | 'archiveAdhoc';
+  | 'archiveAdhoc' | 'json' | 'remoteCheck';
 type Value = 'database' | 'dataDir' | 'cwd' | 'modelSpec' | 'thinkingLevel' | 'authFile' | 'requestId' | 'prompt'
   | 'portSpec' | 'revoke' | 'out' | 'archive' | 'restore' | 'remote' | 'remoteBin' | 'remoteDataDir';
 const FLAGS = new Map<string, Flag>([['--help', 'help'], ['-h', 'help'], ['--version', 'version'], ['-v', 'version'],
   ['--allow-tools', 'allowTools'], ['--no-tools', 'noTools'], ['--resume', 'resume'], ['--history', 'history'], ['--status', 'status'], ['--plain', 'plain'],
-  ['--local', 'local'], ['--attach', 'attach'], ['--archive-adhoc', 'archiveAdhoc']]);
+  ['--local', 'local'], ['--attach', 'attach'], ['--archive-adhoc', 'archiveAdhoc'],
+  ['--json', 'json'], ['--remote-check', 'remoteCheck']]);
 const VALUES = new Map<string, Value>([
   ['--database', 'database'], ['--data-dir', 'dataDir'],
   ['--cwd', 'cwd'], ['--model', 'modelSpec'], ['--thinking', 'thinkingLevel'],
@@ -128,10 +132,11 @@ const VALUES = new Map<string, Value>([
 
 /**
  * What a launch does: `chat` is every launch without a subcommand (interactive chat, a prompt, --status, …);
- * `serve` runs the server; `serve-pair`, `serve-devices`, `serve-agents` and `backup` are its admin commands.
+ * `serve` runs the server; `serve-pair`, `serve-devices`, `serve-agents` and `backup` are its admin commands;
+ * `doctor` checks the machine and opens nothing.
  */
-export type Command = 'chat' | 'serve' | 'serve-pair' | 'serve-devices' | 'serve-agents' | 'backup' | 'connect' | 'bridge';
-const COMMANDS: readonly Command[] = ['chat', 'serve', 'serve-pair', 'serve-devices', 'serve-agents', 'backup', 'connect', 'bridge'];
+export type Command = 'chat' | 'serve' | 'serve-pair' | 'serve-devices' | 'serve-agents' | 'backup' | 'connect' | 'bridge' | 'doctor';
+const COMMANDS: readonly Command[] = ['chat', 'serve', 'serve-pair', 'serve-devices', 'serve-agents', 'backup', 'connect', 'bridge', 'doctor'];
 type Key = Flag | Value;
 const LOCATION: readonly Key[] = ['help', 'version', 'database', 'dataDir'];
 /** The options each command takes; any other is an error. A prompt is the `prompt` key. */
@@ -145,10 +150,11 @@ const ALLOWED: Readonly<Record<Command, ReadonlySet<Key>>> = {
   backup: new Set<Key>([...LOCATION, 'out']),
   connect: new Set<Key>(['help', 'version', 'remoteBin', 'remoteDataDir']),
   bridge: new Set<Key>(LOCATION),
+  doctor: new Set<Key>([...LOCATION, 'modelSpec', 'authFile', 'local', 'json', 'remoteCheck']),
 };
 const COMMAND_NAMES: Readonly<Record<Command, string>> = {
   chat: 'chat', serve: 'serve', 'serve-pair': 'serve pair', 'serve-devices': 'serve devices', 'serve-agents': 'serve agents',
-  backup: 'backup', connect: 'connect', bridge: 'bridge',
+  backup: 'backup', connect: 'connect', bridge: 'bridge', doctor: 'doctor',
 };
 /** Options of a subcommand that a chat launch refuses, each with the name of the first subcommand taking it. */
 const ONLY_FOR = new Map<Key, string>();
@@ -217,6 +223,10 @@ export interface Options {
   restore?: string;
   /** `backup --out DIR`. */
   out?: string;
+  /** `doctor --json`. */
+  json?: boolean;
+  /** `doctor --remote-check`. */
+  remoteCheck?: boolean;
 }
 
 /** Resolved launch configuration: what src/cli.ts passes to src/host/host.ts as JSON. */
@@ -250,6 +260,7 @@ function command(words: readonly string[]): { command: Command; rest: readonly s
   if (first === 'backup') return { command: 'backup', rest: words.slice(1) };
   if (first === 'connect') return { command: 'connect', rest: words.slice(1) };
   if (first === 'bridge') return { command: 'bridge', rest: words.slice(1) };
+  if (first === 'doctor') return { command: 'doctor', rest: words.slice(1) };
   if (first !== 'serve') return { command: 'chat', rest: words };
   if (second === 'pair') return { command: 'serve-pair', rest: words.slice(2) };
   if (second === 'devices') return { command: 'serve-devices', rest: words.slice(2) };
@@ -295,7 +306,7 @@ export function parseArgs(args: readonly string[]): Options {
   if (chosen !== 'chat') {
     const name = COMMAND_NAMES[chosen];
     if (prompts.length) {
-      throw new Error(`Unknown ${name} argument: ${prompts[0] ?? ''}${chosen === 'serve' ? ' (to send a prompt starting with "serve", use -p)' : ''}`);
+      throw new Error(`Unknown ${name} argument: ${prompts[0] ?? ''}${chosen === 'serve' || chosen === 'doctor' ? ` (to send a prompt starting with "${name}", use -p)` : ''}`);
     }
     for (const [key, spelling] of given) if (!ALLOWED[chosen].has(key)) throw new Error(`${spelling} does not apply to ${name}`);
   } else {
@@ -339,7 +350,7 @@ export function parseArgs(args: readonly string[]): Options {
  * The launch's model: --model, else PI_DURABLE_MODEL, else settings.json, else the built-in default. Its thinking
  * level: --thinking, else settings.json, else high.
  */
-async function resolveModel(options: Options, env: NodeJS.ProcessEnv, settingsPath: string):
+export async function resolveModel(options: Options, env: NodeJS.ProcessEnv, settingsPath: string):
   Promise<{ model: ModelRef; modelSource: ModelSource; thinkingLevel: ModelThinkingLevel }> {
   // With --model, a broken settings.json must not stop the launch: it then only loses the saved thinking level.
   const saved: Settings = options.model ? options.thinkingFlag ? {} : await readSettings(settingsPath).catch(() => ({}))
@@ -377,7 +388,7 @@ export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = 
     await mkdir(dirname(databasePath), { recursive: true, mode: 0o700 });
     databasePath = join(await realpath(dirname(databasePath)), basename(databasePath));
   }
-  const agentDir = env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent');
+  const agentDir = piAgentDir(env);
   const paths = statePaths(databasePath, env);
   const serve = options.command === 'serve' ? { serve: serveSettings(options, env) } : {};
   // Only work launches run agents and read the roster, which an invalid entry makes a launch error; inspection and the

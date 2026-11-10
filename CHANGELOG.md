@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `pi-durable doctor` (ADR 0041) checks what a machine needs to run the host and prints, per check, what is
+  wrong and its fix: Node, flock, bubblewrap, Pi's SSH keys, `settings.json`, the model's credentials, the standing
+  agents (Chromium, models, logins), autoreview's skill and Codex CLI, the chat's files, backups, the saved remote
+  and the server's web settings. It only reads and takes no lock, so it runs beside a server; `--remote-check` also
+  tries the SSH login, and `--json` prints the checks. Exit status 1 when a check fails. A prompt whose first word
+  is `doctor` now needs `-p`, as `serve` and `backup` do.
 - Scheduled wake-ups (ADR 0038): ask Pi to remind you of something or to check back later, once or on a cron
   expression. Pi's `schedule`, `list_schedules` and `cancel_schedule` tools leave it a message that arrives as a
   new turn, `[Schedule #n] …`, when it is due, also while no client is attached; a phone gets a push. Delivery is

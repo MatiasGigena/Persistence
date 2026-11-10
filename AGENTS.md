@@ -9,7 +9,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 
 - `src/cli.ts`: entry. Parses arguments, takes the flock, spawns the host.
 - `src/config/`: every mode's process configuration: `options.ts` (CLI parsing, `--help`, the resolved `Config`), `paths.ts` (`statePaths`, the socket, `serve`'s environment), `settings.json` and the standing-agent roster in `settings.ts`.
-- `src/host/host.ts`: the spawned process's entry and composition root: terminal chat, /commands, reply watcher, and the dispatch to `serve` and offline backup.
+- `src/host/`: `host.ts`, the spawned process's entry and composition root: terminal chat, /commands, reply watcher, and the dispatch to `serve` and offline backup; `doctor.ts` (`pi-durable doctor`: read-only checks of the machine).
 - `src/session/`: `session.ts` and `feed.ts`, the host's state as a `UiSession` (pi-durable's conversation views, memory and agents turned into chat items), shared by the terminal host and the server.
 - `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends), `console.ts` (stray console output as chat notices), `routing.ts` (machine routing).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension; `search.ts` is the user's log search (`/find`), never a tool of Pi's.
