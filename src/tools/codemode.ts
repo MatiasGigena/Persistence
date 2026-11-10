@@ -5,7 +5,7 @@ import type { Extension, ToolHookCall, ToolRegistration, Wrap } from '@earendil-
 import { CODEMODE_TOOL_NAME, createCodemodeExtension } from '@earendil-works/pi-durable/codemode';
 import { err, FileError } from '@earendil-works/pi-durable/env';
 import type { ExecutionEnv, Result } from '@earendil-works/pi-durable/env';
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import type { ConversationId } from '@earendil-works/pi-durable';
 import { CODEMODE_OPTIONS_PREFIX, parseCodemodeSource } from '@earendil-works/pi-codemode/source';
 import { isRecord } from '../protocol/util.ts';

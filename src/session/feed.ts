@@ -1,6 +1,8 @@
 // One conversation as a ChatFeed: pi-durable's conversation view (entries, `pi.live`, `pi.inbox`, `pi.agent`) folded
 // into ChatItems.
-import type { Context, JsonRepresentation, WatchCall, WatchHandle } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
+import type { WatchCall, WatchHandle } from '@earendil-works/chord/watch';
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
 import { AgentDoc, InboxDoc, LiveDoc } from '@earendil-works/pi-durable';
 import type {

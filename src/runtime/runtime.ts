@@ -2,8 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Context } from '@earendil-works/chord';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, Harness } from '@earendil-works/pi-durable';
 import type {

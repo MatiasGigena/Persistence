@@ -1,7 +1,7 @@
 // The agents' registry (AgentsDoc: every agent's role, parent and conversations, and the calls already answered), the
 // Anchor task that owns agents' conversations, and the lookups every part of src/agents/ shares. Persisted names here
 // (the doc and task kinds) are frozen.
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import { LiveDoc, ROOT_CONVERSATION_ID, defineDoc, defineTask } from '@earendil-works/pi-durable';
 import type { ConversationId, Cursor, DocumentReader, EntryId, Session, TaskId, TaskOptions, ToolExecutionResult, Tx } from '@earendil-works/pi-durable';
 import type { Roster, StandingAgent } from './roster.ts';

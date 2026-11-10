@@ -8,6 +8,7 @@ import type { ModelRef } from '@earendil-works/pi-durable';
 import { DEFAULT_ROSTER, isAgentName, isKit } from '../agents/roster.ts';
 import type { Roster } from '../agents/roster.ts';
 import { errorCode, isRecord } from '../protocol/util.ts';
+import { SDK } from '../runtime/sdk.ts';
 import { isThinkingLevel, THINKING } from '../runtime/thinking.ts';
 import { chromiumPath, dataDirOf, parsePort, serveSettings, statePaths } from './paths.ts';
 import type { ServeSettings } from './paths.ts';
@@ -16,7 +17,7 @@ import type { Settings } from './settings.ts';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_MODEL = 'openai-codex/gpt-6.1-sol';
-export const HELP = `pi-durable — terminal host for Pi Durable 1.5.0
+export const HELP = `pi-durable — terminal host for Pi Durable ${SDK}
 
 Usage: pi-durable [options] [prompt]
        pi-durable serve [--cwd DIR] [--port N]   Run the chat as a server

@@ -1,4 +1,4 @@
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import type { AssistantMessage, ImageContent, Message, TextContent, ToolCall, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 import { getCurrentSystemMessage, getCurrentSystemPrompt } from '@earendil-works/pi-ai/utils/transcript';
 import {

@@ -252,7 +252,7 @@ retried. See [ADR 0007](decisions/0007-cheap-compaction-model.md).
 | any other | the turn model itself |
 
 The turn model comes from `--model PROVIDER/ID`, else `PI_DURABLE_MODEL`, else the model last chosen with `/model`
-(`settings.json`), else `openai-codex/gpt-6.1-sol`. So the default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.5.0
+(`settings.json`), else `openai-codex/gpt-6.1-sol`. So the default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.5.2
 catalog it costs $0.10/$0.50 per million tokens (cache read $0.01), against $2/$10 for `gpt-6.1-sol`, with the same
 272k window.
 
@@ -434,7 +434,7 @@ Upstream's hosting, billing, devices, computer use, iOS app and chat imports are
    from the user's message (pasted in the web app, ADR 0031): those go to the model with the run's message only,
    also when a huge message goes as its tail.
 9. **No cache marks.** Upstream's `view` sends the view in blocks of `BLOCK = 4` lines and marks the last whole block
-   for Anthropic's cache. Through pi-ai 1.5.0 that is impossible: `TextContent` has no cache field, and its Anthropic
+   for Anthropic's cache. Through pi-ai 1.5.2 that is impossible: `TextContent` has no cache field, and its Anthropic
    adapter places the breakpoints itself (system prompt, last tool, last user block). So on the Anthropic API each
    run's first request writes its view anew, while OpenAI and Codex prefix caching reuse it: the prefix is stable
    (constant system prompt and tools, a view that grows at its end), with pi-durable's per-conversation `sessionId`.

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import { ConversationBusy, defineDoc, defineDocFamily, GenerationTask, hook, LiveDoc, ROOT_CONVERSATION_ID, section } from '@earendil-works/pi-durable';
 import type {
   ConversationId, Extension, Harness, JsonObject, Submission, ToolExecutionResult, ToolRegistration, Tx,

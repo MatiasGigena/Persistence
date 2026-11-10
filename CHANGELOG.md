@@ -178,7 +178,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Breaking for rollbacks:** the Pi packages are pinned at 1.5.0 (ADR 0035). The first launch migrates
+- The Pi packages are pinned at 1.5.2 (ADR 0037). It brings pi-durable's fix for a run that could hang while it
+  waited on parallel tool calls, fewer SQL statements per commit, and pi-ai 1.5.2's model catalog. Nothing
+  migrates: a 1.5.0 checkout still opens the chat. `--version`, `--help` and the unknown-model error name the
+  pinned release from one constant.
+- **Breaking for rollbacks:** the Pi packages were first moved to 1.5.0 (ADR 0035). The first launch migrates
   `chat.sqlite` to Durable SQLite schema 2, which 1.3.0 cannot open: back up first (`pi-durable backup`). The
   terminal UI is built from Pi's conversation view instead of the removed `watchEvents()`, and the tools' schemas
   come from `@earendil-works/pi-schema`, unchanged on the wire.

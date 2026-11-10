@@ -306,7 +306,7 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
   (also in `settings.json`), else `high`. `--status` shows the model
   and where it came from (`modelSource`). See [models.md](models.md#switching-models).
   `--thinking` takes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
-- Models must exist in the pinned Pi 1.5.0 catalog, or be one of the `claude-cli`
+- Models must exist in the pinned Pi 1.5.2 catalog, or be one of the `claude-cli`
   aliases. Personal model overrides
   (`models.json`) are deliberately not loaded, and the host fetches no model list.
 - The compaction model is chosen from the turn model's provider: `gpt-6-luna` for
@@ -596,7 +596,8 @@ Clients reconnect by themselves; the web app reloads when its files changed. If 
 
 An update that moves the Pi pins may migrate `chat.sqlite` when it next opens, and an older checkout cannot open a
 migrated chat. From Pi 1.3.0 to 1.5.0 the migration is one way (Durable SQLite schema 1 to 2; ADR 0035): run
-`pi-durable backup` before the update, and roll back by restoring that backup with the older checkout.
+`pi-durable backup` before the update, and roll back by restoring that backup with the older checkout. From 1.5.0 to
+1.5.2 nothing migrates (ADR 0037).
 
 ## Web access over Tailscale
 
@@ -717,7 +718,7 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `No Claude Code login for claude-cli` | Run `claude auth login` (or `claude`, then `/login`). More `claude-cli` symptoms are in [models.md](models.md#troubleshooting). |
 | `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key in `ANTHROPIC_API_KEY` after removing any stored Pi `anthropic` login. |
 | `Durable SQLite schema version 2 is newer than supported version 1` | A Pi 1.5.0 checkout already migrated this chat, and an older one cannot open it. Update the checkout, or restore a backup taken before the update. |
-| `Unknown model … in pinned Pi 1.5.0 catalog` | Pick a model from the Pi 1.5.0 catalog. Check `PI_DURABLE_MODEL` and `settings.json`. |
+| `Unknown model … in pinned Pi 1.5.2 catalog` | Pick a model from the Pi 1.5.2 catalog. Check `PI_DURABLE_MODEL` and `settings.json`. |
 | A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run. Pass `--model`, sign in again, or remove the `model` key from `settings.json`. Do not delete the file: it may also hold `thinkingLevel` and a custom `agents` roster. |
 | `…/settings.json is not valid JSON` | Fix the file; it may hold a custom `agents` roster, so delete it only if it has none. `--model` or `PI_DURABLE_MODEL` skip it meanwhile. |
 | "Standing agent … cannot browse: Playwright's Chromium is not installed" | Run `npx --no-install playwright-core install chromium` in the install dir, as the host's user, or set `PI_DURABLE_CHROMIUM`. |

@@ -1,6 +1,7 @@
 // The agent tools (spawn_agent, delegate, list_agents, send_message, last_message, stop_agent, delete_agent; persisted
 // names, frozen) and the guard hook that refuses what a role may not do before a call's intent is recorded.
-import type { Context, Draft } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
+import type { Draft } from '@earendil-works/chord/delta';
 import { ROOT_CONVERSATION_ID, ToolTask, defineTool, hook } from '@earendil-works/pi-durable';
 import { obj, str } from '@earendil-works/pi-schema';
 import type { ConversationId, ToolExecutionApi, ToolRegistration, Tx } from '@earendil-works/pi-durable';

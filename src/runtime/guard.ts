@@ -8,7 +8,7 @@ import { constants, existsSync } from 'node:fs';
 import { access, lstat, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import { err, ExecutionError, FileError } from '@earendil-works/pi-durable/env';
 import type { BinaryReader, DirReader, ExecutionError as ExecError, FileChange, FileWatcher, Result,
   ShellExecOptions, ShellExecResult, TextLineReader, WatchTarget } from '@earendil-works/pi-durable/env';

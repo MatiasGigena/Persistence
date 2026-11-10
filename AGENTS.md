@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Persistence is a terminal host for one never-ending Pi chat on
-`@earendil-works/pi-durable` 1.5.0. Pi's context is a UniiChat memory view, and Pi
+`@earendil-works/pi-durable` 1.5.2. Pi's context is a UniiChat memory view, and Pi
 can spawn background agents. The launcher is `bin/pi-durable`. The code is strict
 TypeScript that Node runs by type stripping: there is no build step.
 

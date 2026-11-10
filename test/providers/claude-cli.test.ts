@@ -8,7 +8,7 @@ import { createInterface } from 'node:readline';
 import { describe, test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import type { AssistantMessage, AssistantMessageEventStream, AuthCheck, AuthResult, Credential, Models, ThinkingLevel, Tool,
   ToolResultMessage, Usage, UserMessage } from '@earendil-works/pi-ai';

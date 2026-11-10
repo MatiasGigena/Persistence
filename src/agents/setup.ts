@@ -1,7 +1,8 @@
 // How an agent's stored choices derive from Pi's (model, tools, instructions), then from its roster entry for a
 // standing agent: deriveAgent, the standing agents' creation, and syncAgents on every work launch.
-import type { Context, Draft } from '@earendil-works/chord';
-import { copyJson } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
+import type { Draft } from '@earendil-works/chord/delta';
+import { copyJson } from '@earendil-works/chord/json';
 import { AgentDoc, ROOT_CONVERSATION_ID, configure } from '@earendil-works/pi-durable';
 import type { AgentChange, ConversationId, Extension, Session, ToolExecutionApi, ToolRegistration, Tx } from '@earendil-works/pi-durable';
 import type { Kit, Roster } from './roster.ts';

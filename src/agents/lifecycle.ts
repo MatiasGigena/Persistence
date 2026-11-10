@@ -1,6 +1,7 @@
 // Stopping, deleting, archiving, restoring and purging agents: the operations the session, the server and the agent
 // tools share. Each refuses an unknown name with NotFound.
-import type { Context, Draft } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
+import type { Draft } from '@earendil-works/chord/delta';
 import type { ConversationId, Session, Tx } from '@earendil-works/pi-durable';
 import type { Roster } from './roster.ts';
 import { rosterEntry } from './roster.ts';
