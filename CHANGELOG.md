@@ -36,6 +36,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   archived agent is stopped, hidden and unreachable; a day later it is deleted as `delete_agent` does, its chat kept
   for `zoom`. New protocol ops `agents.archive` and `agents.restore`; `PROTOCOL` is 4, since `status.agents` now
   lists archived agents too: update clients and server together.
+- Terminal: `/steer message` sends a message into Pi's running work, which reads it between its steps, as the web
+  app's steer does; a plain message sent while Pi works still waits for its answer.
 - Terminal: the bell rings when a run of 30 seconds or more ends, so a terminal in another tab or window says Pi
   is done (most terminals show it as a tab mark or a notification; `PI_DURABLE_BELL=off` silences it), and
   terminals that take program status reports (OSC 7501) are told when Pi works and when it is done.

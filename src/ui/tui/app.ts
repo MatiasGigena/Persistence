@@ -63,6 +63,7 @@ export const COMMANDS: readonly SlashCommand[] = [
   { name: 'schedule', description: "Pi's scheduled wake-ups; /schedule cancel N removes one", argumentHint: '[cancel N]' },
   { name: 'status', description: 'Model, work, memory and agents' },
   { name: 'usage', description: 'Tokens and cost per model: today, 7 days, all time' },
+  { name: 'steer', description: "Send a message into Pi's running work, between its steps", argumentHint: 'message' },
   { name: 'stop', description: 'Interrupt Pi, as Esc does; /stop all or /stop Name stops agents' },
   { name: 'exit', description: 'Close; unfinished work resumes next launch' },
 ];
@@ -75,7 +76,7 @@ const HELP_COMMANDS: readonly HelpPair[] = [
   ['/agents', 'agents and their chats'], ['/mem', 'the memory view'], ['/find', 'search the log'],
   ['/schedule', 'wake-ups · cancel N'], ['/usage', 'tokens per model'],
   ['/stop', 'stop Pi (esc) · all · Name'], ['/status', 'model, work, memory'],
-  ['/exit', 'close (ctrl+d when empty)'],
+  ['/exit', 'close (ctrl+d when empty)'], ['/steer', 'into the running work'],
 ];
 const HELP_KEYS: readonly HelpPair[] = [
   ['enter', 'send'], ['alt+enter', 'newline (shift+enter)'],
@@ -423,11 +424,17 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (query) panel((ui, chatSession, panelTheme) => openFindPanel(ui, chatSession, panelTheme, query));
     else show(SEARCH_USAGE);
   };
+  /** `/steer text`: a busy Pi reads it between its steps instead of after its answer; an idle Pi just gets the message. */
+  const steer = (text: string): void => {
+    if (!text) { show('Usage: /steer message. Pi reads it between its steps; a plain message waits for its answer.', 'warn'); return; }
+    session.send(text, { steer: true }).catch((error: unknown) => show(`Not sent: ${errorMessage(error)} (↑ brings the message back)`, 'error'));
+  };
   const command = (line: string): void => {
     const name = line.slice(1).split(/\s/, 1)[0] ?? '';
     const arg = line.slice(1 + name.length).trim();
     if (name === 'help') show(helpText(terminal.columns, attached !== undefined));
     else if (name === 'stop') { if (!arg) idleStop(); stop(arg); }
+    else if (name === 'steer') steer(arg);
     else if (name === 'model') model(arg);
     else if (name === 'effort' || name === 'thinking') effort(arg.toLowerCase());
     else if (name === 'tools') tools(arg.toLowerCase());

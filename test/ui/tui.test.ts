@@ -50,7 +50,11 @@ class FakeSession implements UiSession {
     this.current = { ...this.current, ...change };
     for (const listener of this.listeners) listener();
   }
-  send(text: string): Promise<void> { this.sent.push(text); return Promise.resolve(); }
+  readonly steered: string[] = [];
+  send(text: string, options: { readonly steer?: boolean } = {}): Promise<void> {
+    (options.steer ? this.steered : this.sent).push(text);
+    return Promise.resolve();
+  }
   abort(): Promise<void> { this.aborts++; return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
   stopAgents(name?: string): Promise<readonly string[]> {
@@ -699,6 +703,19 @@ test('/find words opens the hits, Enter the message whole, and Esc goes back and
   terminal.type('after find', '\r');
   assert.deepEqual(session.sent, ['after find'], 'the editor has focus back, and no command went to Pi');
   assert.equal(session.aborts, 0);
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('/steer sends its message as a steer; alone it says how', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/steer use pnpm, not npm', '\r');
+  terminal.type('/steer', '\r');
+  await until(() => /Usage: \/steer message\./.test(terminal.text()), 'the usage');
+  terminal.type('a plain message', '\r');
+  assert.deepEqual(session.steered, ['use pnpm, not npm']);
+  assert.deepEqual(session.sent, ['a plain message']);
   terminal.type('/exit', '\r');
   await done;
 });
