@@ -194,6 +194,7 @@ export async function createUiSession(
       await cancelSchedule(harness, context, id);
       await agentsRead();
     },
+    usage: () => instance.usage(),
     async agentChat(name) {
       // Archived agents too: their conversation stays readable until it is deleted.
       const found = (await listAgents(harness, context, { includeArchived: true })).find(agent => agent.name.toLowerCase() === name.toLowerCase());

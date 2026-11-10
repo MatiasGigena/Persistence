@@ -3,7 +3,7 @@
 // the browser at /ui/text.ts (ADR 0020). Rendering (color, width, markup) stays with each front end.
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
 import { isRecord } from '../protocol/util.ts';
-import type { ScheduleStatus, SessionStatus, ViewLine } from '../protocol/session.ts';
+import type { ScheduleStatus, SessionStatus, UsageReport, UsageRow, ViewLine } from '../protocol/session.ts';
 
 // Control characters other than newline and tab, and terminal escapes, never reach the summary.
 const CONTROL = /\u001b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f]/g;
@@ -152,6 +152,63 @@ export function schedulesText(schedules: readonly ScheduleStatus[], now: number)
   if (!schedules.length) return 'No schedules. Ask Pi to remind you of something, or to check back on it later.';
   return [...schedules.map(each => `#${each.id} · ${scheduleWhen(each, now)} · ${each.text}`),
     '/schedule cancel N cancels one; ask Pi for a new one.'].join('\n');
+}
+
+const TOKEN_UNITS = ['k', 'M', 'B', 'T'];
+
+/** A token count in at most three digits and a unit: 999, 1.2k, 80.4k, 900k, 1.2M, 3.4B. */
+export function tokenCount(count: number): string {
+  let value = Math.round(count), unit = -1;
+  const shown = (): number => value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  while (shown() >= 1000 && unit < TOKEN_UNITS.length - 1) { value /= 1000; unit++; }
+  return `${shown()}${TOKEN_UNITS[unit] ?? ''}`;
+}
+
+/**
+ * A cost in US dollars, to the cent: "$4.21"; "<$0.01" for less than half a cent; '' for none, which is what a
+ * provider that prices nothing reports (claude-cli, on a plan).
+ */
+export const costText = (cost: number): string => cost <= 0 ? '' : cost < 0.005 ? '<$0.01' : `$${cost.toFixed(2)}`;
+
+/** A usage row without its model: a period's sum is one. */
+export type UsageCounts = Omit<UsageRow, 'model'>;
+
+/** The periods of a usage report, in the order shown, with their labels. */
+export const USAGE_PERIODS: readonly (readonly [key: 'today' | 'week' | 'all', label: string])[] = [
+  ['today', 'today'], ['week', '7 days'], ['all', 'all time'],
+];
+
+/** The sum of a period's rows. */
+export function usageSum(rows: readonly UsageCounts[]): UsageCounts {
+  return rows.reduce<UsageCounts>((sum, row) => ({
+    input: sum.input + row.input, output: sum.output + row.output, cacheRead: sum.cacheRead + row.cacheRead,
+    cacheWrite: sum.cacheWrite + row.cacheWrite, cost: sum.cost + row.cost,
+  }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 });
+}
+
+/** A row's tokens: "in 1.2M · out 80.4k · cache 3.4M read, 210k written"; the cache part names only what was used. */
+export function usageTokens(row: UsageCounts): string {
+  const cache = [row.cacheRead ? `${tokenCount(row.cacheRead)} read` : '', row.cacheWrite ? `${tokenCount(row.cacheWrite)} written` : ''].filter(Boolean);
+  return [`in ${tokenCount(row.input)}`, `out ${tokenCount(row.output)}`, ...cache.length ? [`cache ${cache.join(', ')}`] : []].join(' · ');
+}
+
+/** What a usage report ends with: what its costs are, and since when its days are counted (in the client's zone). */
+export function usageNote(report: Pick<UsageReport, 'since'>, now: number): string {
+  return 'Costs are catalog prices; on a subscription plan they are not what you pay.'
+    + (report.since === undefined ? '' : ` Daily counting began ${whenText(report.since, now)}.`);
+}
+
+/**
+ * What /usage prints: per period its sum, then one indented line per model, the most tokens first, each with its cost
+ * when it has one; "nothing yet" for a period without spend; then `usageNote`.
+ */
+export function usageText(report: UsageReport, now: number): string {
+  const width = Math.max(0, ...USAGE_PERIODS.flatMap(([key]) => report[key].map(row => row.model.length)));
+  const spend = (row: UsageCounts): string => [usageTokens(row), costText(row.cost)].filter(Boolean).join(' · ');
+  return [...USAGE_PERIODS.flatMap(([key, label]) => {
+    const rows = report[key];
+    return [`${label.padEnd(9)}${rows.length ? spend(usageSum(rows)) : 'nothing yet'}`, ...rows.map(row => `  ${row.model.padEnd(width)}  ${spend(row)}`)];
+  }), usageNote(report, now)].join('\n');
 }
 
 /** The full status block that /status prints, in the terminal and the web app. */

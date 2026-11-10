@@ -48,6 +48,32 @@ export interface ScheduleStatus {
   readonly cron?: string;
 }
 
+/** One model's spend over a period (ADR 0039): tokens by kind, and their cost in US dollars at catalog prices. */
+export interface UsageRow {
+  /** `provider/model`. */
+  readonly model: string;
+  /** Input tokens outside the cache: neither read from it nor written to it. */
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly cost: number;
+}
+
+/**
+ * What Pi, its agents and the memory's compactions spent, per model: rows with the most tokens first, models that
+ * spent nothing left out. Days are the host's local days.
+ */
+export interface UsageReport {
+  readonly today: readonly UsageRow[];
+  /** The last 7 local days, today included. */
+  readonly week: readonly UsageRow[];
+  /** All time. */
+  readonly all: readonly UsageRow[];
+  /** When daily counting began (ms since the epoch); spend before it is only in `all`. Absent before the first sample. */
+  readonly since?: number;
+}
+
 /** What to archive: one agent by name, or every ad-hoc main agent (not the standing ones). */
 export type ArchiveTarget = { readonly name: string } | { readonly adhoc: true };
 
@@ -163,6 +189,8 @@ export interface UiSession {
   restoreAgent(name: string): Promise<readonly string[]>;
   /** Cancels schedule `id`, so it never fires again. Rejects with NotFound for an unknown id. */
   cancelSchedule(id: number): Promise<void>;
+  /** Tokens and catalog cost per model: today, the last 7 days, and all time. */
+  usage(): Promise<UsageReport>;
   /** Opens one agent's conversation as a live feed, or undefined for an unknown name. */
   agentChat(name: string): Promise<ChatFeed | undefined>;
   /** The memory view, oldest first, as Pi sees it; empty while the memory is not open. */

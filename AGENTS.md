@@ -15,6 +15,7 @@ TypeScript that Node runs by type stripping: there is no build step.
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
 - `src/agents/`: `index.ts` builds the `agents` extension and is the package's API; `registry.ts` (the AgentsDoc registry, the Anchor task, shared lookups), `setup.ts` (agents derived from Pi and the roster, `syncAgents`), `delivery.ts` (the Deliver task), `lifecycle.ts` (stop, delete, archive, restore, purge), `transcript.ts`, `prompts.ts`, `tools.ts` (the agent tools and their guard); `roster.ts`: the standing agents and kit names; `entries.ts`: the input entry kinds and their decoder, and `text`/`assistantText` (a message's text).
 - `src/schedule/`: Pi's scheduled wake-ups: `index.ts` (the `schedule` extension: tools, the `schedule.wake` task, the registry), `cron.ts`, `entries.ts` (the wake-up entry and its decoder).
+- `src/usage/index.ts`: the usage report (`/usage`, ADR 0039): pi-durable's spend totals sampled into daily buckets per model.
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and
   `web-fetch.ts` (`web_fetch`), `autoreview.ts` (the Reviewer's installed skill helper, fixed P0–P2, through guarded/routed execution), `show-image.ts`, and `codemode.ts` (scripts that call the coding tools, ADR 0033).
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.

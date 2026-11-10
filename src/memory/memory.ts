@@ -4,7 +4,7 @@ import type { Tool } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
 import { leafTask, mergeTask, PLACEHOLDER, PROMPT, tooLong } from './prompt.ts';
 import { CompactionRefused, createPiAiSummarizer, defaultCompactionModel } from './summarizer.ts';
-import type { CompactionMessage, Reasoning, Summarizer, SummarizerModels } from './summarizer.ts';
+import type { CompactionMessage, PiAiSummarizerOptions, Reasoning, Summarizer, SummarizerModels } from './summarizer.ts';
 import { bytes, CAP, cleanLine, clip, cutLine, flat, formatDate, hash, localDay, NODE, split } from './util.ts';
 import { appendJson, atomicWrite } from '../runtime/files.ts';
 import { NotFound } from '../protocol/errors.ts';
@@ -52,6 +52,8 @@ export interface MemoryOptions {
   view?: Budget;
   compactionView?: Budget;
   warn?: (message: string) => void;
+  /** The default summarizer's spend, per reply (`PiAiSummarizerOptions.onUsage`); unused with `summarize`. */
+  onUsage?: PiAiSummarizerOptions['onUsage'];
 }
 
 export const VIEW: Budget = { hi: 128_000, lo: 64_000 };
@@ -174,7 +176,7 @@ export class Memory {
   constructor(dir: string, {
     summarize, models, model, compactionModel, reasoning, maxTokens, tooLongRetries = 1,
     jobs = JOBS, lead = LEAD, retryMs = 10_000, view = VIEW, compactionView = COMPACTION_VIEW,
-    warn = message => console.error(message),
+    warn = message => console.error(message), onUsage,
   }: MemoryOptions = {}) {
     this.dir = dir;
     this.warn = warn;
@@ -183,7 +185,7 @@ export class Memory {
     this.retryMs = retryMs;
     this.tooLongRetries = tooLongRetries;
     this.summarize = summarize ?? (models
-      ? createPiAiSummarizer({ models, model: compactionModel ?? defaultCompactionModel(model, models), reasoning, maxTokens })
+      ? createPiAiSummarizer({ models, model: compactionModel ?? defaultCompactionModel(model, models), reasoning, maxTokens, onUsage })
       : async () => { throw new Error('unii: no summarizer configured (pass summarize or models)'); });
     const sizeOf = (p: Pos): number => this.lineSize(p), built = (p: Pos): boolean => this.tree.has(posKey(p));
     this.mainView = new View({ ...view, sizeOf, built });

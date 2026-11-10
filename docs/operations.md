@@ -528,6 +528,7 @@ PI_DURABLE_ALLOW_LOGIN=me@github
 # TZ=America/Argentina/Buenos_Aires  # the zone schedules and the times Pi sees are in; default: the system's
 # PI_DURABLE_DATA_DIR=/home/me/.local/state/pi-durable
 # PI_DURABLE_CHROMIUM=/opt/google/chrome/chrome  # the browser tools' Chromium, not a snap; default: Playwright's, in ~/.cache/ms-playwright
+# TZ=America/Argentina/Buenos_Aires  # the host's time zone, so the days /usage counts by; default: the system's
 ```
 
 A malformed value stops the server at start with a message naming the variable (see the journal).
@@ -572,6 +573,21 @@ pi-durable serve agents --restore Helper  # bring it back within the day (its st
   conversation stays in `chat.sqlite`, and `zoom("Helper")` still reads it: the space is not reclaimed.
 - The standing agents (Coder, Reviewer, Researcher) cannot be archived; remove one from the roster first.
 - Every archive and restore is shown to every client and written to the journal, naming who did it.
+
+### Usage
+
+`/usage` in the terminal UI, and Usage under Chat settings in the web app, show what the chat spent per model: input,
+output, cache read and cache written tokens, today, over the last 7 days and all time (ADR 0039). Pi, every agent
+and the memory's compactions are counted. A local launch has `/usage` too.
+
+- Costs are the model catalog's prices. On a subscription plan they are not what you pay; read the tokens.
+  `claude-cli` models report no cost, so theirs is left out.
+- Days are counted from the first launch with this version. What the chat spent before shows in "all time" only, and
+  the report's last line says when counting began.
+- A day is the host's local day. A server under systemd runs in the system's zone: set `TZ` in the
+  [environment file](#the-environment-file) (`TZ=America/Argentina/Buenos_Aires`) to count by your own.
+- The host samples the spend every five minutes and for each report, so spend made a few minutes before midnight may
+  count for the next day. 62 days are kept.
 
 ### Logs
 

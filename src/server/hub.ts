@@ -389,6 +389,7 @@ export class Hub implements PeerHub {
       stopAgents: async ({ name }) => ({ names: await this.requireSession().stopAgents(name) }),
       'agents.archive': (target, connection) => this.archive(connection, { archive: target }),
       'agents.restore': ({ name }, connection) => this.archive(connection, { restore: name }),
+      usage: async () => ({ report: await this.requireSession().usage() }),
       'schedule.cancel': async ({ id }, connection) => {
         await this.requireSession().cancelSchedule(id);
         const { link } = connection;

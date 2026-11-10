@@ -211,7 +211,7 @@ Details: [schedules.md](schedules.md).
 
 | Store | Holds | Written by | Durability |
 |---|---|---|---|
-| `chat.sqlite` (with `-wal`, `-shm`) | every conversation (Pi and agents), entries, tasks (sleeping schedules among them), submissions, docs such as the agent registry, the schedule registry and each conversation's agent config | the Harness | WAL, `synchronous = FULL` |
+| `chat.sqlite` (with `-wal`, `-shm`) | every conversation (Pi and agents), entries, tasks (sleeping schedules among them), submissions, docs such as the agent registry, the schedule registry, the daily usage buckets (`host.usage`, ADR 0039) and each conversation's agent config | the Harness | WAL, `synchronous = FULL` |
 | `chat.unii/main/YYYY-MM-DD.jsonl` | the memory log: one record `{ i, kind, text, size, date, src? }` per message | `Memory.append` | appended and fsynced per line |
 | `chat.unii/tree/YYYY-MM-DD.jsonl` | tree nodes `{ l, i, text }` | the compactor | appended and fsynced per node |
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
@@ -282,7 +282,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
 | `src/session/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
 | `src/session/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
-| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`, `autoreview`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers and Pi's SSH agent included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read`, `coding` or `autoreview`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
+| `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`, `autoreview`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `usage` (the usage report and its sampling, ADR 0039), `close` (browsers and Pi's SSH agent included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read`, `coding` or `autoreview`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/ssh-agent.ts` | `startSshAgent`: Pi's own `ssh-agent` with `PI_DURABLE_SSH_KEYS` only, bash's `SSH_AUTH_SOCK` (ADR 0030); started by `openInstance` and by an SSH connector |
 | `src/runtime/recovery.ts` | `resumeInstance` (pending tasks and queued input), `settleAgents` (wait until agents are idle) |
@@ -298,7 +298,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/memory/summarizer.ts` | Cheap compaction model choice and the pi-ai summarizer |
 | `src/memory/extension.ts` | The `uniichat` extension: `beforeRequest` view, logging hooks, `zoom` and `date` tools |
 | `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates |
-| `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), schedule times and `/schedule`'s list, zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
+| `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), schedule times and `/schedule`'s list, `usageText` (`/usage`), zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
 | `src/ui/tui/app.ts`, `chat.ts`, `footer.ts`, `theme.ts` | The terminal chat: pi-tui layout and editor, the chat blocks, the one-line status, the palette |
 | `src/ui/tui/panels/*` | The `/agents`, `/mem`, `/model` and `/effort` overlays and their shared frame, lists and confirmation box |
 | `src/providers/claude-cli.ts` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
@@ -322,6 +322,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/schedule/index.ts` | The `schedule` extension (ADR 0038): the `schedule.registry` doc, the `schedule.wake` task (sleep, deliver once, repeat), Pi's three tools; `firstFire`, `fireText`, `listSchedules`, `cancelSchedule` |
 | `src/schedule/cron.ts` | `parseCron`, `nextAfter`, `shortestGap`: five-field cron expressions in the host's local time |
 | `src/schedule/entries.ts` | `FIRE_KIND` and `scheduleFireOf`: the wake-up entry and the one decoder of its data, read by the memory, the feed and the terminal host |
+| `src/usage/index.ts` | The usage report (ADR 0039): the `host.usage` document of daily buckets, `applySample` and `usageReport`, and `createUsageTracker` (compaction spend, sampling, the report) |
 | `src/runtime/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution; `runTarget` and `pinRequest` for the inputs the host itself schedules |
 | `src/protocol/machines.ts` | Machine targets, registrations, tool calls/results/cancels and JSON narrowing shared by server and connector |
 | `src/protocol/messages.ts` | Wire protocol v4: every message, the op table (`Ops`), item ops, error and close codes, limits |
@@ -364,7 +365,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |
 | `src/web/store.ts` | Mirrors feeds with `applyOps`, status, notices, pending sends (resent with their requestId) |
 | `src/web/chat-view.ts`, `markdown.ts`, `format.ts`, `copy.ts` | Keyed DOM chat, sanitized Markdown, the web app's own text helpers (header status, pairing, load steps); copy buttons on turns and code blocks |
-| `src/web/panels/*` | Sheets: chat settings (model, effort, tools switch with its confirm dialog, notifications), agents, memory zoom, schedules; `cache.ts` keeps their lists across openings (chat settings' warmed once connected) |
+| `src/web/panels/*` | Sheets: chat settings (model, effort, tools switch with its confirm dialog, notifications), agents, memory zoom, schedules, usage; `cache.ts` keeps their lists across openings (chat settings' warmed once connected) |
 | `src/web/push.ts`, `sw.ts` | Push subscribe on a tap; service worker: the shell as whole versioned sets, served stale while revalidating, with an offline page (ADR 0032), and the set in hand while the server answers 502–504 (a restart); push and click handlers |
 | `src/web/sw/shell.ts` | The service worker's shell decisions, loaded with `importScripts`: complete sets, the version-agreed fetch, pruning, which set answers a page load or file, the offline page; over small cache and fetch interfaces, so `test/web/sw.test.ts` runs them against fakes |
 | `src/server/transport-ws.ts` | `startWebListener`: HTTP on 127.0.0.1, `/api/me`, `/api/pair`, the app, and `/ws` WebSockets handed to the hub as `PeerLink`s |

@@ -42,6 +42,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0036](0036-shared-code-homes.md) | One home for code that several layers share (amends 0020) |
 | [0037](0037-pi-1-5-2.md) | Pi 1.5.2: Chord's foundations from their subpaths, one `SDK` constant, no migration |
 | [0038](0038-scheduled-wake-ups.md) | Scheduled wake-ups: Pi leaves itself a message for later, once or on a cron (extends 0005, 0006) |
+| [0039](0039-usage-report.md) | A usage report: tokens per model today, over 7 days and all time, sampled into daily buckets |
 | [0042](0042-routed-sends-join-their-run.md) | A routed send to a busy Pi queues or steers when its destination is the run's own (amends 0028) |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.

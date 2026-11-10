@@ -76,7 +76,7 @@ anthropic/... models with an API key in ANTHROPIC_API_KEY (never a subscription
 login). See docs/models.md.
 
 Chat commands: /help, /model, /effort, /tools, /agents, /mem, /schedule, /status,
-/stop, /exit
+/usage, /stop, /exit
 (--plain: /help, /history, /agents, /status, /exit). Ctrl+D or /exit closes the host, and
 so does Ctrl+C (twice in the terminal UI); unfinished work resumes next launch.
 Attached, they detach and the server keeps working.

@@ -20,6 +20,7 @@ import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
 import { createScheduleExtension, listSchedules, schedulesLine } from '../schedule/index.ts';
+import { createUsageTracker, SAMPLE_MS } from '../usage/index.ts';
 import { createAutoreviewExtension } from '../tools/autoreview.ts';
 import { createBrowserExtension } from '../tools/browser.ts';
 import { createShowImageExtension } from '../tools/show-image.ts';
@@ -33,7 +34,7 @@ import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { CredentialStatus, CatalogModels } from './models.ts';
 import { createMachineRouting } from './routing.ts';
 import type { MachineRouting, RoutingDispatcher } from './routing.ts';
-import type { SendOptions } from '../protocol/session.ts';
+import type { SendOptions, UsageReport } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import { userInput } from './input.ts';
 import { errorMessage, isRecord } from '../protocol/util.ts';
@@ -100,6 +101,8 @@ export interface InstanceOptions {
   readonly clock?: () => number;
   /** How often a work launch sweeps archived agents after its launch sweep; default an hour. Tests shorten it. */
   readonly sweepMs?: number;
+  /** How often a work launch samples the spend into its day (ADR 0039); default five minutes. Tests shorten it. */
+  readonly usageSampleMs?: number;
 }
 
 /** The opened root; `memory` is undefined when inspecting. */
@@ -135,7 +138,12 @@ export interface Instance {
    * no commit lands during it and, since it is synchronous, no memory write either. For online backups (ADR 0022).
    */
   exclusive<T>(step: (database: DatabaseSync) => T): Promise<T>;
-  /** Close the Harness, then every browser the `browser` kit launched, then Pi's SSH agent, then the memory. */
+  /**
+   * Tokens and catalog cost per model: today, the last 7 days, and all time (ADR 0039). A work launch samples first;
+   * an inspection reads what is stored and writes nothing.
+   */
+  usage(): Promise<UsageReport>;
+  /** Sample the spend, close the Harness, then every browser the `browser` kit launched, then Pi's SSH agent, then the memory. */
   close(): Promise<void>;
 }
 
@@ -356,15 +364,18 @@ export async function openInstance({
   codemodeTimeoutMs,
   clock = Date.now,
   sweepMs = SWEEP_MS,
+  usageSampleMs = SAMPLE_MS,
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Started even with the tools off: /tools on needs no restart. Inspection runs no tools.
   const fence = protection === 'unguarded' ? undefined : protection;
   const sshAgent = fence && configureAgent ? await startSshAgent(sshKeys, message => onWarning?.(message)) : undefined;
   const guarded = fence && sshAgent ? { ...fence, sshAgent: sshAgent.socket } : fence;
-  // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
-  const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models) }) : undefined;
   let opened: Harness | undefined;
+  // The spend per day (ADR 0039). Compactions call their model outside pi-durable, so the memory reports theirs here.
+  const usage = createUsageTracker({ harness: () => opened, context, clock, write: configureAgent });
+  // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
+  const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models), onUsage: usage.add }) : undefined;
   let toolsAllowed = allowTools;
   const routing = dispatcher ? createMachineRouting({ dispatcher, cwd, harness: () => opened, allowTools: () => toolsAllowed }) : undefined;
   const codingTools = routing?.tools ?? CodingTools;
@@ -462,6 +473,9 @@ export async function openInstance({
   // close() stops the roster checks, and drops what they would still warn.
   const checks = new AbortController();
   let sweeper: Sweeper | undefined;
+  let sampler: ReturnType<typeof setInterval> | undefined;
+  // A failed sample is reported, and the next one counts what it missed.
+  const sample = (): Promise<void> => usage.sample().catch((error: unknown) => { onReport?.(error); });
   let database: HostDatabase | undefined;
   let storage: SqliteStorage | undefined;
   try {
@@ -489,6 +503,11 @@ export async function openInstance({
       // Agents spawned under an earlier launch must not keep its tool choices; the roster's standing agents exist.
       await syncAgents(harness, context, setup);
       sweeper = await startSweeper({ harness, context, clock, everyMs: sweepMs, forget: name => Browser.forget(name), onWarning, onReport });
+      // Now, so a chat's first sample (which only records the totals so far) comes before this launch spends; then
+      // every few minutes, so spend lands on the day it was made.
+      await sample();
+      sampler = setInterval(() => { void sample(); }, usageSampleMs);
+      sampler.unref();
       const missing = missingKits(roster, kits);
       if (missing.length) onWarning?.(`Standing agents run without tool kits this host lacks: ${missing.join('; ')}.`);
       // Not awaited: a credential check may take seconds (claude-cli asks its CLI), and only warns.
@@ -522,7 +541,7 @@ export async function openInstance({
       async setModel(next) {
         await reconfigure({ model: next });
         const { compactionModel, jobs } = compactionFor(next, models);
-        memory?.setSummarizer(createPiAiSummarizer({ models, model: compactionModel }), jobs);
+        memory?.setSummarizer(createPiAiSummarizer({ models, model: compactionModel, onUsage: usage.add }), jobs);
       },
       setThinkingLevel: level => reconfigure({ thinkingLevel: level }),
       async setTools(enabled) {
@@ -532,14 +551,18 @@ export async function openInstance({
         toolsAllowed = enabled;
       },
       exclusive: step => hostDatabase.exclusive(step),
+      usage: () => usage.report(),
       close: async () => {
         checks.abort();
         await sweeper?.stop();
+        clearInterval(sampler);
+        if (configureAgent) await sample();
         // The harness first, so no tool still runs; then the rest.
         try { await harness.close(context); } finally { await closeOwned(); }
       },
     };
   } catch (error) {
+    clearInterval(sampler);
     try {
       await sweeper?.stop();
       if (opened) await opened.close(context);

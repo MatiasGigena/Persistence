@@ -722,6 +722,12 @@ dialog::backdrop { background: var(--scrim); }
 .schedule-row .row-detail { white-space: normal; }
 .agent-chat { flex: 1; min-height: 0; overflow-y: auto; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); border-top: 1px solid var(--line); }
 .message-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 1rem/1.6 var(--serif); }
+/* Usage (ADR 0039): a section per period, a row per model. The token counts wrap rather than cut. */
+.usage > .section-title:first-child { margin-top: 6px; }
+.usage-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px var(--gutter); border-top: 1px solid var(--line); }
+.rows li:first-child .usage-row { border-top: 0; }
+.usage-row .row-detail { white-space: normal; }
+.usage-total .row-label { font-weight: 600; }
 .skeleton-lines { padding: 2px 0; }
 .feed-skeleton { max-width: var(--column); margin: 0 auto; padding: 20px 0; }
 /* The loading rule (sheet.ts): a skeleton stays unseen for its first 200ms, keeping its room so nothing jumps, then
@@ -735,7 +741,7 @@ dialog::backdrop { background: var(--scrim); }
 .rows > .skeleton-slow { padding: 0 var(--gutter); }
 .controls > .skeleton-slow { margin: 0; }
 
-/* Chat settings sheet: labelled selects, then switch rows, then rows into Agents and Memory. */
+/* Chat settings sheet: labelled selects, then switch rows, then rows into Agents, Memory and Usage. */
 .controls { display: grid; gap: 14px; padding: 6px 0 4px; }
 .control { display: flex; flex-direction: column; gap: 6px; }
 /* 11px is the floor for words on a phone: these labels and the switches' notes were 10px and 11px. */

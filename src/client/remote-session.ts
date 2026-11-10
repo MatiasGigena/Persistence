@@ -8,7 +8,7 @@ import type {
 } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
 import type {
-  ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, ViewLine,
+  ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, UsageReport, ViewLine,
 } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
@@ -185,6 +185,8 @@ export class RemoteSession implements UiSession {
   }
 
   async cancelSchedule(id: number): Promise<void> { await this.request('schedule.cancel', { id }); }
+
+  async usage(): Promise<UsageReport> { return (await this.request('usage', {})).report; }
 
   async agentChat(name: string): Promise<ChatFeed | undefined> {
     const known = [...this.agents].find(mirror => !mirror.ended && mirror.name?.toLowerCase() === name.toLowerCase());

@@ -7,7 +7,7 @@ import {
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
 import type { AttachedLink, ChatItem, UiSession } from '../../protocol/session.ts';
 import { ChatView } from './chat.ts';
-import { schedulesText, statusText, toolSummary } from '../text.ts';
+import { schedulesText, statusText, toolSummary, usageText } from '../text.ts';
 import type { NoticeLevel } from './chat.ts';
 import { Footer, spinnerInterval } from './footer.ts';
 import { openAgentsPanel } from './panels/agents.ts';
@@ -60,6 +60,7 @@ export const COMMANDS: readonly SlashCommand[] = [
   { name: 'mem', description: "Pi's memory view" },
   { name: 'schedule', description: "Pi's scheduled wake-ups; /schedule cancel N removes one", argumentHint: '[cancel N]' },
   { name: 'status', description: 'Model, work, memory and agents' },
+  { name: 'usage', description: 'Tokens and cost per model: today, 7 days, all time' },
   { name: 'stop', description: 'Interrupt Pi, as Esc does; /stop all or /stop Name stops agents' },
   { name: 'exit', description: 'Close; unfinished work resumes next launch' },
 ];
@@ -71,6 +72,8 @@ const HELP_COMMANDS: readonly HelpPair[] = [
   ['/agents', 'agents and their chats'], ['/mem', 'the memory view'],
   ['/status', 'model, work, memory'], ['/stop', 'stop Pi (esc) · all · Name'],
   ['/schedule', 'wake-ups · cancel N'], ['/exit', 'close (ctrl+d when empty)'],
+  // Last, beside /exit: the right-hand column has no room for /exit's own text.
+  ['/usage', 'tokens per model'],
 ];
 const HELP_KEYS: readonly HelpPair[] = [
   ['enter', 'send'], ['alt+enter', 'newline (shift+enter)'],
@@ -423,6 +426,9 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     else if (name === 'effort' || name === 'thinking') effort(arg.toLowerCase());
     else if (name === 'tools') tools(arg.toLowerCase());
     else if (name === 'status') show(statusText(session.status()));
+    else if (name === 'usage') {
+      session.usage().then(report => show(usageText(report, Date.now())), (error: unknown) => show(`Usage failed: ${errorMessage(error)}`, 'error'));
+    }
     else if (name === 'agents') panel(openAgentsPanel);
     else if (name === 'mem') panel(openMemoryPanel);
     else if (name === 'schedule' || name === 'schedules') schedule(arg);

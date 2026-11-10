@@ -68,6 +68,12 @@ export function num(o: Obj, key: string): number {
 export function optNum(o: Obj, key: string): number | undefined {
   return o[key] === undefined ? undefined : num(o, key);
 }
+/** A finite number, at least 0: a count that may be fractional, such as a cost. */
+export function amount(o: Obj, key: string): number {
+  const v = o[key];
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new ShapeError(`${key} must be a number >= 0`);
+  return v;
+}
 /** An array field, each element through `item`. */
 export function list<T>(o: Obj, key: string, item: (x: unknown, index: number) => T): T[] {
   const v = o[key];

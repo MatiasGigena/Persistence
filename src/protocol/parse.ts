@@ -3,9 +3,9 @@
 import { ENABLE_TOOLS, ERROR_CODES, LIMITS, NOTICE_LEVELS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
 import type { AppendField, ClientMessage, Device, ErrorCode, ItemOp, Op, PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, ToolsPolicy } from './messages.ts';
-import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, ScheduleStatus, SessionStatus, ViewLine } from './session.ts';
+import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, ScheduleStatus, SessionStatus, UsageReport, UsageRow, ViewLine } from './session.ts';
 import type { ChatImage } from './images.ts';
-import { bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
+import { amount, bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
 import type { Obj } from './util.ts';
 
 /**
@@ -71,6 +71,18 @@ function agentStatus(x: unknown): AgentStatus {
 function scheduleStatus(x: unknown): ScheduleStatus {
   const o = obj(x, 'schedule');
   return withOptional({ id: int(o, 'id', 1), text: str(o, 'text'), at: int(o, 'at') }, 'cron', optStr(o, 'cron'));
+}
+
+function usageRow(x: unknown): UsageRow {
+  const o = obj(x, 'usage row');
+  return { model: str(o, 'model'), input: amount(o, 'input'), output: amount(o, 'output'), cacheRead: amount(o, 'cacheRead'),
+    cacheWrite: amount(o, 'cacheWrite'), cost: amount(o, 'cost') };
+}
+
+function usageReport(x: unknown): UsageReport {
+  const o = obj(x, 'report');
+  return withOptional({ today: list(o, 'today', usageRow), week: list(o, 'week', usageRow), all: list(o, 'all', usageRow) },
+    'since', o.since === undefined ? undefined : int(o, 'since'));
 }
 
 /** `agents.archive`'s params: exactly one of a nonempty `name` or `adhoc: true`. */
@@ -179,6 +191,7 @@ const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
   'admin.pair': id => ({ t: 'req', id, op: 'admin.pair', params: {} }),
   'admin.devices': id => ({ t: 'req', id, op: 'admin.devices', params: {} }),
   'admin.revoke': (id, p) => ({ t: 'req', id, op: 'admin.revoke', params: { name: str(p, 'name') } }),
+  usage: id => ({ t: 'req', id, op: 'usage', params: {} }),
 };
 
 /** Each op's successful response, from its id and raw result. */
@@ -216,6 +229,7 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   },
   'admin.devices': (id, r) => ({ t: 'res', id, op: 'admin.devices', ok: true, result: { devices: list(obj(r, 'result'), 'devices', device) } }),
   'admin.revoke': id => ({ t: 'res', id, op: 'admin.revoke', ok: true, result: null }),
+  usage: (id, r) => ({ t: 'res', id, op: 'usage', ok: true, result: { report: usageReport(obj(r, 'result').report) } }),
 };
 
 /** A string list item: an agent's name or a thinking level. */

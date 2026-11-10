@@ -1,5 +1,5 @@
 // Chat settings, the sheet behind the header's sliders button: the model and reasoning effort as two
-// selects, switches for the coding tools and this device's notifications, and rows into Agents and Memory. A model
+// selects, switches for the coding tools and this device's notifications, and rows into Agents, Memory and Usage. A model
 // or effort applies to Pi and its agents from the next request and is saved as the default; the tools are for this
 // server run only, and turning them on asks first.
 import { el } from '../chat-view.ts';
@@ -18,6 +18,7 @@ import { memoryView } from './memory.ts';
 import { fadeIn, renderRows, SKELETON_WAIT, slowNote } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
 import { setTools } from './tools.ts';
+import { usageView } from './usage.ts';
 
 /** What each effort level means, in a few words. */
 export const EFFORT_HINTS: Readonly<Record<string, string>> = {
@@ -370,7 +371,7 @@ export function chatSettingsView(ctx: PanelContext): View {
         );
       });
 
-      // ---------------------------------------------------------- agents and memory
+      // ---------------------------------------------------------- agents, memory and usage
       const drawRows = (): void => {
         const status = ctx.store.status;
         const all = status?.agents ?? [], agents = activeAgents(all), archived = all.length - agents.length;
@@ -379,7 +380,8 @@ export function chatSettingsView(ctx: PanelContext): View {
         renderRows(list, [
           { key: 'agents', label: 'Agents', detail: all.length ? detail : 'None yet', aside: '›' },
           { key: 'memory', label: 'Memory', detail: memoryHeader(status?.memory), aside: '›' },
-        ], key => ctx.sheet.push(key === 'agents' ? agentsView(ctx) : memoryView(ctx)));
+          { key: 'usage', label: 'Usage', detail: 'Tokens per model: today, 7 days, all time', aside: '›' },
+        ], key => ctx.sheet.push(key === 'agents' ? agentsView(ctx) : key === 'memory' ? memoryView(ctx) : usageView(ctx)));
       };
 
       let last = '';

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText, parseMessage,
-  parseZoom, schedulesText, scheduleWhen, statusText, toolCommand, toolSummary, whenText,
+  parseZoom, schedulesText, scheduleWhen, statusText, tokenCount, toolCommand, toolSummary, usageText, whenText,
 } from '../../src/ui/text.ts';
-import type { SessionStatus } from '../../src/protocol/session.ts';
+import type { SessionStatus, UsageReport } from '../../src/protocol/session.ts';
 
 const STATUS: SessionStatus = {
   model: 'claude-cli/sonnet', thinkingLevel: 'high', toolsEnabled: false, busy: true, queued: 2,
@@ -106,4 +106,39 @@ test('/schedule lists the wake-ups and how to cancel one; /status counts them an
   assert.match(statusText({ ...STATUS, schedules }, now), /\nschedules 2 · next #3 today 15:00$/);
   assert.doesNotMatch(statusText({ ...STATUS, schedules: [] }, now), /schedules/);
   assert.doesNotMatch(statusText(STATUS, now), /schedules/, 'a server without schedules in its status');
+});
+
+test('token counts are compact: three digits at most, and a unit', () => {
+  const cases: [number, string][] = [
+    [0, '0'], [999, '999'], [1000, '1k'], [1234, '1.2k'], [61_000, '61k'], [80_449, '80.4k'], [99_960, '100k'], [210_499, '210k'],
+    [999_499, '999k'], [999_500, '1M'], [1_240_000, '1.2M'], [3_400_000_000, '3.4B'], [2_000_000_000_000, '2T'], [5e15, '5000T'],
+  ];
+  for (const [count, text] of cases) assert.equal(tokenCount(count), text, String(count));
+});
+
+test('usageText: each period\'s sum, then its models aligned, and since when days are counted', () => {
+  const now = new Date(2026, 10, 10, 15).getTime();
+  const opus = { model: 'claude-cli/opus', input: 900_000, output: 61_000, cacheRead: 3_000_000, cacheWrite: 210_000, cost: 3.8 };
+  const sol = { model: 'openai-codex/gpt-6.1-sol', input: 300_000, output: 19_400, cacheRead: 400_000, cacheWrite: 0, cost: 0.41 };
+  const luna = { model: 'openai-codex/gpt-6-luna', input: 1200, output: 80, cacheRead: 0, cacheWrite: 0, cost: 0.0004 };
+  // claude-cli reports no cost, so none is shown.
+  const haiku = { model: 'claude-cli/haiku', input: 999, output: 7, cacheRead: 0, cacheWrite: 1000, cost: 0 };
+  const report: UsageReport = { today: [opus, sol], week: [opus, sol, luna, haiku], all: [], since: new Date(2026, 10, 10, 14, 3).getTime() };
+  assert.equal(usageText(report, now), [
+    'today    in 1.2M · out 80.4k · cache 3.4M read, 210k written · $4.21',
+    '  claude-cli/opus           in 900k · out 61k · cache 3M read, 210k written · $3.80',
+    '  openai-codex/gpt-6.1-sol  in 300k · out 19.4k · cache 400k read · $0.41',
+    '7 days   in 1.2M · out 80.5k · cache 3.4M read, 211k written · $4.21',
+    '  claude-cli/opus           in 900k · out 61k · cache 3M read, 210k written · $3.80',
+    '  openai-codex/gpt-6.1-sol  in 300k · out 19.4k · cache 400k read · $0.41',
+    '  openai-codex/gpt-6-luna   in 1.2k · out 80 · <$0.01',
+    '  claude-cli/haiku          in 999 · out 7 · cache 1k written',
+    'all time nothing yet',
+    'Costs are catalog prices; on a subscription plan they are not what you pay. Daily counting began today 14:03.',
+  ].join('\n'));
+  assert.equal(usageText({ today: [], week: [], all: [] }, now), [
+    'today    nothing yet', '7 days   nothing yet', 'all time nothing yet',
+    'Costs are catalog prices; on a subscription plan they are not what you pay.',
+  ].join('\n'), 'no since before the first sample');
+  assert.match(usageText({ ...report, since: new Date(2026, 10, 5, 9).getTime() }, now), /Daily counting began Thu 5 Nov 09:00\.$/);
 });

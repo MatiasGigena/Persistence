@@ -55,6 +55,7 @@ const REQUESTS: { readonly [O in Op]: RequestOf<O> } = {
     target: { machineId: 'pc-1', cwd: '/projects', label: 'PC' }, enabled: false } } },
   'machine.set': { t: 'req', id: 19, op: 'machine.set', params: { enabled: true, confirm: 'enable-tools' } },
   'machine.list': { t: 'req', id: 20, op: 'machine.list', params: {} },  'schedule.cancel': { t: 'req', id: 43, op: 'schedule.cancel', params: { id: 3 } },
+  usage: { t: 'req', id: 44, op: 'usage', params: {} },
 };
 
 /** One successful response per op. */
@@ -89,6 +90,12 @@ const RESPONSES: { readonly [O in Op]: ResponseOf<O> } = {
   'machine.set': { t: 'res', id: 19, op: 'machine.set', ok: true, result: null },
   'machine.list': { t: 'res', id: 20, op: 'machine.list', ok: true, result: { machines: [] } },
   'schedule.cancel': { t: 'res', id: 43, op: 'schedule.cancel', ok: true, result: null },
+  usage: { t: 'res', id: 44, op: 'usage', ok: true, result: { report: {
+    today: [{ model: 'claude-cli/opus', input: 1200, output: 80, cacheRead: 3400, cacheWrite: 210, cost: 0.0421 }],
+    week: [{ model: 'claude-cli/opus', input: 9000, output: 610, cacheRead: 34_000, cacheWrite: 2100, cost: 4.21 },
+      { model: 'openai-codex/gpt-6.1-sol', input: 500, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0 }],
+    all: [], since: 1_800_000_000_000,
+  } } },
 };
 
 const CLIENT: readonly ClientMessage[] = [
@@ -229,6 +236,8 @@ describe('parsing', () => {
 
   test('malformed server messages are refused, nested items and ops included', () => {
     const item = '{"kind":"user","id":"u","text":"t"}';
+    /** A usage row as JSON, with `change` over a valid one. */
+    const usageRow = (change: object): string => JSON.stringify({ model: 'p/m', input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.5, ...change });
     const cases: readonly (readonly [string, ParseError['invalid']])[] = [
       ['{"t":"welcome","protocol":2}', 'shape'],
       ['{"t":"welcome","protocol":2,"server":"s","boot":"b","assets":"a","peer":"lan","cwd":"/","tools":{"remote":"confirm","idleMinutes":30}}', 'shape'],
@@ -271,6 +280,14 @@ describe('parsing', () => {
       ['{"t":"status","status":{"model":"m","thinkingLevel":"off","toolsEnabled":false,"busy":false,"queued":0,"agents":[{"name":"B","role":"main","parent":"Pi","busy":false,"archivedAt":"today"}]}}', 'shape'],
       ['{"t":"status","status":{"model":"m","thinkingLevel":"off","toolsEnabled":false,"busy":false,"queued":0,"agents":[{"name":"B","role":"main","parent":"Pi","busy":false,"standing":false}]}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"memory.view","result":{"lines":[{"id":0,"n":0,"text":"x"}]}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"usage","result":{}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[]}}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[],"all":[],"since":"today"}}}', 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[${usageRow({ model: 5 })}],"week":[],"all":[]}}}`, 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[${usageRow({ input: -1 })}],"all":[]}}}`, 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[],"all":[${usageRow({ cost: '4.21' })}]}}}`, 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[],"all":[${usageRow({ cacheRead: undefined })}]}}}`, 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[],"all":[${usageRow({ output: null })}]}}}`, 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"memory.zoom","result":null}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"models","result":{"models":[{"provider":"p","id":"i","name":"n"}]}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"admin.backup","result":{"path":"/b"}}', 'shape'],

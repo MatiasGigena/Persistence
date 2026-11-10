@@ -121,7 +121,7 @@ as the model takes; `/effort xhigh` sets it directly; saved as the default), `/t
 `y` enables read, write, edit and bash for this launch), `/tools off`, `/agents` (list
 agents, open any agent's live chat; `a` archives the selected one, `A` every ad-hoc one, and the Archived row
 restores them within the day), `/mem` (browse the memory view and zoom down to
-any message), `/schedule` (Pi's scheduled wake-ups; `/schedule cancel N` removes one), `/status`, `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
+any message), `/schedule` (Pi's scheduled wake-ups; `/schedule cancel N` removes one), `/status`, `/usage` (tokens and catalog cost per model: today, the last 7 days, all time), `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
 applies from the next message and becomes the default for launches without `--model`.
 Keys: Enter sends, Shift+Enter or Alt+Enter adds a line, Esc interrupts Pi, Ctrl+L
 picks a model, Ctrl+O expands tool output, Ctrl+T expands thinking, Ctrl+C twice (the footer says so after the first) or

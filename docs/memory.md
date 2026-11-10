@@ -273,6 +273,9 @@ it, and `openMemory(dir, { summarize })` replaces the summarizer entirely. The d
 - a 120 s timeout;
 - `sessionId: 'uniichat-compactor'`.
 
+Its `onUsage` option gets each reply's usage, a failed reply's too. The host passes one (`openMemory(dir, { onUsage })`)
+so that `/usage` counts the compactions, which pi-durable never sees (ADR 0039).
+
 ### Closing
 
 `close(graceMs = 5000)` stops new work, gives calls in flight up to 5 s, aborts the rest and saves. An aborted node

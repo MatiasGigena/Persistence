@@ -7,7 +7,7 @@ import { runTui, TOOLS_QUESTION } from '../../src/ui/tui/app.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
 import { openModelPanel } from '../../src/ui/tui/panels/model.ts';
 import { theme as appTheme } from '../../src/ui/tui/theme.ts';
-import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
+import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
 
 const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b', backspace: '\x7f', ctrlL: '\x0c' };
 const sgr = (on: number, off: number) => (text: string): string => `\x1b[${on}m${text}\x1b[${off}m`;
@@ -54,6 +54,7 @@ class FakeSession implements UiSession {
   archiveAgents(): Promise<readonly string[]> { return Promise.resolve([]); }
   restoreAgent(): Promise<readonly string[]> { return Promise.resolve([]); }
   cancelSchedule(): Promise<void> { return Promise.resolve(); }
+  usage(): Promise<UsageReport> { return Promise.resolve({ today: [], week: [], all: [] }); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
   zoom(): Promise<string> { return Promise.resolve(''); }

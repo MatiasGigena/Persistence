@@ -9,7 +9,7 @@ import { MAX_IN_FLIGHT, SILENCE_MS, STATUS_MS } from '../../src/server/connectio
 import { Hub, PUSH_EVERY_MS, VISIBLE_MS } from '../../src/server/hub.ts';
 import type { HubOptions } from '../../src/server/hub.ts';
 import type { DeviceRegistry } from '../../src/server/link.ts';
-import { fakeLink, fakePush, fakeSession, FakeFeed } from '../fixtures/server-fakes.ts';
+import { fakeLink, fakePush, fakeSession, FakeFeed, USAGE } from '../fixtures/server-fakes.ts';
 import type { FakeLink } from '../fixtures/server-fakes.ts';
 
 const settle = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
@@ -414,6 +414,19 @@ test('schedule.cancel: forwarded from both peers, an unknown id is not_found, an
   assert.equal(bad?.t === 'res' && !bad.ok && bad.error.code, 'bad_request');
   assert.deepEqual(session.calls, ['cancelSchedule 3', 'cancelSchedule 3']);
   assert.deepEqual(logged, ['schedule #3 cancelled, by me@example.com/phone (web)']);
+});
+
+test('usage: both peers get the session\'s report, and none before a session', async t => {
+  const { hub, session, connect, request } = setup(t);
+  const early = connect('socket');
+  const none = await request(early, 'usage', {});
+  assert.equal(none?.t === 'res' && !none.ok && none.error.code, 'unavailable');
+  hub.start(session);
+  for (const peer of [connect('web'), connect('socket')]) {
+    const answer = await request(peer, 'usage', {});
+    assert.deepEqual(answer?.t === 'res' && answer.ok && answer.op === 'usage' && answer.result, { report: USAGE });
+  }
+  assert.deepEqual(session.calls, ['usage', 'usage']);
 });
 
 test('without idleMinutes (the default) the tools stay on however long nothing runs', async t => {

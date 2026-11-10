@@ -11,7 +11,7 @@ import { Hub } from '../../src/server/hub.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { ChatItem, NoticeLevel } from '../../src/protocol/session.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
-import { fakeLink, fakeSession } from '../fixtures/server-fakes.ts';
+import { fakeLink, fakeSession, USAGE } from '../fixtures/server-fakes.ts';
 import type { FakeServerOptions } from '../fixtures/fake-server.ts';
 import { memoryConnector } from './memory-link.ts';
 import type { MemoryConnector } from './memory-link.ts';
@@ -287,6 +287,9 @@ test('archive and restore go to the real hub as agents.archive and agents.restor
   await until(() => session.status().schedules?.length === 0, 'the schedule gone from the status');
   await assert.rejects(session.cancelSchedule(3), { code: 'not_found', message: 'No schedule #3.' });
   assert.deepEqual(sent.slice(-2), ['schedule.cancel', 'schedule.cancel']);
+  // The usage report comes whole through the parser, fractional cost and all.
+  assert.deepEqual(await session.usage(), USAGE);
+  assert.equal(sent.at(-1), 'usage');
   await session.close();
   await hub.close(CloseCode.restart, 'done');
 });

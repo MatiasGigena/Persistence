@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { drawn, until } from '../fixtures/until.ts';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
-import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
+import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
 import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui } from '../../src/ui/tui/app.ts';
 import { statusText } from '../../src/ui/text.ts';
 import type { TuiInfo } from '../../src/ui/tui/app.ts';
@@ -66,6 +66,9 @@ class FakeSession implements UiSession {
     this.update({ schedules: (this.current.schedules ?? []).filter(each => each.id !== id) });
     return Promise.resolve();
   }
+  /** What usage() resolves with; an Error rejects it. */
+  report: UsageReport | Error = { today: [], week: [], all: [] };
+  usage(): Promise<UsageReport> { return this.report instanceof Error ? Promise.reject(this.report) : Promise.resolve(this.report); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
   zoom(): Promise<string> { return Promise.resolve(''); }
@@ -642,6 +645,29 @@ test('/schedule lists Pi\'s wake-ups, and /schedule cancel N removes one', async
   terminal.type('/schedule drop 4', '\r');
   await until(() => /Usage: \/schedule, or \/schedule cancel N\./.test(terminal.text()), 'the usage');
   assert.deepEqual(session.cancelled, [3]);
+  assert.deepEqual(session.sent, [], 'none of it is sent to Pi');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('/usage prints the report per model, and says when it fails', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/usage', '\r');
+  await until(() => /all time nothing yet/.test(terminal.text()), 'the empty report');
+  assert.match(terminal.text(), /today {4}nothing yet/);
+  assert.match(terminal.text(), /Costs are catalog prices; on a subscription plan they are not what you pay\./);
+  const opus = { model: 'claude-cli/opus', input: 900_000, output: 61_000, cacheRead: 3_400_000, cacheWrite: 210_000, cost: 3.8 };
+  session.report = { today: [opus], week: [opus], all: [opus, { model: 'faux/luna', input: 1200, output: 80, cacheRead: 0, cacheWrite: 0, cost: 0.004 }],
+    since: Date.now() - 60_000 };
+  terminal.type('/usage', '\r');
+  await until(() => /faux\/luna +in 1\.2k · out 80 · <\$0\.01/.test(terminal.text()), 'the report');
+  assert.match(terminal.text(), /today {4}in 900k · out 61k · cache 3\.4M read, 210k written · \$3\.80/);
+  assert.match(terminal.text(), / {2}claude-cli\/opus {2}in 900k · out 61k · cache 3\.4M read, 210k written · \$3\.80/);
+  assert.match(terminal.text(), /Daily counting began today \d\d:\d\d\./);
+  session.report = new Error('The server is busy.');
+  terminal.type('/usage', '\r');
+  await until(() => /Usage failed: The server is busy\./.test(terminal.text()), 'the failure');
   assert.deepEqual(session.sent, [], 'none of it is sent to Pi');
   terminal.type('/exit', '\r');
   await done;

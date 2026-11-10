@@ -58,6 +58,7 @@ test/server/     hub, auth, Unix socket and WebSocket transports, push, backups,
 test/client/     attach, remote session, SSH link and bridge, client config
 test/machines/   routing, the execution broker and the local executor
 test/web/        the web app's DOM-free modules: format, store, link, markdown, cache
+test/usage/      the usage report: daily buckets, sampling, compaction spend
 test/fixtures/   faux models, the fake claude CLI, child-process instances
 ```
 
@@ -99,6 +100,7 @@ Give each test its own temporary data directory.
   - the `agents.deliver` task memo field `session` (the conversation a message delivery chose);
   - the optional `session` number (from 1) in `agents.report` entry data;
   - the protocol ops `agents.archive` and `agents.restore` (ADR 0034), and `schedule.cancel` (ADR 0038);
+  - the doc kind `host.usage`, its fields `since`, `last`, `days` and `extra`, and the protocol op `usage` (ADR 0039);
   - tool names `zoom`, `date`, `spawn_agent`, `list_agents`, `send_message`,
     `last_message`, `stop_agent`, `delegate`, `schedule`, `list_schedules`, `cancel_schedule`, `web_fetch`, `autoreview`, and the browser's `browser_goto`,
     `browser_eval`, `browser_console`, `browser_network`, `browser_fill`, `browser_click`,

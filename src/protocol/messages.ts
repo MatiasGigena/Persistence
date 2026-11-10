@@ -2,7 +2,7 @@
 // its clients (src/client/, src/web/).
 // docs/protocol.md is the prose spec; this file is its types and constants. Shared by Node and the browser, so it
 // holds plain types and constants only: no Node or DOM imports, and no runtime imports at all.
-import type { ArchiveTarget, ChatItem, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from './session.ts';
+import type { ArchiveTarget, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UsageReport, ViewLine } from './session.ts';
 import type { ChatImage } from './images.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult, MachineTarget } from './machines.ts';
 
@@ -172,6 +172,8 @@ export interface Ops {
   readonly 'admin.devices': { readonly params: NoParams; readonly result: { readonly devices: readonly Device[] } };
   /** Socket only: forgets a device and closes its connections with CloseCode.unauthorized. */
   readonly 'admin.revoke': { readonly params: { readonly name: string }; readonly result: null };
+  /** Tokens and catalog cost per model (ADR 0039): today, the last 7 days and all time, in the server's local days. */
+  readonly usage: { readonly params: NoParams; readonly result: { readonly report: UsageReport } };
 }
 export type Op = keyof Ops;
 export type Params<O extends Op> = Ops[O]['params'];
@@ -181,7 +183,7 @@ export type Result<O extends Op> = Ops[O]['result'];
 export const OPS: readonly Op[] = [
   'send', 'abort', 'stopAgents', 'agents.archive', 'agents.restore', 'feed.open', 'feed.close', 'feed.resync', 'memory.view', 'memory.zoom', 'models',
   'model.set', 'tools.set', 'thinking.levels', 'thinking.set', 'push.subscribe', 'push.unsubscribe', 'admin.backup', 'admin.pair', 'admin.devices',
-  'admin.revoke', 'machine.register', 'machine.set', 'machine.list', 'schedule.cancel',
+  'admin.revoke', 'machine.register', 'machine.set', 'machine.list', 'schedule.cancel', 'usage',
 ];
 /** Ops only socket peers may call; web peers get `forbidden`. */
 export const SOCKET_ONLY: ReadonlySet<Op> = new Set<Op>(['admin.backup', 'admin.pair', 'admin.devices', 'admin.revoke', 'machine.register', 'machine.set']);

@@ -215,6 +215,7 @@ item in Pi's feed whose `from` is `Schedule #n`.
 | `admin.pair` | — | `{code, expiresAt, origin?}` | socket | `forbidden`, `unavailable` |
 | `admin.devices` | — | `{devices: {name, pairedAt, lastSeen?}[]}` | socket | `forbidden`, `unavailable` |
 | `admin.revoke` | `name` | `null` | socket | `forbidden`, `not_found`, `unavailable` |
+| `usage` | — | `{report: UsageReport}` | both | `failed` |
 
 Times are milliseconds since the epoch. Every op answers `bad_request` to malformed params, `unknown_op` when the
 server does not know it, and `unavailable` while the server shuts down. Each maps to one `UiSession` method:
@@ -261,6 +262,13 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 - **`feed.resync`** asks for a fresh `snapshot` of a feed, after `applyOps` returned `'resync'`.
 - **`memory.view`** and **`memory.zoom`** are `UiSession.memoryView` and `zoom`. `memory.zoom` answers
   `not_found` for a line that does not exist, with the zoom tool's message (it names the tree's roots).
+- **`usage`** is `UiSession.usage` (ADR 0039). A `UsageReport` is `{today, week, all, since?}`: three lists of
+  `UsageRow`s, `{model, input, output, cacheRead, cacheWrite, cost}`, for the server's local day, its last 7 local
+  days (today included) and all time. `model` is `provider/model`; the counts are tokens, `input` without those read
+  from or written to a cache; `cost` is US dollars at catalog prices, a fraction, and 0 from a provider that prices nothing. Rows
+  come with the most tokens first, and a model that spent nothing in a period has no row. `since` is when the server
+  began counting by day; spend before it is only in `all`, and a chat never sampled has no `since`. The server
+  samples the spend before it answers, so the report is current.
 - **`model.set`** is `UiSession.setModel`; `failed` carries the readable reason (unknown model, no credentials,
   or saved but not written as the default).
 - **`thinking.levels`** and **`thinking.set`** are `UiSession.thinkingLevels` and `setThinkingLevel`: the reasoning

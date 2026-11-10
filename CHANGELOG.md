@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `/status` names the next. With machine routing a schedule keeps the workstation it was made on. New optional
   status field `schedules` and op `schedule.cancel`; `PROTOCOL` stays 4. Times are the host's local time: set `TZ`
   for a server in another zone.
+- A usage report (ADR 0039): `/usage` in the terminal UI and Usage under Chat settings in the web app show the
+  tokens (input, output, cache read, cache written) and the catalog cost per model, today, over the last 7 days and
+  all time, for Pi, its agents and the memory's compactions. Days are the host's local days, counted from the first
+  launch with this version; earlier spend shows in "all time" only. New protocol op `usage`; `PROTOCOL` stays 4.
 - Archiving agents (ADR 0034): the `/agents` panel, the web app's Agents sheet and `pi-durable serve agents
   --archive NAME | --archive-adhoc | --restore NAME` archive ad-hoc agents and restore them within the day. An
   archived agent is stopped, hidden and unreachable; a day later it is deleted as `delete_agent` does, its chat kept

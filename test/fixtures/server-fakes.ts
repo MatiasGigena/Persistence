@@ -4,7 +4,7 @@ import type { CloseCode, Device, Peer, PushSubscriptionJson, ServerMessage } fro
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { PeerLink, PushNotifier } from '../../src/server/link.ts';
-import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
+import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
 import { NotFound } from '../../src/protocol/errors.ts';
 
 export class FakeFeed implements ChatFeed {
@@ -26,6 +26,15 @@ export class FakeFeed implements ChatFeed {
 
 export const STATUS: SessionStatus = { model: 'faux/faux-1', thinkingLevel: 'high', toolsEnabled: false, busy: false, queued: 0,
   memory: undefined, agents: [] };
+
+/** What the fake session's `usage()` reports. */
+export const USAGE: UsageReport = {
+  today: [{ model: 'faux/faux-1', input: 1200, output: 80, cacheRead: 3400, cacheWrite: 0, cost: 0.0125 }],
+  week: [{ model: 'faux/faux-1', input: 9000, output: 610, cacheRead: 34_000, cacheWrite: 210, cost: 1.5 }],
+  all: [{ model: 'faux/faux-1', input: 90_000, output: 6100, cacheRead: 340_000, cacheWrite: 2100, cost: 15 },
+    { model: 'faux/cheap', input: 500, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0 }],
+  since: 1_800_000_000_000,
+};
 
 export interface FakeSession extends UiSession {
   readonly root: FakeFeed;
@@ -85,6 +94,7 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
       set({ schedules: left });
       return Promise.resolve();
     },
+    usage() { calls.push('usage'); return Promise.resolve(USAGE); },
     agentChat(name) {
       calls.push(`agentChat ${name}`);
       return Promise.resolve(agents.get(name.toLowerCase()));

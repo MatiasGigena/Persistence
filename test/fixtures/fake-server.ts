@@ -17,7 +17,7 @@
 // for push ops; `tools.remote` 'off' forbids web peers to enable tools.
 import { CloseCode, ENABLE_TOOLS, ROOT_FEED, SOCKET_ONLY, WEB_ONLY } from '../../src/protocol/messages.ts';
 import type { Device, ErrorCode, Op, Peer, PushSubscriptionJson, Request, ServerMessage, ToolsPolicy } from '../../src/protocol/messages.ts';
-import type { ChatItem, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../../src/protocol/session.ts';
+import type { ChatItem, ModelChoice, NoticeLevel, SessionStatus, UsageReport, ViewLine } from '../../src/protocol/session.ts';
 import { diffItems, wireItem } from '../../src/protocol/diff.ts';
 import { isParseError, parseClientMessage, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
@@ -228,6 +228,8 @@ export class FakeServer {
   readonly devices: Device[] = [{ name: 'phone', pairedAt: 1 }];
   /** Machine connectors' registrations and grants, in the order they arrived (`machine.register`, `machine.set`). */
   readonly machines: { readonly op: 'machine.register' | 'machine.set'; readonly enabled: boolean }[] = [];
+  /** What `usage` answers. */
+  usage: UsageReport = { today: [], week: [], all: [] };
   readonly held = new Set<Op>();
   readonly queue: { readonly op: Op; readonly reply: () => void }[] = [];
   private items: readonly ChatItem[];
@@ -337,6 +339,7 @@ export class FakeServer {
         return;
       }
       case 'abort': this.aborts++; ok(); return;
+      case 'usage': ok({ report: this.usage }); return;
       case 'schedule.cancel': {
         const schedules = this.status.schedules ?? [];
         if (!schedules.some(each => each.id === request.params.id)) { no('not_found', `No schedule #${request.params.id}`); return; }
