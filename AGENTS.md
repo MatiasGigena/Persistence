@@ -8,19 +8,21 @@ TypeScript that Node runs by type stripping: there is no build step.
 ## Map
 
 - `src/cli.ts`: entry. Parses arguments, takes the flock, spawns the host.
-- `src/host/`: `host.ts` (terminal chat, /commands, reply watcher), `config.ts` (CLI options, paths), `session.ts` and `feed.ts` (the host's state as a `UiSession`: pi-durable's conversation views, memory and agents turned into chat items).
-- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends).
+- `src/config/`: every mode's process configuration: `options.ts` (CLI parsing, `--help`, the resolved `Config`), `paths.ts` (`statePaths`, the socket, `serve`'s environment), `settings.json` and the standing-agent roster in `settings.ts`.
+- `src/host/host.ts`: the spawned process's entry and composition root: terminal chat, /commands, reply watcher, and the dispatch to `serve` and offline backup.
+- `src/session/`: `session.ts` and `feed.ts`, the host's state as a `UiSession` (pi-durable's conversation views, memory and agents turned into chat items), shared by the terminal host and the server.
+- `src/runtime/`: `runtime.ts` (Harness, extensions, Pi's agent config), `recovery.ts` (resume, `settleAgents`), `models.ts` (pickable models and credential checks for `/model`), `guard.ts` (protected folders: the tools' guarded environment and bubblewrap), `ssh-agent.ts` (Pi's own SSH agent, `PI_DURABLE_SSH_KEYS`), `files.ts` (fsynced atomic writes and appends), `console.ts` (stray console output as chat notices), `routing.ts` (machine routing).
 - `src/memory/`: UniiChat memory: log, tree, view, compactor, and the `uniichat` extension.
-- `src/agents/index.ts`: agent hierarchy, tools, and delivery tasks; `roster.ts`: the standing agents and kit names; `entries.ts`: the input entry kinds and their decoder.
+- `src/agents/`: `index.ts` builds the `agents` extension and is the package's API; `registry.ts` (the AgentsDoc registry, the Anchor task, shared lookups), `setup.ts` (agents derived from Pi and the roster, `syncAgents`), `delivery.ts` (the Deliver task), `lifecycle.ts` (stop, delete, archive, restore, purge), `transcript.ts`, `prompts.ts`, `tools.ts` (the agent tools and their guard); `roster.ts`: the standing agents and kit names; `entries.ts`: the input entry kinds and their decoder, and `text`/`assistantText` (a message's text).
 - `src/tools/`: the standing agents' network kits: `browser.ts` (headless Chromium, `browser_*` tools) and
   `web-fetch.ts` (`web_fetch`), `autoreview.ts` (the Reviewer's installed skill helper, fixed P0–P2, through guarded/routed execution), `show-image.ts`, and `codemode.ts` (scripts that call the coding tools, ADR 0033).
 - `src/providers/`: the `claude-cli` provider (official `claude` CLI, stub MCP server) and the `anthropic` subscription check.
-- `src/ui/`: the terminal UI. `types.ts` is the contract (it imports only types from `src/protocol/`); `text.ts` is the wording the TUI and the web app share (no DOM, Node or pi-tui: the server serves it to the browser); `errors.ts` holds the session's typed refusals (`NotFound`, `Unavailable`), which the server maps to wire codes; `tui/` renders a `UiSession` with pi-tui (`tui/panels/` holds /agents, /mem, /model and /effort). Nothing in `src/ui/` imports pi-durable.
-- `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`, `util.ts` (`isRecord`, `errorMessage`,
-  `errorCode`: use these, never a local copy).
+- `src/ui/`: the terminal UI. `text.ts` is the wording the TUI and the web app share (no DOM, Node or pi-tui: the server serves it to the browser); `tui/` renders a `UiSession` with pi-tui (`tui/panels/` holds /agents, /mem, /model and /effort). Nothing in `src/ui/` imports pi-durable.
+- `src/protocol/`: the wire protocol ([docs/protocol.md](docs/protocol.md)), shared by Node and the browser, so no `node:` or DOM imports: `messages.ts` (types, ops, codes, limits), `parse.ts`, `diff.ts` (server side), `mirror.ts` (client side), `version.ts`, `lines.ts` (NDJSON framing), `session.ts` (the session contract: `UiSession`, `ChatItem`, `SessionStatus`…, type-only), `errors.ts` (the session's typed refusals `NotFound` and `Unavailable`, which the server maps to wire codes), `util.ts` (`isRecord`, `errorMessage`,
+  `errorCode`, `cutBytes` and the throwing narrowers `obj`, `str`, `int`, `list`…: use these, never a local copy).
 - `src/server/`: `pi-durable serve`: hub, connections, Unix socket and WebSocket transports, auth, push, backup.
 - `src/client/`: attached TUI and SSH connector: `attach.ts`, `remote-session.ts`, `unix-link.ts`, `admin.ts` (the CLI's admin commands over the socket); `config.ts` and `remote.ts` select the central server before local chat resolution, `ssh-link.ts` and `bridge.ts` carry the socket over SSH, `machine-executor.ts` runs guarded tools with a durable local ledger, `machine-link.ts` wires it to the session.
-- `src/machines/routing.ts`: persisted per-request, run and agent-session execution targets; `src/server/machines.ts`: authenticated connector dispatch, never host fallback.
+- Machine routing spans four files: `src/runtime/routing.ts` (persisted per-request, run and agent-session execution targets), `src/server/machines.ts` (authenticated connector dispatch, never host fallback), `src/protocol/machines.ts` (the wire shapes) and `src/client/machine-executor.ts` (the connector's guarded execution).
 - `src/web/`: the phone web app, vanilla DOM TypeScript served type-stripped (own `tsconfig.json`; `sw.ts` and `sw/shell.ts`, the shell decisions it loads with `importScripts`, have `sw/tsconfig.json`). `format.ts`, `store.ts`, `link.ts`, `link-state.ts`, `outbox.ts` and `markdown.ts` stay DOM-free so `test/web/` runs them in Node.
 - `test/<area>/*.test.ts`: offline tests per area; `test/fixtures/` holds faux models.
 - `.agents/skills/`: agent skills installed locally (`npx skills add`), never committed and ignored by lint.
@@ -48,7 +50,7 @@ A change is done when both pass and the docs below still match the code.
 - **Tools on, held to protected folders.** A local launch and `serve` start with coding tools on unless
   `--no-tools` is passed (ADR 0025). Every tool runs through `GuardedEnv` (`src/runtime/guard.ts`): the chat's
   state and credentials hidden, system folders read-only, bash in bubblewrap; never hand the tools a bare
-  `NodeExecutionEnv` outside tests. `/tools on|off`
+  `NodeExecutionEnv` outside tests (`openInstance` requires a `protection`; only tests pass `'unguarded'`). `/tools on|off`
   switches them for the current launch only; never persist that choice. Launch config and the toggle share
   one tool list (`piTools`), and both reconfigure Pi and its agents. Remote SSH connectors have an additional
   local grant: their tools start **off** unless `--allow-tools` is explicit or `/tools on` confirms them. Neither

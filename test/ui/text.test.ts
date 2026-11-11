@@ -4,7 +4,7 @@ import {
   activeAgents, adhocAgents, archiveAdhocQuestion, archivedAgents, archivedText, archiveQuestion, deletionText, parseMessage,
   parseZoom, statusText, toolCommand, toolSummary,
 } from '../../src/ui/text.ts';
-import type { SessionStatus } from '../../src/ui/types.ts';
+import type { SessionStatus } from '../../src/protocol/session.ts';
 
 const STATUS: SessionStatus = {
   model: 'claude-cli/sonnet', thinkingLevel: 'high', toolsEnabled: false, busy: true, queued: 2,
@@ -60,7 +60,7 @@ test('archived agents are left out of counts and lists', () => {
   assert.deepEqual(activeAgents(agents).map(a => a.name), ['Scout', 'Quill']);
   assert.deepEqual(archivedAgents(agents).map(a => a.name), ['Old']);
   assert.deepEqual(adhocAgents(agents).map(a => a.name), ['Scout']);
-  const standing = { name: 'Scribe', role: 'main' as const, parent: 'Pi', busy: false, standing: true };
+  const standing = { name: 'Scribe', role: 'main' as const, parent: 'Pi', busy: false, standing: true as const };
   assert.deepEqual(adhocAgents([standing]), []);
 });
 

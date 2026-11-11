@@ -1,7 +1,7 @@
 // Text helpers of the web app with no DOM: the header status line, sheet headers, pairing and load wording. The
 // wording both front ends share is in src/ui/text.ts. Also `inOrder`, which keeps attached images in the order they
 // were picked, here so Node tests reach it.
-import type { MemoryStats, ModelChoice, SessionStatus, ViewLine } from '../protocol/messages.ts';
+import type { MemoryStats, ModelChoice, SessionStatus, ViewLine } from '../protocol/session.ts';
 import { activeAgents, modelRef, size } from '../ui/text.ts';
 
 /** Arguments for the expanded tool view: pretty JSON when they parse, else as they streamed. */
@@ -68,7 +68,7 @@ export function base64UrlBytes(text: string): Uint8Array<ArrayBuffer> {
 }
 
 /** A pairing code as typed: Crockford base32 upper-cased (I and L read as 1, O as 0), as `XXXX-XXXX`. */
-export function normalizeCode(input: string): string {
+export function formatCodeInput(input: string): string {
   const chars = input.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/[^0-9A-HJKMNP-TV-Z]/g, '').slice(0, 8);
   return chars.length > 4 ? `${chars.slice(0, 4)}-${chars.slice(4)}` : chars;
 }

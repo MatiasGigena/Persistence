@@ -1,18 +1,18 @@
-// The host's state as the UI sees it (src/ui/types.ts): Pi's chat, status, memory view, and agents.
+// The host's state as the UI sees it (src/protocol/session.ts): Pi's chat, status, memory view, and agents.
 import { InboxDoc } from '@earendil-works/pi-durable';
 import type { AgentState, ModelRef } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { archiveAgents, listAgents, restoreAgent, stopAgents } from '../agents/index.ts';
-import { updateSettings } from './config.ts';
+import { updateSettings } from '../config/settings.ts';
 import { isThinkingLevel } from '../runtime/thinking.ts';
 import { errorMessage } from '../protocol/util.ts';
-import type { Config } from './config.ts';
-import { start } from '../memory/view.ts';
+import type { Config } from '../config/options.ts';
+import { posStart } from '../memory/view.ts';
 import { imagesProblem, modelChooser, thinkingLevels } from '../runtime/models.ts';
 import type { Instance } from '../runtime/runtime.ts';
 import { ConversationFeed } from './feed.ts';
-import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../ui/types.ts';
-import { NotFound, Unavailable } from '../ui/errors.ts';
+import type { AgentStatus, ChatFeed, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../protocol/session.ts';
+import { Unavailable } from '../protocol/errors.ts';
 
 /**
  * The launch choices the status line falls back on until Pi's stored agent says otherwise; `setModel()` saves to
@@ -191,8 +191,7 @@ export async function createUiSession(
     memoryView: () => Promise.resolve(memoryLines(instance)),
     async zoom(id, n) {
       if (!memory) throw new Unavailable('Memory is not open (inspection only).');
-      // Memory.zoom throws only for a line or message the log does not have.
-      try { return memory.zoom(id, n); } catch (error) { throw new NotFound(errorMessage(error), { cause: error }); }
+      return memory.zoom(id, n);
     },
     models: () => chooser.list(currentModel()),
     setModel(provider, id) {
@@ -272,6 +271,6 @@ export function memoryLines({ memory }: Pick<Instance, 'memory'>): ViewLine[] {
   if (!memory) return [];
   return memory.view.parts.map(p => {
     const line = memory.renderLine(p);
-    return { id: start(p), n: 2 ** p.l, text: line.slice(line.indexOf('|') + 1) };
+    return { id: posStart(p), n: 2 ** p.l, text: line.slice(line.indexOf('|') + 1) };
   });
 }

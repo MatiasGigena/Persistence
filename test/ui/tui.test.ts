@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
+import { drawn, until } from '../fixtures/until.ts';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
-import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
 import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui } from '../../src/ui/tui/app.ts';
 import { statusText } from '../../src/ui/text.ts';
 import type { TuiInfo } from '../../src/ui/tui/app.ts';
@@ -53,7 +53,10 @@ class FakeSession implements UiSession {
   send(text: string): Promise<void> { this.sent.push(text); return Promise.resolve(); }
   abort(): Promise<void> { this.aborts++; return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
-  stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
+  stopAgents(name?: string): Promise<readonly string[]> {
+    this.stopped.push(name);
+    return name === 'ghost' ? Promise.reject(new Error('No agent named ghost. The agents are Ada, Bob.')) : Promise.resolve([name ?? 'Ada']);
+  }
   archiveAgents(): Promise<readonly string[]> { return Promise.resolve([]); }
   restoreAgent(): Promise<readonly string[]> { return Promise.resolve([]); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
@@ -118,13 +121,6 @@ class FakeTerminal implements Terminal {
 
 const plain = (lines: readonly string[]): string[] => lines.map(line => stripTerminalSequences(line).trimEnd());
 
-/** Polls `check` instead of sleeping a fixed time, so a loaded machine only makes a test slower. */
-async function until(check: () => boolean, what: string, wait = (): Promise<unknown> => delay(20)): Promise<void> {
-  for (const end = Date.now() + 5_000; !check(); await wait()) if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
-}
-
-/** Input is handled synchronously but drawn on a later tick: output past `mark` means the frame after the input is drawn. */
-const drawn = (terminal: FakeTerminal, mark: number): Promise<void> => until(() => terminal.output.length > mark, 'a frame after the input');
 
 /** Starts the TUI on a fake terminal; returns it with the promise of its exit. */
 async function startTui(session: FakeSession, signal?: AbortSignal, terminal = new FakeTerminal(),
@@ -342,10 +338,10 @@ test('the first Ctrl+C says in the footer that a second one quits, until the sec
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
   const tick = async (): Promise<void> => { t.mock.timers.tick(20); await new Promise(resolve => setImmediate(resolve)); };
   terminal.type('draft', '\x03');
-  await until(() => /ctrl\+c again/.test(footer()), 'the hint', tick);
+  await until(() => /ctrl\+c again/.test(footer()), 'the hint', { wait: tick });
   assert.match(footer(), /ctrl\+c again to quit/, 'kept on a phone-width footer');
   t.mock.timers.tick(1_000);
-  await until(() => !/ctrl\+c again/.test(footer()), 'the hint to expire', tick);
+  await until(() => !/ctrl\+c again/.test(footer()), 'the hint to expire', { wait: tick });
   assert.equal(terminal.stopped, false);
   terminal.type('\x03', '\x03');
   await done;
@@ -594,12 +590,7 @@ test('/stop all stops Pi and every agent; /stop Name stops one agent', async () 
   assert.deepEqual(session.stopped, [undefined, 'Bob', 'ghost']);
   assert.match(terminal.text(), /Stopped Ada\./);
   assert.match(terminal.text(), /Stopped Bob\./);
-  assert.match(terminal.text(), /No agent named ghost\./);
-  assert.doesNotMatch(terminal.text(), /Agents:/, 'no list when there are no agents');
-  session.update({ agents: [{ name: 'Ada', role: 'main', parent: 'Pi', busy: false }, { name: 'Bob', role: 'sub', parent: 'Ada', busy: true }] });
-  terminal.type('/stop ghost', '\r');
-  await until(() => /Agents: Ada, Bob\./.test(terminal.text()), 'the agent list');
-  assert.match(terminal.text(), /No agent named ghost\. Agents: Ada, Bob\./);
+  assert.match(terminal.text(), /No agent named ghost\. The agents are Ada, Bob\./, 'the session\'s refusal, as it worded it');
   assert.deepEqual(session.sent, []);
   terminal.type('/exit', '\r');
   await done;

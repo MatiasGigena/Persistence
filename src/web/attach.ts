@@ -2,7 +2,7 @@
 // into ChatImages that pass the server's check (protocol/images.ts). One that is too large, too big a picture, or of
 // another type (HEIC from an iPhone) is redrawn on a canvas, scaled down to IMAGE_LIMITS.maxSide, as JPEG.
 import { IMAGE_LIMITS, IMAGE_TYPES, imageProblem } from '../protocol/images.ts';
-import type { ChatImage } from '../protocol/messages.ts';
+import type { ChatImage } from '../protocol/images.ts';
 
 /** JPEG qualities tried in turn until the image fits. */
 const QUALITIES = [0.86, 0.72, 0.55] as const;

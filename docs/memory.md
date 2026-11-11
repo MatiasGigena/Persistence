@@ -346,7 +346,7 @@ zoom("Name")
   30,000 characters is several ids; each `zoom(id, 1)` gives one part.
 - Bad arguments are an error that names the tree's roots (a node per power of two in `T`, largest first), where any
   zoom can start, as upstream's `zoom` does: `No line 0+16: …. The tree's roots: 0+8, 8+2.`
-- `zoom("Name")` gives an agent's whole chat, from `agentTranscript` in `src/agents/index.ts`. A string of digits is
+- `zoom("Name")` gives an agent's whole chat, from `agentTranscript` in `src/agents/transcript.ts`. A string of digits is
   read as an id; square brackets around a name are stripped. `zoom("Pi")` gives Pi's own transcript.
 
 The tool's output is limited to 256 KiB and 100,000 lines.
@@ -381,11 +381,11 @@ Directories are created with mode 0700 and files with 0600. `view.json.<pid>.tmp
 |---|---|
 | `src/memory/index.ts` | Public exports: `openMemory`, `Memory`, `KINDS`, `isKind`, `createUniiExtension`, `REPORT_KIND`, `createPiAiSummarizer`, `CompactionRefused`, `defaultCompactionModel`, `PROMPT`, and their types (`Kind`, `MemoryRecord`, `MemoryOptions`, `Summarizer`, `UniiExtensionOptions`, …). |
 | `src/memory/memory.ts` | `Memory`: the log, the tree, both views, the compactor queues, `render`, `settle`, `whole`, `say`, `zoom`, `date`, `previousExchange`, `status`; `openMemory` and its one-open-per-process guard. |
-| `src/memory/view.ts` | `View`: the sawtooth `fit` and the `due` order; node helpers `start`, `end`, `key`, `name`, `parentOf`; `cut` for a view ending before message k. |
+| `src/memory/view.ts` | `View`: the sawtooth `fit` and the `due` order; node helpers `posStart`, `posEnd`, `posKey`, `posLabel`, `parentOf`; `cut` for a view ending before message k. |
 | `src/memory/prompt.ts` | The system prompt `PROMPT`, the compaction tasks `leafTask` and `mergeTask`, `tooLong`, the 512-dash `RULER`, the placeholder text; adapted from upstream's `prompt.txt` and `Memory.ts`. |
 | `src/memory/summarizer.ts` | The default pi-ai summarizer, `CompactionRefused` (an answer with no line), and the compaction model choice (`CHEAP_MODELS`, `defaultCompactionModel`). |
 | `src/memory/extension.ts` | The `uniichat` pi-durable extension: the request rewrite, the logging hooks, the `zoom` and `date` tools, the declined compactions. |
-| `src/memory/util.ts` | `NODE`, `CAP`, `clip`, `split`, `cutLine`, `cleanLine`, byte helpers, date formatting, `appendJson`, `atomicWrite`, `errorMessage`, `isObject`. |
+| `src/memory/util.ts` | `NODE`, `CAP`, `clip`, `split`, `cutLine`, `cleanLine`, `bytes`, `flat`, `hash`, date formatting. (`cutBytes` is in `src/protocol/util.ts`.) |
 
 ## Deviations from UniiChat
 

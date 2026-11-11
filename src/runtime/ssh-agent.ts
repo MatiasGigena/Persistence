@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { errorMessage } from '../protocol/util.ts';
+import { errorCode, errorMessage } from '../protocol/util.ts';
 
 export interface SshAgent {
   /** For SSH_AUTH_SOCK. */
@@ -24,7 +24,7 @@ function runFailure(command: string, args: readonly string[], env: NodeJS.Proces
     const child = spawn(command, args, { env, detached: true, stdio: ['ignore', 'ignore', 'pipe'], timeout: 10_000 });
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-    child.once('error', error => done('code' in error && error.code === 'ENOENT' ? `${command} is not installed` : error.message));
+    child.once('error', error => done(errorCode(error) === 'ENOENT' ? `${command} is not installed` : error.message));
     child.once('close', code => done(code === 0 ? undefined : stderr.trim().split('\n').at(-1) || `${command} exited with ${String(code)}`));
   });
 }
@@ -57,7 +57,7 @@ export async function startSshAgent(keys: readonly string[], warn: (message: str
     const settle = (why: string | undefined): void => { clearTimeout(timer); done(why); };
     agent.stdout.once('data', () => settle(undefined));
     agent.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-    agent.once('error', error => settle('code' in error && error.code === 'ENOENT' ? 'ssh-agent is not installed' : error.message));
+    agent.once('error', error => settle(errorCode(error) === 'ENOENT' ? 'ssh-agent is not installed' : error.message));
     agent.once('exit', code => settle(stderr.trim().split('\n').at(-1) || `ssh-agent exited with ${String(code)}`));
   });
   agent.stdout.resume();

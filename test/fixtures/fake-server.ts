@@ -16,10 +16,8 @@
 // does not fit, to test resync. Web peers (`connect({ peer: 'web' })`) get `forbidden` for admin ops, socket peers
 // for push ops; `tools.remote` 'off' forbids web peers to enable tools.
 import { CloseCode, ENABLE_TOOLS, ROOT_FEED, SOCKET_ONLY, WEB_ONLY } from '../../src/protocol/messages.ts';
-import type {
-  ChatItem, Device, ErrorCode, ModelChoice, NoticeLevel, Op, Peer, PushSubscriptionJson, Request, ServerMessage,
-  SessionStatus, ToolsPolicy, ViewLine,
-} from '../../src/protocol/messages.ts';
+import type { Device, ErrorCode, Op, Peer, PushSubscriptionJson, Request, ServerMessage, ToolsPolicy } from '../../src/protocol/messages.ts';
+import type { ChatItem, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../../src/protocol/session.ts';
 import { diffItems, wireItem } from '../../src/protocol/diff.ts';
 import { isParseError, parseClientMessage, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';

@@ -6,13 +6,15 @@ import type { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
+import { until as untilFixture } from '../fixtures/until.ts';
 import type { TestContext } from 'node:test';
 import { WebSocket } from 'ws';
-import type { ServeSettings } from '../../src/host/config.ts';
+import type { ServeSettings } from '../../src/config/paths.ts';
 import { CloseCode, LIMITS } from '../../src/protocol/messages.ts';
 import { Devices } from '../../src/server/auth.ts';
 import type { PeerHub, PeerLink } from '../../src/server/link.ts';
-import { HOST, MAX_PAYLOAD, PAIR_RATE, startWebListener } from '../../src/server/transport-ws.ts';
+import { HOST, MAX_WS_PAYLOAD, PAIR_RATE, startWebListener } from '../../src/server/transport-ws.ts';
 import type { WebListener } from '../../src/server/transport-ws.ts';
 
 const ORIGIN = 'https://vps.tail1.ts.net';
@@ -95,10 +97,7 @@ const field = (text: string | undefined, key: string): unknown => {
   return typeof value === 'object' && value !== null && key in value ? Object.entries(value).find(([k]) => k === key)?.[1] : undefined;
 };
 
-async function until(condition: () => boolean): Promise<void> {
-  for (let i = 0; i < 500 && !condition(); i++) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.ok(condition(), 'timed out');
-}
+const until = (condition: () => boolean): Promise<void> => untilFixture(condition, 'the condition', { wait: () => delay(5) });
 
 test('the upgrade needs the login, the Origin and a paired cookie, and is refused before upgrading', async t => {
   const { base, cookie, hub, devices } = await setup(t);
@@ -170,7 +169,7 @@ test('frame limits: a long text gets bad_request and the socket stays; over maxP
   assert.equal(hub.received[0], '{"t":"ping","n":1}', 'the long text was not delivered; the next one was');
 
   const closed = closeOf(ws);
-  ws.send('a'.repeat(MAX_PAYLOAD + 1));
+  ws.send('a'.repeat(MAX_WS_PAYLOAD + 1));
   assert.equal((await closed).code, 1009);
 
   const binary = await connect(base, cookie);

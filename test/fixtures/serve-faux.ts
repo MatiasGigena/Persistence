@@ -7,7 +7,7 @@
 // no partial between the first and the final message, so the reply arrived as two puts and no append.
 import { createModels } from '@earendil-works/pi-ai/models';
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux';
-import { parseConfig } from '../../src/host/config.ts';
+import { parseConfig } from '../../src/config/options.ts';
 import { serve } from '../../src/server/serve.ts';
 
 process.umask(0o077);

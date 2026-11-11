@@ -57,12 +57,16 @@ function command(args: Input): string {
     + flags.map(quote).join(' ');
 }
 
+/** Persisted names (ADR 0029): never rename. */
+export const AUTOREVIEW_EXTENSION = 'autoreview';
+export const AUTOREVIEW_TOOL = 'autoreview';
+
 export type AutoreviewExtension = Extension & { readonly tools: readonly ToolRegistration[] };
 
 /** Run through the host's existing guarded/routed bash implementation, without offering bash to the agent. */
 export function createAutoreviewExtension(bash: ToolRegistration): AutoreviewExtension {
   const tool = defineTool({
-    name: 'autoreview',
+    name: AUTOREVIEW_TOOL,
     description: 'Run the installed /autoreview skill with a fixed P0–P2 threshold. Codex first, with the standalone CLI. '
       + 'Preserves helper isolation, Git capture, validation and exit status. Exit 1 can mean findings, not reviewer unavailability. '
       + 'A failed/incomplete/filtered review is not clean. No general shell, edits, raw flags or isolation overrides.',
@@ -73,5 +77,5 @@ export function createAutoreviewExtension(bash: ToolRegistration): AutoreviewExt
     outputLimits: { retain: 'tail' },
     execute: (args, api, context) => bash.execute({ command: command(args) }, api, context),
   });
-  return { name: 'autoreview', tools: [tool] };
+  return { name: AUTOREVIEW_EXTENSION, tools: [tool] };
 }

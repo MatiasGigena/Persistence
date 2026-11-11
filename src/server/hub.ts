@@ -2,10 +2,11 @@
 // once however many peers watch them, serves the ops, applies the remote tools policy (ADRs 0019, 0025), and tells the
 // push notifier when Pi finishes or an agent reports while no one is looking.
 import { CloseCode, ENABLE_TOOLS, ErrorCode, ROOT_FEED } from '../protocol/messages.ts';
-import type { ArchiveTarget, ChatItem, NoticeLevel, SessionStatus, ToolsPolicy, Welcome } from '../protocol/messages.ts';
+import type { ToolsPolicy, Welcome } from '../protocol/messages.ts';
+import type { ArchiveTarget, ChatItem, NoticeLevel, SessionStatus } from '../protocol/session.ts';
 import { IMAGE_LIMITS, imageProblem } from '../protocol/images.ts';
 import { PROTOCOL } from '../protocol/version.ts';
-import type { ChatFeed, UiSession } from '../ui/types.ts';
+import type { ChatFeed, UiSession } from '../protocol/session.ts';
 import { Connection, OpError } from './connection.ts';
 import type { ConnectionHost, Handlers } from './connection.ts';
 import type { DeviceRegistry, PeerHub, PeerLink, PushNotifier } from './link.ts';

@@ -234,8 +234,8 @@ describe('delegate: a session per task (offline)', { concurrency: false, timeout
       const oldest = await agentTranscript(instance.harness, context, 'Coder#1');
       assert.match(oldest, /^session 1 of 2\n\n0\|note: .*\n\n1\|user: \[from Pi\] Task one\.\n\n2\|Coder: One done\.$/);
       assert.equal(await agentTranscript(instance.harness, context, 'Coder#1', 1), oldest, 'a short chat is one page');
-      assert.equal(await agentTranscript(instance.harness, context, 'Coder#3'), 'No session 3: Coder has 2 sessions.');
-      assert.equal(await agentTranscript(instance.harness, context, 'Coder#0'), 'No session 0: Coder has 2 sessions.');
+      await assert.rejects(agentTranscript(instance.harness, context, 'Coder#3'), { name: 'NotFound', message: 'No session 3: Coder has 2 sessions.' });
+      await assert.rejects(agentTranscript(instance.harness, context, 'Coder#0'), { name: 'NotFound', message: 'No session 0: Coder has 2 sessions.' });
 
       // An ad-hoc agent has no delegate and no session line.
       await ask('lead');

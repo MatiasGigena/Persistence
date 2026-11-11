@@ -40,7 +40,7 @@ describe('archive sweeper (offline)', { concurrency: false, timeout: 30_000 }, (
     }));
     let now = T0;
     const warnings: string[] = [];
-    const options: InstanceOptions = { databasePath: join(cwd, 'chat.sqlite'), cwd, models, model, rosterChecks: false,
+    const options: InstanceOptions = { protection: 'unguarded', databasePath: join(cwd, 'chat.sqlite'), cwd, models, model, rosterChecks: false,
       clock: () => now, sweepMs: 20, onWarning: (message) => warnings.push(message) };
     const spawn = async (instance: Instance, name: string) => {
       await (await instance.root.submit({ type: 'input', content: `spawn ${name}` }, instance.context)).wait(instance.context);

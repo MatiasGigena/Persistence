@@ -6,7 +6,7 @@ import type { ServerMessage } from '../../src/protocol/messages.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import { backoff, Link } from '../../src/web/link.ts';
 import { RequestError } from '../../src/protocol/request-error.ts';
-import type { Gate, LinkState, SocketEvents } from '../../src/web/link.ts';
+import type { GateProbe, LinkState, SocketEvents } from '../../src/web/link.ts';
 
 /** One fake WebSocket: records what the client sent, and lets the test play the server. */
 class FakeSocket {
@@ -31,7 +31,7 @@ class FakeSocket {
 
 const flush = async (): Promise<void> => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
 
-function harness(t: TestContext, gate?: Gate) {
+function harness(t: TestContext, gate?: GateProbe) {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const sockets: FakeSocket[] = [], states: LinkState[] = [], messages: ServerMessage[] = [];
   const link = new Link({
@@ -165,7 +165,7 @@ test('bye 4000 and 4001 close for good; other codes reconnect', async t => {
 });
 
 test('the gate: offline retries, unpaired stops, poke retries at once', async t => {
-  let answer: Awaited<ReturnType<Gate>> = 'offline';
+  let answer: Awaited<ReturnType<GateProbe>> = 'offline';
   const { link, sockets, states } = harness(t, () => Promise.resolve(answer));
   link.start();
   await flush();

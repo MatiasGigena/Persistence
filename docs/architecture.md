@@ -67,7 +67,7 @@ agents, and each agent is another conversation in the same database.
   `/agents`, `/mem`, `/model` and `/effort` overlays (`panels/model.ts` is the model picker, `panels/effort.ts` the
   reasoning effort picker;
 `panels/frame.ts` also has the one-key confirmation `/tools on` and archiving in `/agents` ask). It knows the
-host only through `src/ui/types.ts`. The wording it shares with the web app (tool summaries, archive prompts,
+host only through the session contract, `src/protocol/session.ts`. The wording it shares with the web app (tool summaries, archive prompts,
 `/status`, zoom parsing) is in `src/ui/text.ts`, which both import.
   Below 60 columns (`NARROW` in `theme.ts`) every part switches to a compact layout
   for phones (ADR 0014).
@@ -100,7 +100,8 @@ host only through `src/ui/types.ts`. The wording it shares with the web app (too
   `browser`, `web_fetch` and `autoreview` kits. `autoreview.ts` exposes only the installed skill helper, always through P2,
   using the guarded/routed bash implementation without offering bash to the Reviewer (ADR 0029). `browser.ts` drives a headless Chromium per agent, shared by all its sessions (Playwright, a
   persistent profile in `chat.unii/browser/<agent name>/`; `browserKey` in `runtime.ts` maps a session to its agent); `web-fetch.ts` fetches a public page as Markdown. Pi has neither.
-- **Machine routing** (`src/machines/routing.ts`): binds request IDs, root runs and agent conversations to
+- **Machine routing** (`src/runtime/routing.ts`; with `src/server/machines.ts`, `src/protocol/machines.ts` and
+  `src/client/machine-executor.ts`, the four machine files): binds request IDs, root runs and agent conversations to
   immutable execution destinations, separately from the re-derived agent configuration. Spawn and standing-agent
   delegation inherit the caller's destination. New agent deliveries atomically inherit their exact source session's
   route, so report-only runs can continue the same task. Busy root sends reject; unmapped/legacy or mixed-machine
@@ -193,7 +194,7 @@ Details: [agents.md](agents.md), [decisions/](decisions/).
 | `chat.unii/view.json` | the chat view and the compaction view | `Memory.save` | written to a temp file, fsynced, renamed |
 | `chat.unii/browser/<agent name>/` | a Chromium profile per agent that used the browser, shared by all its sessions (any other caller: its conversation ID): cookies, localStorage | Chromium, under the host | Chromium's own; not backed up |
 | `chat.sqlite.lock` | nothing; the flock target | `flock` | none needed |
-| `settings.json` (beside the database) | default model, effort, optional standing-agent roster | `writeSettings` (`src/host/config.ts`), on `/model` and `/effort` (preserves other keys) | written to a temp file, fsynced, renamed |
+| `settings.json` (beside the database) | default model, effort, optional standing-agent roster | `writeSettings` (`src/config/settings.ts`), on `/model` and `/effort` (preserves other keys) | written to a temp file, fsynced, renamed |
 | workstation `client.json` and `machine-id` | stable machine identity and optional SSH preferences, never a tools grant | `src/client/config.ts` | private files, fsynced before publication |
 | workstation `machine-tools/<execution hash>/` | call intent/fingerprint and cached result, not a local chat | `MachineExecutor` | intent and directory fsynced before effects; result atomically replaced and fsynced |
 | `serve/devices.json`, `push.json`, `vapid.json` | paired devices, push subscriptions, the VAPID keys | the server (`store.ts` `writeJson`) | written to a temp file, fsynced, renamed, directory fsynced |
@@ -252,10 +253,12 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 |---|---|
 | `bin/pi-durable` | Bash launcher: picks Node (`PI_DURABLE_NODE`, `node`, or Pi's private Node) and runs `src/cli.ts` |
 | `src/cli.ts` | Entry: parses arguments, checks Node, selects SSH/bridge before local state; otherwise resolves paths and runs the host under `flock` |
-| `src/host/config.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `backup`), path resolution (data dir, database, auth file, `PI_DURABLE_CHROMIUM`) and `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), the model's precedence, `settings.json`, the server's environment (`serveSettings`) |
+| `src/config/options.ts` | `--help` text, argument parsing (subcommands `serve`, `serve pair`, `serve devices`, `serve agents`, `backup`, `connect`, `bridge`), the model's precedence, `resolveOptions` (data dir, database, auth file) and the `Config` the CLI hands to the host as JSON |
+| `src/config/paths.ts` | `statePaths` (lock, `.unii` dir, `settings.json`, socket, `serve/`), `resolveSocketPath`, `PI_DURABLE_CHROMIUM`, the server's environment (`serveSettings`) |
+| `src/config/settings.ts` | `settings.json`: the saved model and effort, the standing-agent roster (`parseRoster`), atomic writes that keep the other keys |
 | `src/host/host.ts` | Model runtime and credential check, modes, terminal chat, /commands, reply watcher, shutdown |
-| `src/host/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
-| `src/host/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
+| `src/session/session.ts` | `createUiSession`: the host's state as a `UiSession` (Pi's chat, status, memory view, agents, model and effort changes) |
+| `src/session/feed.ts` | One conversation as a `ChatFeed`: pi-durable's conversation view folded into `ChatItem`s |
 | `src/runtime/runtime.ts` | `openInstance`: SQLite, Harness, extensions, the tool kits (`builtinKits`, `browser`, `web_fetch`, `autoreview`), Pi's agent config (`piTools`, `piInstructions`), in-session `setModel` and `setTools`, `exclusive` (a synchronous step on the database, for backups), `close` (browsers and Pi's SSH agent included); `browserKey` (a conversation's agent name, the browser's key), `localOnlyBrowser` (whether that key's browser is local-only: an agent with `read`, `coding` or `autoreview`, or its subs), `rosterWarnings` (the launch's non-blocking checks of the standing agents' Chromium, models and credentials); `transcript`, `answerText` |
 | `src/runtime/models.ts` | Model checks shared by launch and `/model` (catalog, credentials, the `anthropic` refusal) and `modelChooser`, the list `/model` shows |
 | `src/runtime/ssh-agent.ts` | `startSshAgent`: Pi's own `ssh-agent` with `PI_DURABLE_SSH_KEYS` only, bash's `SSH_AUTH_SOCK` (ADR 0030); started by `openInstance` and by an SSH connector |
@@ -263,6 +266,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/runtime/input.ts` | `userInput`: the user message a send becomes (text and images), shared by the runtime and routing |
 | `src/runtime/thinking.ts` | `THINKING` and `isThinkingLevel`: the reasoning efforts the CLI, settings and `/effort` accept |
 | `src/runtime/files.ts` | `atomicWrite` and `appendJson`: fsynced writes for settings, the server's stores and the memory directory |
+| `src/runtime/console.ts` | `redirectConsole`: console.error and console.warn as chat notices while the TUI or the server runs |
 | `src/memory/index.ts` | Public exports of the memory |
 | `src/memory/memory.ts` | `Memory`: log, tree, views, compactor scheduling, zoom, date, status; `openMemory` |
 | `src/memory/view.ts` | The view: tree lines tiling the log, sawtooth merging, `cut` |
@@ -270,24 +274,28 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/memory/summarizer.ts` | Cheap compaction model choice and the pi-ai summarizer |
 | `src/memory/extension.ts` | The `uniichat` extension: `beforeRequest` view, logging hooks, `zoom` and `date` tools |
 | `src/memory/util.ts` | Sizes, clipping and splitting, line cutting, dates |
-| `src/ui/types.ts` | The contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); imports only protocol types |
 | `src/ui/text.ts` | Wording both front ends show: `toolSummary`, agent archive prompts and results, `statusText` (`/status`), zoom parsing; no DOM, Node or pi-tui, served at `/ui/text.ts` |
-| `src/ui/errors.ts` | `NotFound` and `Unavailable`: the session's refusals that the server reports as `not_found` and `unavailable` |
 | `src/ui/tui/app.ts`, `chat.ts`, `footer.ts`, `theme.ts` | The terminal chat: pi-tui layout and editor, the chat blocks, the one-line status, the palette |
 | `src/ui/tui/panels/*` | The `/agents`, `/mem`, `/model` and `/effort` overlays and their shared frame, lists and confirmation box |
 | `src/providers/claude-cli.ts` | The `claude-cli` pi-ai provider: one `claude -p` per request, stream-json to pi-ai events, history folding, auth check |
 | `src/providers/claude-cli-mcp.ts` | Stub stdio MCP server that lists Pi's tools to the CLI and runs none |
 | `src/providers/anthropic.ts` | `anthropicSubscriptionSource`: detects a Claude subscription credential on the `anthropic` provider |
-| `src/agents/entries.ts` | `REPORT_KIND`, `MESSAGE_KIND` and `agentInputOf`: the agents' input entries and the one decoder of their data, read by the memory, the UI and the terminal host |
-| `src/agents/roster.ts` | The standing agents' roster: `DEFAULT_ROSTER`, the kit names (`KITS`), agent name rules; no pi-durable imports, so `config.ts` parses settings.json's `agents` with it |
+| `src/agents/entries.ts` | `REPORT_KIND`, `MESSAGE_KIND` and `agentInputOf`: the agents' input entries and the one decoder of their data; `text` and `assistantText`, a message's text, read by the memory, the UI and the terminal host |
+| `src/agents/roster.ts` | The standing agents' roster: `DEFAULT_ROSTER`, the kit names (`KITS`), agent name rules; no pi-durable imports, so `src/config/settings.ts` parses settings.json's `agents` with it |
 | `src/tools/browser.ts` | `createBrowserExtension`: the `browser` extension's eight `browser_*` tools, a headless Chromium and persistent profile per key (`keyOf`: the agent's name, from the host), one queue and a 60 s timeout per operation, URL redaction, `close()` |
 | `src/tools/autoreview.ts` | `createAutoreviewExtension`: dedicated skill-helper invocation, fixed P0–P2; guarded local shell or pinned connector execution, no raw commands or isolation overrides |
 | `src/tools/web-fetch.ts` | `createWebFetchExtension`: the `web-fetch` extension's `web_fetch` tool, a page as Markdown (Readability, Turndown) or a PDF as text; refuses private destinations, redirects included |
 | `src/tools/schema.ts` | `literal`: the TypeBox-shaped string literal the tools' frozen JSON Schemas use |
 | `src/tools/show-image.ts` | `createShowImageExtension`: `show_image`, an existing image file shown in the chat and given to the model, read through `GuardedEnv` (ADR 0031) |
 | `src/tools/codemode.ts` | The `codemode` extension: model-written scripts in a QuickJS sandbox that call the conversation's tools (`SCRIPT_TOOLS`) as nested tool calls (ADR 0033) |
-| `src/agents/index.ts` | The `agents` extension: registry, roles, tools, anchor and deliver tasks; `syncAgents`, `listAgents`, `agentTranscript` |
-| `src/machines/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |
+| `src/agents/index.ts` | `createAgentsExtension` and the package's public API (re-exports the modules below) |
+| `src/agents/registry.ts` | `AgentsDoc` (roles, parents, conversations, answered calls), the Anchor task, `listAgents` and the lookups the other modules share |
+| `src/agents/setup.ts` | `syncAgents`: each agent's choices derived from Pi's and its roster entry; the standing agents' creation; `missingKits` |
+| `src/agents/delivery.ts` | The Deliver task: every input to an agent, keyed by task ID, and the report back to its parent |
+| `src/agents/lifecycle.ts` | `stopAgents`, `deleteAgent`, `archiveAgents`, `restoreAgent`, `purgeArchived` |
+| `src/agents/transcript.ts` | `agentTranscript`: an agent's whole chat for `zoom("Name")`, in pages |
+| `src/agents/prompts.ts`, `tools.ts` | The role texts of the agents' prompt section; the agent tools and the guard hook |
+| `src/runtime/routing.ts` | Immutable request/run/agent-session pins, spawn/delegate inheritance, routed native coding tools, fail-closed unpinned execution |
 | `src/protocol/machines.ts` | Machine targets, registrations, tool calls/results/cancels and JSON narrowing shared by server and connector |
 | `src/protocol/messages.ts` | Wire protocol v4: every message, the op table (`Ops`), item ops, error and close codes, limits |
 | `src/protocol/parse.ts` | `parseClientMessage`, `parseServerMessage`: JSON checked field by field from `unknown` |
@@ -295,7 +303,10 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/protocol/mirror.ts` | `applyOps`: a client's copy of a feed, or `'resync'` |
 | `src/protocol/images.ts` | Images on the wire and in the chat: accepted types, magic bytes, size caps |
 | `src/protocol/version.ts` | `PROTOCOL` |
-| `src/protocol/util.ts` | `isRecord`, `errorMessage`, `errorCode`, `ShapeError`: the one copy of each, shared by Node and the browser |
+| `src/protocol/lines.ts` | `lineSplitter`: the NDJSON framing of the Unix socket, the SSH bridge and the admin commands |
+| `src/protocol/session.ts` | The session contract between the host's state and its clients (`UiSession`, `ChatFeed`, `ChatItem`, `SessionStatus`); type-only |
+| `src/protocol/errors.ts` | `NotFound` and `Unavailable`: the session's refusals that the server reports as `not_found` and `unavailable` |
+| `src/protocol/util.ts` | `isRecord`, `errorMessage`, `errorCode`, `cutBytes`, `ShapeError` and the narrowers that throw it (`obj`, `str`, `int`, `list`…): the one copy of each, shared by Node and the browser |
 | `src/protocol/request-error.ts` | `RequestError`: a client request's failure (the server's code, `disconnected` or `timeout`), shared by the Node clients and the web app |
 | `src/client/attach.ts` | `probes`, `connect` (the probe), `attachChat` (the CLI's attach routing), `runAttached` (the TUI on a server, "Detached; the server keeps working."), `serverAnswers` |
 | `src/client/remote-session.ts` | `RemoteSession`: a `UiSession` over a `ServerLink`; mirrors, status, notices, requests, `send` resent with its requestId after a reconnect, agent feeds re-opened; `attached` for `TuiInfo` |
@@ -310,7 +321,7 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/server/machines.ts` | `MachineBroker`: per-connector registration/grant, exact machine/cwd dispatch, reconnect waiting, results and cancellation |
 | `src/server/hub.ts` | `Hub` (the `PeerHub`): connections, the op handlers, agent feeds by refcount, notices, the tools policy and idle tools-off, push triggers and their suppression |
 | `src/server/connection.ts` | `Connection`: one peer's handshake, requests (peer checks, in-flight limit), feed and status sync (`diffItems`, ≤50 ms, gated on `buffered()`, status ≤4/s), slow-peer and silence closes, visibility |
-| `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing; `lineSplitter` |
+| `src/server/transport-unix.ts` | `listenUnix`: the mode 600 NDJSON socket, stale socket replaced, `bye` before closing |
 | `src/client/admin.ts` | The CLI's admin client: `adminRequest` over the socket (owner checked), `backupOverSocket`, `pairCommand`, `devicesCommand`, `agentsCommand` |
 | `src/server/backup.ts` | `backup` (`VACUUM INTO` and the `.unii` (browser profiles left out) and settings copies in one step, then `prune`), `backupOffline`, `stamp` |
 | `src/server/store.ts` | `writeJson`, `readJson`, and narrowing helpers for `serve/`'s JSON files (mode 600, atomic) |
@@ -319,7 +330,8 @@ Memory kinds: `user`, `pi`, `tool`, `echo`, `work`, `note`.
 | `src/server/auth.ts` | `Devices` (the `DeviceRegistry`: pairing codes, `pd_device` cookies by sha256 in `serve/devices.json`), `gate` and `authenticate` (login allow-list, Origin, device) |
 | `src/server/static.ts` | The web app's files: `src/web/` at `/`, `src/protocol/`, `marked`; type stripping, ETags, the CSP; `assetsHash` for `welcome.assets` |
 | `src/web/index.html`, `manifest.webmanifest`, `offline.html`, `styles.css`, icons | The installable app shell; the only inline script is the `marked` import map, allowed by its CSP hash; `modulepreload` links fetch every startup module at once (ADR 0032) |
-| `src/web/main.ts` | Boots the app: screens changed by view transitions, the first load shown once whole (boot screen, then the chat's skeleton if it takes a while), pairing screen, connection banner, header, composer (one send, steer and stop button), chat settings |
+| `src/web/main.ts` | Boots the app: screens changed by view transitions, the first load shown once whole (boot screen, then the chat's skeleton if it takes a while), pairing screen, header, and the wiring of the link to the store, composer and banner |
+| `src/web/composer.ts`, `banner.ts`, `storage.ts` | `Composer`: the message box, its draft, the tray and the one send, steer and stop button, sending through the `Outbox`; `Banner`: the connection line and its retry button; `load`/`save`: web storage that tolerates being unavailable |
 | `src/web/tray.ts` | `AttachmentTray`: the images attached to the next message, their tiles and the files being read (ADR 0031) |
 | `src/web/outbox.ts`, `link-state.ts` | DOM-free: `Outbox` (sends not yet admitted, resent by request id after a reconnect) and `linkStep` (what a link state means for the banner, pairing, "gone" and reload screens) |
 | `src/web/link.ts` | WebSocket client: `/api/me` check, hello/welcome, ping, reconnect with backoff, close codes |

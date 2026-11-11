@@ -1,6 +1,14 @@
 // The entries that carry agents' inputs (src/agents/index.ts places them): their persisted kinds and the one decoder
-// of their data. Nothing here loads pi-durable, so the memory, the UI and the terminal host read them cheaply.
+// of their data, and the text of a message. Nothing here loads pi-durable, so the memory, the UI and the terminal host read them cheaply.
+import type { ImageContent, Message, TextContent, ThinkingContent, ToolCall } from '@earendil-works/pi-ai';
 import { isRecord } from '../protocol/util.ts';
+
+/** A message's text: its text blocks joined as the model wrote them, with no separator; images and calls left out. */
+export const text = (content: string | readonly (TextContent | ImageContent | ThinkingContent | ToolCall)[] | undefined): string =>
+  typeof content === 'string' ? content : (content ?? []).filter((block) => block.type === 'text').map((block) => block.text).join('');
+/** The text of an entry's assistant messages, joined. */
+export const assistantText = (entry: { readonly model?: readonly Message[] } | undefined): string => (entry?.model ?? [])
+  .filter((message) => message.role === 'assistant').map((message) => text(message.content)).join('');
 
 /** The entry kinds of agents' inputs; persisted in every chat, so frozen. */
 export const REPORT_KIND = 'agents.report';

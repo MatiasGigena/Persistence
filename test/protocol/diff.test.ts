@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { clip, diffItems, wireItem } from '../../src/protocol/diff.ts';
 import { LIMITS } from '../../src/protocol/messages.ts';
-import type { ChatItem, ItemOp } from '../../src/protocol/messages.ts';
+import type { ItemOp } from '../../src/protocol/messages.ts';
+import type { ChatItem } from '../../src/protocol/session.ts';
 import { applyOps } from '../../src/protocol/mirror.ts';
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 

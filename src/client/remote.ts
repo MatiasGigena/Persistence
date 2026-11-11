@@ -2,7 +2,7 @@
 import { realpath } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { Options } from '../host/config.ts';
+import type { Options } from '../config/options.ts';
 import { CLIENT, runAttached } from './attach.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import { clientConfigPath, machineId, readClientConfig, remoteTarget, saveClientConfig, validateTarget } from './config.ts';

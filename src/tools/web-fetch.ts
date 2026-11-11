@@ -37,18 +37,18 @@ const MAX_REDIRECTS = 5;
 const MAX_PDF_PAGES = 100;
 export const MAX_OUTPUT_CHARS = 50_000;
 
-export type LookupAddress = { readonly address: string; readonly family: number };
+export interface LookupAddress { readonly address: string; readonly family: number }
 /** Every address of `hostname`, as `dns.lookup(hostname, { all: true })` returns them. */
 export type Lookup = (hostname: string) => Promise<readonly LookupAddress[]>;
 
-export type WebFetchOptions = {
+export interface WebFetchOptions {
   /** Default: `node:dns` lookup of all addresses. */
   readonly lookup?: Lookup;
   /** Tests only: hosts (URL hostnames) allowed to resolve to non-public addresses. Default: none. */
   readonly allowPrivate?: (host: string) => boolean;
   /** Default 30 s, for the whole fetch including redirects and the body. */
   readonly timeoutMs?: number;
-};
+}
 
 export type WebFetchResult =
   | { readonly ok: true; readonly text: string; readonly url: string; readonly title: string; readonly chars: number }
@@ -242,8 +242,8 @@ function decodeText(bytes: Buffer, contentType: string): string {
  * Why a fetched page gave no usable content: the server's own answer (`http`, `too_large`, `unsupported`), or a page
  * that loaded but would not extract (`unreadable`, maybe JavaScript-rendered).
  */
-type Failure = { readonly kind: 'http' | 'too_large' | 'unsupported' | 'unreadable'; readonly message: string };
-type Extracted = { title: string; content: string; failure?: Failure };
+interface Failure { readonly kind: 'http' | 'too_large' | 'unsupported' | 'unreadable'; readonly message: string }
+interface Extracted { title: string; content: string; failure?: Failure }
 
 const isPDF = (url: URL, contentType: string) =>
   contentType.includes('application/pdf') || url.pathname.toLowerCase().endsWith('.pdf');

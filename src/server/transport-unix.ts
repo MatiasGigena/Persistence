@@ -3,8 +3,8 @@
 import { chmod, lstat, unlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import type { Server, Socket } from 'node:net';
-import { StringDecoder } from 'node:string_decoder';
 import { errorCode } from '../protocol/util.ts';
+import { lineSplitter } from '../protocol/lines.ts';
 import { ErrorCode, LIMITS } from '../protocol/messages.ts';
 import type { Bye, ErrorResponse } from '../protocol/messages.ts';
 import type { PeerHub, PeerLink } from './link.ts';
@@ -19,35 +19,12 @@ export interface UnixListener {
   close(): Promise<void>;
 }
 
-/**
- * Splits a byte stream into lines: `line` gets each one without its newline; a line longer than `max` code units is
- * skipped up to its newline, and `tooLong` is called once for it instead.
- */
-export function lineSplitter(max: number, line: (text: string) => void, tooLong: () => void): (chunk: Buffer) => void {
-  const decoder = new StringDecoder('utf8');
-  let partial = '', skipping = false;
-  return chunk => {
-    let text = decoder.write(chunk);
-    for (let at = text.indexOf('\n'); at >= 0; at = text.indexOf('\n')) {
-      const head = text.slice(0, at);
-      text = text.slice(at + 1);
-      if (skipping) { skipping = false; partial = ''; continue; }
-      const whole = (partial + head).replace(/\r$/, '');
-      partial = '';
-      if (whole.length > max) tooLong();
-      else if (whole.trim()) line(whole);
-    }
-    if (skipping) return;
-    partial += text;
-    if (partial.length > max) { partial = ''; skipping = true; tooLong(); }
-  };
-}
-
 /** A connected socket as a PeerLink. */
 function socketLink(socket: Socket): PeerLink {
   const inbox = peerInbox();
   let ending = false;
   const write = (text: string): void => { if (!ending && !socket.destroyed) socket.write(`${text}\n`); };
+  socket.setEncoding('utf8');
   socket.on('data', lineSplitter(LIMITS.clientMessage, text => inbox.received(text), () => {
     const answer: ErrorResponse = { t: 'res', id: -1, ok: false,
       error: { code: ErrorCode.badRequest, message: `A message may be at most ${LIMITS.clientMessage} characters.` } };

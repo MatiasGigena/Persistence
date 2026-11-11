@@ -1,18 +1,21 @@
-import { createHash } from 'node:crypto';
-import { access, mkdir, readFile, realpath, stat } from 'node:fs/promises';
+// The command line and the resolved launch configuration: parseArgs reads argv, resolveOptions applies the environment
+// and settings.json, and src/cli.ts hands the result (Config) to the host or the server as JSON.
+import { access, mkdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
-import { DEFAULT_ROSTER, isAgentName, isKit, KITS } from '../agents/roster.ts';
-import type { Kit, Roster, StandingAgent } from '../agents/roster.ts';
-import { errorCode, errorMessage, isRecord } from '../protocol/util.ts';
-import { atomicWrite } from '../runtime/files.ts';
+import { DEFAULT_ROSTER, isAgentName, isKit } from '../agents/roster.ts';
+import type { Roster } from '../agents/roster.ts';
+import { errorCode, isRecord } from '../protocol/util.ts';
 import { isThinkingLevel, THINKING } from '../runtime/thinking.ts';
+import { chromiumPath, dataDirOf, parsePort, serveSettings, statePaths } from './paths.ts';
+import type { ServeSettings } from './paths.ts';
+import { DEFAULT_THINKING, parseModel, readRoster, readSettings } from './settings.ts';
+import type { Settings } from './settings.ts';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_MODEL = 'openai-codex/gpt-6.1-sol';
-export const DEFAULT_PORT = 7433;
 export const HELP = `pi-durable — terminal host for Pi Durable 1.5.0
 
 Usage: pi-durable [options] [prompt]
@@ -141,16 +144,19 @@ const ALLOWED: Readonly<Record<Command, ReadonlySet<Key>>> = {
   connect: new Set<Key>(['help', 'version', 'remoteBin', 'remoteDataDir']),
   bridge: new Set<Key>(LOCATION),
 };
-/** Options of one subcommand, which a chat launch refuses, with the subcommand's name. */
-const ONLY_FOR: readonly (readonly [Key, string])[] = [['portSpec', 'serve'], ['revoke', 'serve devices'], ['out', 'backup'],
-  ['archive', 'serve agents'], ['archiveAdhoc', 'serve agents'], ['restore', 'serve agents']];
-/** Options that set up a local launch, so an attached chat (which uses the server's) refuses them. */
-const LAUNCH_ONLY: readonly Key[] = ['allowTools', 'noTools', 'cwd', 'modelSpec', 'thinkingLevel', 'authFile', 'plain'];
 const COMMAND_NAMES: Readonly<Record<Command, string>> = {
   chat: 'chat', serve: 'serve', 'serve-pair': 'serve pair', 'serve-devices': 'serve devices', 'serve-agents': 'serve agents',
   backup: 'backup', connect: 'connect', bridge: 'bridge',
 };
-const DEFAULT_THINKING: ModelThinkingLevel = 'high';
+/** Options of a subcommand that a chat launch refuses, each with the name of the first subcommand taking it. */
+const ONLY_FOR = new Map<Key, string>();
+for (const command of COMMANDS) {
+  for (const key of ALLOWED[command]) if (!ALLOWED.chat.has(key) && !ONLY_FOR.has(key)) ONLY_FOR.set(key, COMMAND_NAMES[command]);
+}
+/** Options that set up a local launch, so an attached chat (which uses the server's) refuses them. */
+const LAUNCH_ONLY: readonly Key[] = ['allowTools', 'noTools', 'cwd', 'modelSpec', 'thinkingLevel', 'authFile', 'plain'];
+/** Options of a local chat, which a remote one (--remote, `connect`) refuses: the remote server has its own. */
+const REMOTE_REFUSES: readonly Key[] = ['database', 'dataDir', 'modelSpec', 'thinkingLevel', 'authFile', 'plain', 'resume', 'history', 'status', 'prompt', 'requestId'];
 
 /** Where the launch's model came from, highest precedence first. */
 export type ModelSource = 'flag' | 'env' | 'settings' | 'default';
@@ -211,44 +217,6 @@ export interface Options {
   out?: string;
 }
 
-/** What `serve` reads from its environment (and --port); see HELP. */
-export interface ServeSettings {
-  /** Loopback TCP port of the web listener. */
-  readonly port: number;
-  /** PI_DURABLE_ORIGIN, normalized; the web listener runs only with it and `allowLogins`. */
-  readonly origin?: string;
-  /** PI_DURABLE_ALLOW_LOGIN: Tailscale logins (`Tailscale-User-Login`) let in. Empty: no web listener. */
-  readonly allowLogins: readonly string[];
-  /** PI_DURABLE_REMOTE_TOOLS. */
-  readonly remoteTools: 'confirm' | 'off';
-  /** PI_DURABLE_TOOLS_IDLE_MIN: the tools turn off after this many minutes without a run; undefined: never (the default). */
-  readonly toolsIdleMinutes?: number;
-  /** PI_DURABLE_PUSH_PREVIEW: push notifications carry the reply's first words. */
-  readonly pushPreview: boolean;
-}
-
-/** The files a chat keeps beside its database (`statePaths`). Only the host or server under the flock writes them. */
-export interface StatePaths {
-  /** The flock target: `<db>.lock`. */
-  readonly lock: string;
-  /** The UniiChat memory: `chat.sqlite` → `chat.unii`. */
-  readonly memoryDir: string;
-  readonly settings: string;
-  /**
-   * The server's Unix socket (mode 600): `<db>.sock`, or, when that is over 107 bytes (the sun_path limit),
-   * `$XDG_RUNTIME_DIR/pi-durable-<hash>.sock`; undefined when it is too long and XDG_RUNTIME_DIR is unset.
-   */
-  readonly socket: string | undefined;
-  /** The server's state directory (mode 700): `serve/` beside the database. */
-  readonly serveDir: string;
-  /** VAPID key pair for Web Push. */
-  readonly vapid: string;
-  /** Web Push subscriptions. */
-  readonly push: string;
-  /** Paired web devices: names and sha256 of their cookies. */
-  readonly devices: string;
-}
-
 /** Resolved launch configuration: what src/cli.ts passes to src/host/host.ts as JSON. */
 export interface Config extends Options {
   cwd: string;
@@ -274,17 +242,6 @@ export interface Config extends Options {
   chromium?: string;
 }
 
-/**
- * What settings.json holds: the defaults for launches without --model (or PI_DURABLE_MODEL) and --thinking, and the
- * standing agents' roster (`agents`), which only the user edits. `agents` is as written, unparsed: only `readRoster`
- * parses it, so the commands that run no agents never fail on it.
- */
-export interface Settings {
-  model?: ModelRef;
-  thinkingLevel?: ModelThinkingLevel;
-  agents?: unknown;
-}
-
 /** The subcommand that `words` (the positionals before any `--`) start with, and the words left after it. */
 function command(words: readonly string[]): { command: Command; rest: readonly string[] } {
   const [first, second] = words;
@@ -298,12 +255,6 @@ function command(words: readonly string[]): { command: Command; rest: readonly s
   return { command: 'serve', rest: words.slice(1) };
 }
 
-/** A TCP port, 1 to 65535; `what` names the source in the error. */
-export function parsePort(spec: string, what: string): number {
-  const port = /^\d{1,5}$/.test(spec) ? Number(spec) : NaN;
-  if (!(port >= 1 && port <= 65535)) throw new Error(`${what} must be a port number from 1 to 65535`);
-  return port;
-}
 
 export function parseArgs(args: readonly string[]): Options {
   const options: Options = { command: 'chat', thinkingLevel: DEFAULT_THINKING, allowTools: true, remoteAllowTools: false };
@@ -353,8 +304,7 @@ export function parseArgs(args: readonly string[]): Options {
     if (options.local && options.attach) throw new Error('Choose either --local or --attach');
     if (options.local && options.remote !== undefined) throw new Error('Choose either --local or --remote');
     if (options.local && (options.remoteBin !== undefined || options.remoteDataDir !== undefined)) throw new Error('--remote-bin and --remote-data-dir do not apply to --local');
-    const remoteLocal: readonly Key[] = ['database', 'dataDir', 'modelSpec', 'thinkingLevel', 'authFile', 'plain', 'resume', 'history', 'status', 'prompt', 'requestId'];
-    options.remoteUnsupported = remoteLocal.map(key => given.get(key)).find(spelling => spelling !== undefined);
+    options.remoteUnsupported = REMOTE_REFUSES.map(key => given.get(key)).find(spelling => spelling !== undefined);
     const local = LAUNCH_ONLY.map(key => given.get(key)).find(spelling => spelling !== undefined);
     if (local && options.attach) throw new Error(`${local} does not apply to --attach: the server's settings apply (use /model and /tools there)`);
     if (local) options.launchOption = local;
@@ -383,122 +333,6 @@ export function parseArgs(args: readonly string[]): Options {
   return options;
 }
 
-/** `PROVIDER/ID` as a ModelRef; the ID may contain slashes. `what` names the source in the error. */
-export function parseModel(spec: string, what: string): ModelRef {
-  const slash = spec.indexOf('/');
-  if (slash < 1 || slash === spec.length - 1) throw new Error(`${what} must be PROVIDER/MODEL_ID`);
-  return { provider: spec.slice(0, slash), modelId: spec.slice(slash + 1) };
-}
-
-/** settings.json's JSON object, or undefined when there is none. Rejects on a file that is not JSON or not an object. */
-async function readSettingsJson(path: string): Promise<Record<string, unknown> | undefined> {
-  let text: string;
-  try { text = await readFile(path, 'utf8'); } catch (error) {
-    if (errorCode(error) === 'ENOENT') return undefined;
-    throw error;
-  }
-  let value: unknown;
-  try { value = JSON.parse(text); } catch (error) { throw new Error(`${path} is not valid JSON (${errorMessage(error)}); fix or delete it`, { cause: error }); }
-  if (!isRecord(value)) throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
-  return value;
-}
-
-const ROSTER_FIELDS = new Set(['model', 'thinkingLevel', 'tools', 'instructions', 'subModel', 'subThinkingLevel']);
-
-/**
- * settings.json's `agents` (ADR 0027) as a roster: keyed by agent name; `model` and `tools` required, `thinkingLevel`
- * defaults to high; `instructions`, `subModel` and `subThinkingLevel` optional. Rejects with the entry's name.
- */
-export function parseRoster(value: unknown, path: string): Roster {
-  if (!isRecord(value)) throw new Error(`"agents" in ${path} must be an object keyed by agent name; fix or delete it`);
-  const roster: Record<string, StandingAgent> = {};
-  const seen = new Set<string>();
-  for (const [name, entry] of Object.entries(value)) {
-    const fail = (problem: string): never => { throw new Error(`Standing agent "${name}" in ${path}: ${problem}`); };
-    if (!isAgentName(name)) fail('the name must be a letter, then up to 31 letters, digits, _ or -, and not "Pi"');
-    if (seen.has(name.toLowerCase())) fail('another standing agent has the same name (names ignore case)');
-    seen.add(name.toLowerCase());
-    if (!isRecord(entry)) fail('must be an object like {"model":"PROVIDER/MODEL_ID","tools":["coding"]}');
-    const fields = isRecord(entry) ? entry : {};
-    const unknown = Object.keys(fields).find(key => !ROSTER_FIELDS.has(key));
-    if (unknown !== undefined) fail(`unknown field "${unknown}" (use ${[...ROSTER_FIELDS].join(', ')})`);
-    const model = (key: 'model' | 'subModel'): ModelRef | undefined => {
-      const spec = fields[key];
-      if (spec === undefined) return key === 'model' ? fail('"model" is required') : undefined;
-      if (typeof spec !== 'string') return fail(`"${key}" must be "PROVIDER/MODEL_ID"`);
-      try { return parseModel(spec, `"${key}"`); } catch (error) { return fail(errorMessage(error)); }
-    };
-    const level = (key: 'thinkingLevel' | 'subThinkingLevel'): ModelThinkingLevel | undefined => {
-      const given = fields[key];
-      if (given === undefined || isThinkingLevel(given)) return given;
-      return fail(`"${key}" must be one of ${THINKING.join(', ')}`);
-    };
-    const tools = fields.tools;
-    if (!Array.isArray(tools) || !tools.every(isKit)) fail(`"tools" is required: a list of tool kits from ${KITS.join(', ')}`);
-    const kits: Kit[] = Array.isArray(tools) ? [...new Set(tools.filter(isKit))] : [];
-    if (fields.instructions !== undefined && typeof fields.instructions !== 'string') fail('"instructions" must be a string');
-    const subModel = model('subModel'), subThinkingLevel = level('subThinkingLevel');
-    roster[name] = {
-      model: model('model') ?? fail('"model" is required'), thinkingLevel: level('thinkingLevel') ?? DEFAULT_THINKING, tools: kits,
-      ...typeof fields.instructions === 'string' && fields.instructions.trim() ? { instructions: fields.instructions } : {},
-      ...subModel ? { subModel } : {}, ...subThinkingLevel ? { subThinkingLevel } : {},
-    };
-  }
-  return roster;
-}
-
-/**
- * settings.json, or {} when there is none. Rejects on a file that is not valid settings; `agents` passes through as
- * written (`readRoster` parses it).
- */
-export async function readSettings(path: string): Promise<Settings> {
-  return settingsOf(path, await readSettingsJson(path));
-}
-
-/** The settings in `value`, settings.json's object as read (undefined: no file); throws as `readSettings` rejects. */
-function settingsOf(path: string, value: Record<string, unknown> | undefined): Settings {
-  if (!value) return {};
-  if (value.model !== undefined && typeof value.model !== 'string') {
-    throw new Error(`${path} must be an object like {"model":"PROVIDER/MODEL_ID","thinkingLevel":"high"}; fix or delete it`);
-  }
-  if (value.thinkingLevel !== undefined && !isThinkingLevel(value.thinkingLevel)) {
-    throw new Error(`"thinkingLevel" in ${path} must be one of ${THINKING.join(', ')}; fix or delete it`);
-  }
-  return { ...value.model === undefined ? {} : { model: parseModel(value.model, `"model" in ${path}`) },
-    ...isThinkingLevel(value.thinkingLevel) ? { thinkingLevel: value.thinkingLevel } : {},
-    ...value.agents === undefined ? {} : { agents: value.agents } };
-}
-
-/**
- * The launch's roster: settings.json's `agents`, else the built-in one. `lenient` (a launch with --model, which skips
- * a broken file) falls back to the built-in roster when the file is not a JSON object; an invalid `agents` always rejects.
- */
-export async function readRoster(path: string, { lenient = false }: { lenient?: boolean } = {}): Promise<Roster> {
-  let value: Record<string, unknown> | undefined;
-  try { value = await readSettingsJson(path); } catch (error) {
-    if (lenient) return DEFAULT_ROSTER;
-    throw error;
-  }
-  return value?.agents === undefined ? DEFAULT_ROSTER : parseRoster(value.agents, path);
-}
-
-/**
- * Replace settings.json atomically (mode 600) with `model` and `thinkingLevel`, after the other keys of `kept` (the
- * file's JSON as read, so `agents` stays as the user wrote it). Only work launches write it, under the database's flock.
- */
-export function writeSettings(path: string, { model, thinkingLevel }: Pick<Settings, 'model' | 'thinkingLevel'>,
-  kept: Readonly<Record<string, unknown>> = {}): void {
-  const json = { ...kept, ...model ? { model: `${model.provider}/${model.modelId}` } : {}, ...thinkingLevel ? { thinkingLevel } : {} };
-  atomicWrite(path, `${JSON.stringify(json, null, 2)}\n`);
-}
-
-/** Change the model or thinking level in settings.json, keeping the rest, `agents` included, as it is. */
-export async function updateSettings(path: string, change: Pick<Settings, 'model' | 'thinkingLevel'>): Promise<void> {
-  const json = await readSettingsJson(path);
-  const saved = settingsOf(path, json);
-  writeSettings(path, { model: change.model ?? saved.model, thinkingLevel: change.thinkingLevel ?? saved.thinkingLevel }, json ?? {});
-}
-
 /**
  * The launch's model: --model, else PI_DURABLE_MODEL, else settings.json, else the built-in default. Its thinking
  * level: --thinking, else settings.json, else high.
@@ -515,87 +349,6 @@ async function resolveModel(options: Options, env: NodeJS.ProcessEnv, settingsPa
     : { model: parseModel(DEFAULT_MODEL, 'the default model'), modelSource: 'default', thinkingLevel };
 }
 
-/** Longest Unix socket path: sun_path is 108 bytes on Linux, its NUL included. */
-export const SOCKET_PATH_MAX = 107;
-
-/**
- * Every file a chat keeps beside its database `databasePath` (resolved, symlinks included). One function, so the
- * host, the server, the attaching client and the backup agree. Reads `XDG_RUNTIME_DIR` from `env` for the socket.
- */
-export function statePaths(databasePath: string, env: NodeJS.ProcessEnv = process.env): StatePaths {
-  const dir = dirname(databasePath), serveDir = join(dir, 'serve');
-  let socket: string | undefined = `${databasePath}.sock`;
-  if (Buffer.byteLength(socket) > SOCKET_PATH_MAX) {
-    // XDG_RUNTIME_DIR is the user's own (mode 700), so no one else can squat the name; /tmp would not be.
-    const hash = createHash('sha256').update(databasePath).digest('hex').slice(0, 16);
-    socket = env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, `pi-durable-${hash}.sock`) : undefined;
-    if (socket && Buffer.byteLength(socket) > SOCKET_PATH_MAX) socket = undefined;
-  }
-  return {
-    lock: `${databasePath}.lock`,
-    // The chat's memory (log, tree, view) lives beside its database, under its flock.
-    memoryDir: databasePath.replace(/(\.sqlite)?$/, '.unii'),
-    // Beside the database, under its flock; read here, written only by a work launch's /model.
-    settings: join(dir, 'settings.json'),
-    socket,
-    serveDir,
-    vapid: join(serveDir, 'vapid.json'),
-    push: join(serveDir, 'push.json'),
-    devices: join(serveDir, 'devices.json'),
-  };
-}
-
-/** PI_DURABLE_CHROMIUM: unset or empty for Playwright's own Chromium, else an absolute path; rejects anything else. */
-export function chromiumPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const value = env.PI_DURABLE_CHROMIUM;
-  if (!value) return undefined;
-  if (!isAbsolute(value)) throw new Error('PI_DURABLE_CHROMIUM must be an absolute path to the Chromium executable');
-  return resolve(value);
-}
-
-/** `serve`'s settings from --port and the environment; rejects a malformed variable by name. */
-export function serveSettings(options: Pick<Options, 'port'>, env: NodeJS.ProcessEnv = process.env): ServeSettings {
-  const port = options.port ?? (env.PI_DURABLE_PORT ? parsePort(env.PI_DURABLE_PORT, 'PI_DURABLE_PORT') : DEFAULT_PORT);
-  const allowLogins = (env.PI_DURABLE_ALLOW_LOGIN ?? '').split(',').map(login => login.trim()).filter(Boolean);
-  if (env.PI_DURABLE_ALLOW_LOGIN?.trim() && allowLogins.some(login => /\s/.test(login))) {
-    throw new Error('PI_DURABLE_ALLOW_LOGIN must be Tailscale logins separated by commas');
-  }
-  const remoteTools = env.PI_DURABLE_REMOTE_TOOLS || 'confirm';
-  if (remoteTools !== 'confirm' && remoteTools !== 'off') throw new Error('PI_DURABLE_REMOTE_TOOLS must be confirm or off');
-  const idle = env.PI_DURABLE_TOOLS_IDLE_MIN || 'off';
-  const toolsIdleMinutes = idle === 'off' ? undefined : /^\d{1,4}$/.test(idle) ? Number(idle) : NaN;
-  if (toolsIdleMinutes !== undefined && !(toolsIdleMinutes >= 1 && toolsIdleMinutes <= 1440)) {
-    throw new Error('PI_DURABLE_TOOLS_IDLE_MIN must be off or minutes from 1 to 1440');
-  }
-  const preview = env.PI_DURABLE_PUSH_PREVIEW || 'off';
-  if (preview !== 'on' && preview !== 'off') throw new Error('PI_DURABLE_PUSH_PREVIEW must be on or off');
-  const settings: ServeSettings = { port, allowLogins, remoteTools, ...toolsIdleMinutes === undefined ? {} : { toolsIdleMinutes }, pushPreview: preview === 'on' };
-  return env.PI_DURABLE_ORIGIN ? { ...settings, origin: parseOrigin(env.PI_DURABLE_ORIGIN) } : settings;
-}
-
-/** An origin (scheme, host, port; no path): https, or http on a loopback host for development. */
-function parseOrigin(value: string): string {
-  const problem = 'PI_DURABLE_ORIGIN must be an origin like https://host.tailnet.ts.net (no path)';
-  let url: URL;
-  try { url = new URL(value); } catch { throw new Error(problem); }
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (url.origin !== value.replace(/\/$/, '') || !(url.protocol === 'https:' || (url.protocol === 'http:' && loopback))) {
-    throw new Error(problem);
-  }
-  return url.origin;
-}
-
-/** The bridge only locates the existing socket: no directories, model settings or credentials are loaded. */
-export async function resolveSocketPath(options: Pick<Options, 'database' | 'dataDir'>, env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  const dataDir = resolve(options.dataDir ?? env.PI_DURABLE_DATA_DIR ?? join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'pi-durable'));
-  let databasePath = resolve(options.database ?? join(dataDir, 'chat.sqlite'));
-  try { databasePath = await realpath(databasePath); }
-  catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
-  const socket = statePaths(databasePath, env).socket;
-  if (socket === undefined) throw new Error('This chat has no server socket: its path is too long and XDG_RUNTIME_DIR is unset');
-  return socket;
-}
-
 /** `path` with its symlinks resolved; rejects, naming `what`, when it is missing or not a directory. */
 async function directory(path: string, what: string): Promise<string> {
   let real: string;
@@ -609,7 +362,7 @@ async function directory(path: string, what: string): Promise<string> {
 
 export async function resolveOptions(options: Options, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
   const cwd = await directory(resolve(options.cwd ?? process.cwd()), options.cwd === undefined ? 'The working directory' : '--cwd');
-  const dataDir = resolve(options.dataDir ?? env.PI_DURABLE_DATA_DIR ?? join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'pi-durable'));
+  const dataDir = dataDirOf(options.dataDir, env);
   let databasePath = resolve(options.database ?? join(dataDir, 'chat.sqlite'));
   let exists = false;
   try { await access(databasePath); exists = true; } catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }

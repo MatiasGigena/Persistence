@@ -2,7 +2,9 @@
 // (messages.ts ItemOp), and the clipping that keeps a huge tool output off the wire. Shared by Node and the browser.
 import { wireImage } from './images.ts';
 import { LIMITS } from './messages.ts';
-import type { AppendField, ChatImage, ChatItem, ItemOp } from './messages.ts';
+import type { AppendField, ItemOp } from './messages.ts';
+import type { ChatItem } from './session.ts';
+import type { ChatImage } from './images.ts';
 
 /** Room kept for the marker `clip` puts between the head and the tail. */
 const MARK_ROOM = 64;

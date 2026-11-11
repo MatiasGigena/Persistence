@@ -1,9 +1,9 @@
-// The contract between the host's state (src/host/session.ts) and its clients: the terminal UI (src/ui/tui/), and
-// over the wire protocol (src/protocol/) the attached TUI and the web app. The session knows pi-durable, memory and
-// agents; clients know only these types. It imports only types from src/protocol/ (images, machine targets), which
-// has no Node or DOM imports either, so the browser can type-check against it.
-import type { ChatImage } from '../protocol/images.ts';
-import type { MachineTarget } from '../protocol/machines.ts';
+// The session contract: what the host's state (src/session/session.ts) offers its clients, the terminal UI (src/ui/tui/)
+// and, over the wire protocol, the attached TUI and the web app. The session knows pi-durable, memory and agents;
+// clients know only these types. Type-only, like the rest of src/protocol/ free of Node and DOM imports, so the browser
+// type-checks against it; the wire messages (messages.ts) are built from these items.
+import type { ChatImage } from './images.ts';
+import type { MachineTarget } from './machines.ts';
 
 /** One block of a conversation, in order. Streaming blocks are updated in place by `id`. */
 export type ChatItem =
@@ -135,13 +135,14 @@ export interface UiSession {
   abort(): Promise<void>;
   /**
    * Stops one agent and its sub agents, or every agent when `name` is omitted; Pi is not touched.
-   * Resolves with the names stopped, sub agents first; empty for an unknown name.
+   * Resolves with the names stopped, sub agents first; rejects with a not-found refusal for an unknown name.
    */
   stopAgents(name?: string): Promise<readonly string[]>;
   /**
    * Archives one agent (with a main agent's sub agents), or every ad-hoc main agent: their work stops, and they are
    * deleted a day later unless restored. Resolves with the names archived; an agent already archived keeps its time
-   * and is among them. Rejects with a readable refusal for a standing agent, and NotFound for an unknown one.
+   * and is among them. Rejects with a readable refusal for a standing agent or an unknown name (on the host an
+   * unknown name is NotFound; over the wire it is the not_found code).
    */
   archiveAgents(target: ArchiveTarget): Promise<readonly string[]>;
   /** Restores an archived agent (with a main agent's sub agents). Resolves with the names restored; rejects readably. */

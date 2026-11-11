@@ -8,12 +8,12 @@ import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { obj, str } from '@earendil-works/pi-schema';
 import { AgentDoc, defineExtension, defineTool, InboxDoc, LiveDoc, type JsonObject, type ToolExecutionResult } from '@earendil-works/pi-durable';
 import { AgentsDoc, type Roster, syncAgents } from '../../src/agents/index.ts';
-import { AgentRouteDoc, RoutingDoc, RunRouteDoc, SubmissionRouteDoc, type RoutingDispatcher } from '../../src/machines/routing.ts';
+import { AgentRouteDoc, RoutingDoc, RunRouteDoc, SubmissionRouteDoc, type RoutingDispatcher } from '../../src/runtime/routing.ts';
 import { settleAgents } from '../../src/runtime/recovery.ts';
 import { TURN_HEAD } from '../../src/memory/extension.ts';
 import { openInstance, transcript, type Instance } from '../../src/runtime/runtime.ts';
 import type { MachineTarget } from '../../src/protocol/machines.ts';
-import { createUiSession } from '../../src/host/session.ts';
+import { createUiSession } from '../../src/session/session.ts';
 import { call, router, say, type Turn } from '../fixtures/agents-instance.ts';
 import { offlineModels } from '../fixtures/faux-model.ts';
 
@@ -25,7 +25,7 @@ const currentText = (user: string) => user.includes(TURN_HEAD) ? user.slice(user
 async function temporary(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-routing-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  return { cwd, databasePath: join(cwd, 'chat.sqlite') };
+  return { cwd, databasePath: join(cwd, 'chat.sqlite'), protection: 'unguarded' as const };
 }
 
 function recorder() {

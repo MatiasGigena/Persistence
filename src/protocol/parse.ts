@@ -1,12 +1,12 @@
 // Parsing wire messages from text: JSON, then every field checked and copied by hand from `unknown`. Unknown fields
 // are dropped, so a parsed message holds exactly its type's fields. Shared by Node and the browser.
-import { ENABLE_TOOLS, ERROR_CODES, LIMITS, OPS } from './messages.ts';
+import { ENABLE_TOOLS, ERROR_CODES, LIMITS, NOTICE_LEVELS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
-import type {
-  AgentStatus, AppendField, ArchiveTarget, ChatImage, ChatItem, ClientMessage, Device, ErrorCode, ItemOp, MemoryStats, ModelChoice, NoticeLevel, Op,
-  PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, SessionStatus, ToolsPolicy, ViewLine,
-} from './messages.ts';
-import { errorMessage, isRecord, ShapeError } from './util.ts';
+import type { AppendField, ClientMessage, Device, ErrorCode, ItemOp, Op, PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, ToolsPolicy } from './messages.ts';
+import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, SessionStatus, ViewLine } from './session.ts';
+import type { ChatImage } from './images.ts';
+import { bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
+import type { Obj } from './util.ts';
 
 /**
  * Why a message did not parse; never sent. `id` is the request's when it could be read, so the server can answer
@@ -20,56 +20,9 @@ export interface ParseError {
 
 export const isParseError = (x: ClientMessage | ServerMessage | ParseError): x is ParseError => 'invalid' in x;
 
-type Obj = Readonly<Record<string, unknown>>;
-
-
-const NOTICE_LEVELS: readonly NoticeLevel[] = ['info', 'warn', 'error'];
 const TOOL_STATUS = ['running', 'done', 'error'] as const;
 const APPEND_FIELDS: readonly AppendField[] = ['text', 'output', 'args'];
 const CONFIRMS: readonly (typeof ENABLE_TOOLS)[] = [ENABLE_TOOLS];
-
-function obj(x: unknown, what: string): Obj {
-  if (!isRecord(x)) throw new ShapeError(`${what} must be an object`);
-  return x;
-}
-function str(o: Obj, key: string): string {
-  const v = o[key];
-  if (typeof v !== 'string') throw new ShapeError(`${key} must be a string`);
-  return v;
-}
-function optStr(o: Obj, key: string): string | undefined {
-  return o[key] === undefined ? undefined : str(o, key);
-}
-function bool(o: Obj, key: string): boolean {
-  const v = o[key];
-  if (typeof v !== 'boolean') throw new ShapeError(`${key} must be a boolean`);
-  return v;
-}
-function optBool(o: Obj, key: string): boolean | undefined {
-  return o[key] === undefined ? undefined : bool(o, key);
-}
-/** A safe integer, at least `min`. */
-function int(o: Obj, key: string, min = 0): number {
-  const v = o[key];
-  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < min) throw new ShapeError(`${key} must be an integer >= ${min}`);
-  return v;
-}
-function list<T>(o: Obj, key: string, item: (x: unknown) => T): T[] {
-  const v = o[key];
-  if (!Array.isArray(v)) throw new ShapeError(`${key} must be an array`);
-  const items: readonly unknown[] = v;
-  return items.map(item);
-}
-function oneOf<T extends string>(o: Obj, key: string, values: readonly T[]): T {
-  const v = o[key];
-  const found = values.find(each => each === v);
-  if (found === undefined) throw new ShapeError(`${key} must be one of ${values.join(', ')}`);
-  return found;
-}
-/** `{ ...base, [key]: value }` when `value` is defined: optional fields stay absent rather than undefined. */
-function withOptional<T extends object, K extends string, V>(base: T, key: K, value: V | undefined): T & { [P in K]?: V } {
-  return value === undefined ? base : { ...base, ...{ [key]: value } };
-}
 
 // ------------------------------------------------------------------------------------------------ shared shapes
 
@@ -309,7 +262,7 @@ export function parseClientMessage(text: string): ClientMessage | ParseError {
   }
 }
 
-function errorCode(x: unknown): ErrorCode {
+function wireErrorCode(x: unknown): ErrorCode {
   return ERROR_CODES.find(code => code === x) ?? 'failed';
 }
 
@@ -344,7 +297,7 @@ export function parseServerMessage(text: string): ServerMessage | ParseError {
       if (o.ok === false) {
         return checked(() => {
           const error = obj(o.error, 'error');
-          return { t: 'res', id, ok: false, error: { code: errorCode(error.code), message: str(error, 'message') } } as const;
+          return { t: 'res', id, ok: false, error: { code: wireErrorCode(error.code), message: str(error, 'message') } } as const;
         }, id);
       }
       if (o.ok !== true) return { invalid: 'shape', message: 'ok must be a boolean', id };

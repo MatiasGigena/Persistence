@@ -7,9 +7,9 @@ import type {
   AgentState, ConversationDocToken, ConversationId, ConversationView, EntryId, EntryRecord, Harness, JsonObject, LiveState,
   RunFailure, ToolSlot,
 } from '@earendil-works/pi-durable';
-import { agentInputOf } from '../agents/entries.ts';
+import { agentInputOf, text } from '../agents/entries.ts';
 import { isRecord } from '../protocol/util.ts';
-import type { ChatFeed, ChatItem } from '../ui/types.ts';
+import type { ChatFeed, ChatItem } from '../protocol/session.ts';
 import type { ChatImage } from '../protocol/images.ts';
 
 /** Items kept per feed: the newest ones. */
@@ -38,11 +38,6 @@ const liveBlock = (block: Block): LiveBlock => block.type === 'toolCall'
   ? { kind: 'tool', id: block.id, name: block.name, args: block.arguments }
   : block.type === 'thinking' ? { kind: 'thinking', text: block.thinking } : { kind: 'text', text: block.text };
 
-/** Text blocks joined; images are `imagesOf`'s. */
-function textOf(content: Message['content']): string {
-  if (typeof content === 'string') return content;
-  return content.map(block => block.type === 'text' ? block.text : '').join('');
-}
 
 /** Image blocks as ChatImages, or undefined for none: an item without images has no `images` field. */
 function imagesOf(content: Message['content']): readonly ChatImage[] | undefined {
@@ -200,10 +195,10 @@ export class ConversationFeed implements ChatFeed {
     if (input) return this.push({ kind: 'report', id: `e${entry.id}`, from: input.from, text: input.text });
     (entry.model ?? []).forEach((message, m) => {
       const id = m === 0 ? `e${entry.id}` : `e${entry.id}.${m}`;
-      if (message.role === 'user') this.push(withImages({ kind: 'user', id, text: textOf(message.content) }, imagesOf(message.content)));
+      if (message.role === 'user') this.push(withImages({ kind: 'user', id, text: text(message.content) }, imagesOf(message.content)));
       else if (message.role === 'toolResult') {
         this.patchTool(message.toolCallId, message.toolName, withImages({
-          output: textOf(message.content), status: message.isError ? 'error' as const : 'done' as const,
+          output: text(message.content), status: message.isError ? 'error' as const : 'done' as const,
         }, imagesOf(message.content)));
       } else if (message.role === 'assistant') {
         const key = this.partial?.key ?? id;

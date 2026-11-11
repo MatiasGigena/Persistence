@@ -1,5 +1,5 @@
-// The web app's files (ADR 0020): src/web/ at `/`, src/protocol/ at `/protocol/`, src/ui/types.ts and src/ui/text.ts
-// under `/ui/`, and marked's ESM build at `/vendor/`. TypeScript is type-stripped at request time.
+// The web app's files (ADR 0020): src/web/ at `/`, src/protocol/ at `/protocol/`, src/ui/text.ts under
+// `/ui/`, and marked's ESM build at `/vendor/`. TypeScript is type-stripped at request time.
 import { createHash } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
@@ -29,8 +29,8 @@ export const DEFAULT_ROOTS: StaticRoots = {
   marked: fileURLToPath(new URL('../../node_modules/marked/lib', import.meta.url)),
 };
 const VENDOR = new Set(['marked.esm.js', 'marked.esm.js.map']);
-/** The files of src/ui/ the browser loads: the contract's types and the wording both front ends share. */
-const UI_FILES = new Set(['types.ts', 'text.ts']);
+/** The files of src/ui/ the browser loads: the wording both front ends share. */
+const UI_FILES = new Set(['text.ts']);
 
 /** The extensions served, and their types; anything else is 404. */
 const TYPES: ReadonlyMap<string, string> = new Map([

@@ -3,18 +3,19 @@
 // the Unix socket (and, when configured, the web listener), serves one UiSession to every client through the hub,
 // and keeps the Harness, the compactor and the agents' deliveries running until a signal stops it.
 import { randomBytes } from 'node:crypto';
-import { format } from 'node:util';
 import type { Models } from '@earendil-works/pi-ai';
-import type { Config } from '../host/config.ts';
-import { statePaths, VERSION } from '../host/config.ts';
-import { errorMessage, isRecord } from '../protocol/util.ts';
+import type { Config } from '../config/options.ts';
+import { VERSION } from '../config/options.ts';
+import { statePaths } from '../config/paths.ts';
+import { errorMessage } from '../protocol/util.ts';
 import { CloseCode } from '../protocol/messages.ts';
 import { resumeInstance } from '../runtime/recovery.ts';
-import { protection, sandboxProblem, sshKeys } from '../runtime/guard.ts';
-import { openInstance } from '../runtime/runtime.ts';
+import { protection, sandboxProblem } from '../runtime/guard.ts';
+import { launchOptions, openInstance, reportText } from '../runtime/runtime.ts';
+import { redirectConsole } from '../runtime/console.ts';
 import type { Instance } from '../runtime/runtime.ts';
-import { createUiSession } from '../host/session.ts';
-import type { UiSessionHandle } from '../host/session.ts';
+import { createUiSession } from '../session/session.ts';
+import type { UiSessionHandle } from '../session/session.ts';
 import { Devices } from './auth.ts';
 import { backup } from './backup.ts';
 import { Hub } from './hub.ts';
@@ -35,7 +36,6 @@ export interface ServeOptions {
   readonly log?: (line: string) => void;
 }
 
-const field = (value: unknown, key: string): unknown => isRecord(value) ? value[key] : undefined;
 const stderr = (line: string): void => { process.stderr.write(`${line}\n`); };
 
 /**
@@ -52,9 +52,9 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
   const machines = new MachineBroker({ authorized: () => session?.status().toolsEnabled ?? false,
     notice: text => { log(text); session?.notify(text, 'info'); } });
   // Preserve the host's protected-tools policy; each remote connector separately starts without local permission.
-  const instance = await openInstance({ ...config, models, protection: protection(config), sshKeys: sshKeys(), onWarning: log, dispatcher: machines,
-    onReport: report => log(`Pi Durable: ${String(field(field(report, 'error'), 'message') ?? field(report, 'message') ?? field(report, 'kind') ?? 'runtime report')}`) });
-  const { error: consoleError, warn: consoleWarn } = console;
+  const instance = await openInstance({ ...launchOptions(config, models), configureAgent: true, onWarning: log, dispatcher: machines,
+    onReport: report => log(`Pi Durable: ${reportText(report)}`) });
+  let restoreConsole = (): void => undefined;
   try {
     if (signal.aborted) return;
     // Open the chat first: web initialization can create files (notably VAPID keys), and must not outlive
@@ -99,8 +99,7 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
       settingsPath: config.settingsPath, authFile: config.authFile });
     // Host warnings (memory, runtime) go to the journal and, as notices, to every client.
     const notify = session.notify.bind(session);
-    console.error = (...args: unknown[]) => { consoleError(...args); notify(format(...args), 'warn'); };
-    console.warn = (...args: unknown[]) => { consoleWarn(...args); notify(format(...args), 'warn'); };
+    restoreConsole = redirectConsole(text => notify(text, 'warn'), { echo: true });
     hub.start(session);
     log(`ready: ${config.databasePath}, tools ${config.allowTools ? 'on (protected folders enforced)' : 'off'}, cwd ${config.cwd}`);
     // Said now, to the journal and every client, rather than at Pi's first bash call.
@@ -116,8 +115,7 @@ export async function serve(config: Config, { models, signal, log = stderr }: Se
     await Promise.all([unix.close(), web?.close()]);
     unix = web = undefined;
   } finally {
-    console.error = consoleError;
-    console.warn = consoleWarn;
+    restoreConsole();
     await hub?.close(CloseCode.restart, 'The server is stopping.');
     machines.close();
     await Promise.allSettled([unix?.close(), web?.close()]);

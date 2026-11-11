@@ -4,14 +4,16 @@
 import { lstat } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { resolve } from 'node:path';
-import type { Config } from '../host/config.ts';
-import { VERSION } from '../host/config.ts';
+import type { Config } from '../config/options.ts';
+import { VERSION } from '../config/options.ts';
 import { errorCode } from '../protocol/util.ts';
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
-import type { AgentStatus, ClientMessage, Device, Request, Response, ServerMessage } from '../protocol/messages.ts';
+import type { ClientMessage, Device, Request, Response, ServerMessage } from '../protocol/messages.ts';
+import type { AgentStatus } from '../protocol/session.ts';
 import { isParseError, parseServerMessage } from '../protocol/parse.ts';
 import { PROTOCOL } from '../protocol/version.ts';
-import { lineSplitter } from '../server/transport-unix.ts';
+import { lineSplitter } from '../protocol/lines.ts';
+import { RequestError } from '../protocol/request-error.ts';
 
 /** No server answers on the socket (none there, or a stale file): the caller may take the flock instead. */
 export class NoServer extends Error {}
@@ -29,8 +31,8 @@ const ADMIN_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * Sends `request` (its `id` is 1) to the server on `path` and resolves with its successful `res`. Refuses a socket
- * not owned by this user. Rejects with NoServer when nothing listens there, and with the server's message when the
- * request fails.
+ * not owned by this user. Rejects with NoServer when nothing listens there, and with a RequestError (the server's code
+ * and message) when the request fails.
  */
 export async function adminRequest(path: string, request: Request, { timeoutMs = ADMIN_TIMEOUT_MS, onMessage }: AdminRequestOptions = {}): Promise<Ok> {
   try {
@@ -63,6 +65,7 @@ export async function adminRequest(path: string, request: Request, { timeoutMs =
       finish(code === 'ECONNREFUSED' || code === 'ENOENT' ? new NoServer('No server is running for this chat.') : error);
     });
     socket.on('close', () => finish(undefined));
+    socket.setEncoding('utf8');
     socket.on('data', lineSplitter(Number.MAX_SAFE_INTEGER, text => {
       const message = parseServerMessage(text);
       if (isParseError(message)) return;
@@ -70,9 +73,9 @@ export async function adminRequest(path: string, request: Request, { timeoutMs =
       if (message.t === 'bye') finish(new Error(`The server ended the connection: ${message.reason}`));
       else if (message.t === 'res' && message.id === request.id) {
         if (message.ok) finish(undefined, message);
-        else finish(new Error(message.error.message));
+        else finish(new RequestError(message.error.code, message.error.message));
       }
-    }, () => {}));
+    }));
   });
 }
 
@@ -171,12 +174,4 @@ export async function agentsCommand(config: Pick<Config, 'socketPath' | 'archive
   if (!agents.length) { console.log('No agents.'); return; }
   const active = agents.filter(agent => agent.archivedAt === undefined), archived = agents.filter(agent => agent.archivedAt !== undefined);
   for (const agent of [...active, ...archived]) console.log(agentLine(agent, ARCHIVE_TTL_MS));
-}
-
-/** A size in bytes, readably. */
-export function formatBytes(bytes: number): string {
-  const units = ['bytes', 'KiB', 'MiB', 'GiB'];
-  let value = bytes, unit = 0;
-  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
-  return unit === 0 ? `${value} bytes` : `${value.toFixed(1)} ${units[unit] ?? ''}`;
 }

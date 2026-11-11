@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { ARCHIVE_TTL_MS as CORE_TTL } from '../../src/agents/index.ts';
 import { ARCHIVE_TTL_MS, CloseCode, ERROR_CODES, LIMITS, OPS, ROOT_FEED } from '../../src/protocol/messages.ts';
-import type {
-  ChatItem, ClientMessage, Op, RequestOf, ResponseOf, ServerMessage, SessionStatus,
-} from '../../src/protocol/messages.ts';
+import type { ClientMessage, Op, RequestOf, ResponseOf, ServerMessage } from '../../src/protocol/messages.ts';
+import type { ChatItem, SessionStatus } from '../../src/protocol/session.ts';
 import { isParseError, parseClientMessage, parseServerMessage } from '../../src/protocol/parse.ts';
 import type { ParseError } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';

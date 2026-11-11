@@ -16,7 +16,7 @@ import { offlineModels } from '../fixtures/faux-model.ts';
 async function temporary(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), 'pi-durable-agent-context-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  return { cwd, databasePath: join(cwd, 'chat.sqlite') };
+  return { cwd, databasePath: join(cwd, 'chat.sqlite'), protection: 'unguarded' as const };
 }
 
 /** Test-only: wait until no task or submission is live anywhere. */

@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted, 2026-11-04. Amends [0020](0020-web-client-without-build.md) (`src/ui/types.ts` imports protocol types, and
-`src/ui/text.ts` is served too).
+Accepted, 2026-11-04. Amends [0020](0020-web-client-without-build.md) (the session contract moves to
+`src/protocol/session.ts`, and `src/ui/text.ts` is served).
 
 ## Context
 
@@ -18,15 +18,16 @@ module or the memory package just to reach a helper.
 
 Each shared piece has one home, chosen by who must load it:
 
-- `src/protocol/util.ts`: `isRecord`, `errorMessage`, `errorCode`. `src/protocol/` is already Node- and DOM-free and
-  served to the browser, so every layer, the web app included, imports the same copy.
-- `src/protocol/images.ts` and `src/protocol/machines.ts` own `ChatImage` and `MachineTarget`; `src/ui/types.ts`
-  imports them as types. The contract still loads nothing the browser cannot, and the server, routing and the machine
-  executor no longer reach into `src/ui/` for wire types.
+- `src/protocol/util.ts`: `isRecord`, `errorMessage`, `errorCode`, `cutBytes` and the narrowers that throw
+  `ShapeError`. `src/protocol/` is already Node- and DOM-free and served to the browser, so every layer, the web app
+  included, imports the same copy.
+- `src/protocol/session.ts`: the session contract (`UiSession` and its item and status types), and
+  `src/protocol/errors.ts`: `NotFound` and `Unavailable`, thrown by the session, the agents core and the memory.
+  `Connection.request` is the one place an error becomes a wire code. The agents, runtime, routing and server use the
+  contract, so it does not live under `src/ui/`; `messages.ts` imports its item types and re-exports none of them.
+- `src/protocol/images.ts` and `src/protocol/machines.ts` own `ChatImage` and `MachineTarget`.
 - `src/ui/text.ts`: the wording both front ends show. It imports no DOM, Node or pi-tui, so the terminal UI imports
-  it and the static server serves it at `/ui/text.ts`. `src/ui/` is served from an allow-list (`types.ts`, `text.ts`).
-- `src/ui/errors.ts`: `NotFound` and `Unavailable`, thrown by the session and the agents core.
-  `Connection.request` is the one place an error becomes a wire code.
+  it and the static server serves it at `/ui/text.ts`. `src/ui/` is served from an allow-list of that one file.
 - `src/runtime/files.ts` (fsynced writes), `src/runtime/thinking.ts` (reasoning efforts) and `src/agents/entries.ts`
   (input entry kinds and their decoder): leaves that load nothing heavy, so the CLI, the memory and the UI share them.
 - `UiSession.send`, `Instance.submit` and `MachineRouting.submit` take one `SendOptions` object instead of positional

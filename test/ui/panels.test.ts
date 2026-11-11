@@ -8,7 +8,7 @@ import { confirm } from '../../src/ui/tui/panels/frame.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
 import { openMemoryPanel } from '../../src/ui/tui/panels/memory.ts';
 import { parseMessage, parseZoom } from '../../src/ui/text.ts';
-import type { AgentStatus, ArchiveTarget, ChatFeed, ChatItem, MemoryStats, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/ui/types.ts';
+import type { AgentStatus, ArchiveTarget, ChatFeed, ChatItem, MemoryStats, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
 
 const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b' };
 const sgr = (on: number, off: number) => (text: string): string => `\x1b[${on}m${text}\x1b[${off}m`;
@@ -76,7 +76,10 @@ class FakeSession implements UiSession {
   send(): Promise<void> { return Promise.resolve(); }
   abort(): Promise<void> { return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
-  stopAgents(name?: string): Promise<readonly string[]> { this.stopped.push(name); return Promise.resolve(name === 'ghost' ? [] : [name ?? 'Ada']); }
+  stopAgents(name?: string): Promise<readonly string[]> {
+    this.stopped.push(name);
+    return name === 'ghost' ? Promise.reject(new Error('No agent named ghost. The agents are Ada, Bob.')) : Promise.resolve([name ?? 'Ada']);
+  }
   /** Archive and restore calls, as `name` or `adhoc`; Coder is standing and refused. */
   readonly archiveCalls: string[] = [];
   readonly standing = new Set(['Coder']);

@@ -8,6 +8,7 @@ import type { ExecutionEnv, Result } from '@earendil-works/pi-durable/env';
 import type { Context } from '@earendil-works/chord';
 import type { ConversationId } from '@earendil-works/pi-durable';
 import { CODEMODE_OPTIONS_PREFIX, parseCodemodeSource } from '@earendil-works/pi-codemode/source';
+import { isRecord } from '../protocol/util.ts';
 
 /**
  * Code mode (ADR 0033): the `codemode` tool runs a model-written JavaScript script in a QuickJS sandbox
@@ -125,10 +126,12 @@ export function createCodemode({ sandbox = new CodemodeSandbox({ memoryLimitByte
     // The section lists what scripts can call; without the tool offered (tools off, standing agents) it says nothing.
     extension: { ...base, tools: (base.tools ?? []).map(tool => tool.name !== CODEMODE_TOOL_NAME ? tool : { ...tool,
       async execute(args, api, context) {
-        const code = withDefaultTimeout((args as { code: string }).code, timeoutMs);
+        // The tool's own validation refuses arguments without code.
+        if (!isRecord(args) || typeof args.code !== 'string') return tool.execute(args, api, context);
+        const code = withDefaultTimeout(args.code, timeoutMs);
         // Without an env, code mode writes no output files at all (it says so itself).
         const refused = await outputRefusal?.(api.conversationId, context);
-        return tool.execute({ ...args as object, code }, refused === undefined || !api.env ? api : { ...api, env: refusingOutput(api.env, refused) }, context);
+        return tool.execute({ ...args, code }, refused === undefined || !api.env ? api : { ...api, env: refusingOutput(api.env, refused) }, context);
       } }), sections: (base.sections ?? []).map(each => ({ ...each,
       render: (input, context) => input.agent.tools.some(tool => tool.name === CODEMODE_TOOL_NAME) ? each.render(input, context) : undefined })),
     hooks: [...base.hooks ?? [], guard], wraps: [...base.wraps ?? [], ...wraps] },

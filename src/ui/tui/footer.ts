@@ -2,7 +2,7 @@
 // are dropped by priority, so the tools state and the busy spinner survive on a phone-width terminal.
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component } from '@earendil-works/pi-tui';
-import type { SessionStatus } from '../types.ts';
+import type { SessionStatus } from '../../protocol/session.ts';
 import { activeAgents, size } from '../text.ts';
 import { NARROW } from './theme.ts';
 import type { Theme } from './theme.ts';

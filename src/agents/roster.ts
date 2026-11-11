@@ -3,7 +3,7 @@ import type { ModelRef } from '@earendil-works/pi-durable';
 
 /**
  * The standing agents' roster and tool kits (ADR 0027): plain data, with no runtime import, so the CLI's settings
- * parser (src/host/config.ts) uses it without loading pi-durable. src/agents/index.ts re-exports it.
+ * parser (src/config/settings.ts) uses it without loading pi-durable. src/agents/index.ts re-exports it.
  */
 
 /** The tool kits a standing agent may name; persisted in settings.json, so frozen. */

@@ -1,7 +1,7 @@
 // /effort: the reasoning effort picker, like /model. The current model's levels, lowest first; the current one is
 // marked ✓.
 import type { TUI } from '@earendil-works/pi-tui';
-import type { UiSession } from '../../types.ts';
+import type { UiSession } from '../../../protocol/session.ts';
 import { clean, ListView, openPanel, PanelFrame } from './frame.ts';
 import type { PanelTheme, Row } from './frame.ts';
 import { errorMessage } from '../../../protocol/util.ts';
