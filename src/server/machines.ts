@@ -1,4 +1,4 @@
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import type { JsonObject, ToolExecutionResult } from '@earendil-works/pi-durable';
 import { MACHINE_TOOLS, jsonData } from '../protocol/machines.ts';
 import type { MachineCall, MachineCancel, MachineRegistration, MachineResult } from '../protocol/machines.ts';

@@ -4,8 +4,8 @@ import type { CloseCode, Device, Peer, PushSubscriptionJson, ServerMessage } fro
 import { isParseError, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { PeerLink, PushNotifier } from '../../src/server/link.ts';
-import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
-import { NotFound } from '../../src/protocol/errors.ts';
+import type { ChatFeed, ChatItem, ModelChoice, NoticeLevel, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
+import { NotFound, Unavailable } from '../../src/protocol/errors.ts';
 
 export class FakeFeed implements ChatFeed {
   list: ChatItem[];
@@ -26,6 +26,15 @@ export class FakeFeed implements ChatFeed {
 
 export const STATUS: SessionStatus = { model: 'faux/faux-1', thinkingLevel: 'high', toolsEnabled: false, busy: false, queued: 0,
   memory: undefined, agents: [] };
+
+/** What the fake session's `usage()` reports. */
+export const USAGE: UsageReport = {
+  today: [{ model: 'faux/faux-1', input: 1200, output: 80, cacheRead: 3400, cacheWrite: 0, cost: 0.0125 }],
+  week: [{ model: 'faux/faux-1', input: 9000, output: 610, cacheRead: 34_000, cacheWrite: 210, cost: 1.5 }],
+  all: [{ model: 'faux/faux-1', input: 90_000, output: 6100, cacheRead: 340_000, cacheWrite: 2100, cost: 15 },
+    { model: 'faux/cheap', input: 500, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0 }],
+  since: 1_800_000_000_000,
+};
 
 export interface FakeSession extends UiSession {
   readonly root: FakeFeed;
@@ -77,12 +86,28 @@ export function fakeSession(items: ChatItem[] = []): FakeSession {
       set({ agents: status.agents.map(agent => agent === hit ? { name: agent.name, role: agent.role, parent: agent.parent, busy: agent.busy } : agent) });
       return Promise.resolve([hit.name]);
     },
+    // Schedules in the status cancel; an unknown id is refused as the core does.
+    cancelSchedule(id) {
+      calls.push(`cancelSchedule ${id}`);
+      const left = (status.schedules ?? []).filter(each => each.id !== id);
+      if (left.length === (status.schedules ?? []).length) return Promise.reject(new NotFound(`No schedule #${id}.`));
+      set({ schedules: left });
+      return Promise.resolve();
+    },
+    usage() { calls.push('usage'); return Promise.resolve(USAGE); },
     agentChat(name) {
       calls.push(`agentChat ${name}`);
       return Promise.resolve(agents.get(name.toLowerCase()));
     },
     memoryView: () => Promise.resolve(lines),
     zoom(id, n) { return id === 0 ? Promise.resolve(`zoom ${id}+${n}`) : Promise.reject(new NotFound(`No line ${id}+${n}.`)); },
+    // One hit of three with the memory open; a query of filters alone is refused as the core does.
+    search(query) {
+      calls.push(`search ${query}`);
+      if (!status.memory) return Promise.reject(new Unavailable('Memory is not open (inspection only).'));
+      if (/^kind:\S*$/.test(query)) return Promise.reject(new Error('Search for at least one word.'));
+      return Promise.resolve({ hits: [{ id: 0, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: `…say ${query} again…` }], total: 3 });
+    },
     models: () => Promise.resolve(models),
     setModel(provider, id) {
       return provider === 'faux' ? Promise.resolve() : Promise.reject(new Error(`Unknown model ${provider}/${id}`));

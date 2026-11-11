@@ -3,6 +3,7 @@
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import type { ModelRef } from '@earendil-works/pi-durable';
+import { SDK } from './sdk.ts';
 import { THINKING } from './thinking.ts';
 import { anthropicSubscriptionSource } from '../providers/anthropic.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
@@ -96,7 +97,7 @@ export function imagesProblem(models: Pick<Models, 'getModel'>, { provider, mode
 export function catalogProblem(models: Pick<Models, 'getModel'>, { provider, modelId }: ModelRef): string | undefined {
   if (models.getModel(provider, modelId)) return undefined;
   return provider === CLAUDE_CLI ? `Unknown model claude-cli/${modelId}. Use opus, sonnet, haiku or fable.`
-    : `Unknown model ${provider}/${modelId} in pinned Pi 1.5.0 catalog`;
+    : `Unknown model ${provider}/${modelId} in pinned Pi ${SDK} catalog`;
 }
 
 /** The short hint shown beside a provider's models. */

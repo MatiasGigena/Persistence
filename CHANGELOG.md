@@ -7,11 +7,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `pi-durable doctor` (ADR 0041) checks what a machine needs to run the host and prints, per check, what is
+  wrong and its fix: Node, flock, bubblewrap, Pi's SSH keys, `settings.json`, the model's credentials, the standing
+  agents (Chromium, models, logins), autoreview's skill and Codex CLI, the chat's files, backups, the saved remote
+  and the server's web settings. It only reads and takes no lock, so it runs beside a server; `--remote-check` also
+  tries the SSH login, and `--json` prints the checks. Exit status 1 when a check fails. A prompt whose first word
+  is `doctor` now needs `-p`, as `serve` and `backup` do.
+- Scheduled wake-ups (ADR 0038): ask Pi to remind you of something or to check back later, once or on a cron
+  expression. Pi's `schedule`, `list_schedules` and `cancel_schedule` tools leave it a message that arrives as a
+  new turn, `[Schedule #n] …`, when it is due, also while no client is attached; a phone gets a push. Delivery is
+  exactly-once across crashes, and a host that was closed delivers late at its next launch, a repeating schedule
+  once. `/schedule` lists them and `/schedule cancel N` removes one; the web app lists them under `N scheduled`;
+  `/status` names the next. With machine routing a schedule keeps the workstation it was made on. New optional
+  status field `schedules` and op `schedule.cancel`; `PROTOCOL` stays 4. Times are the host's local time: set `TZ`
+  for a server in another zone.
+- A usage report (ADR 0039): `/usage` in the terminal UI and Usage under Chat settings in the web app show the
+  tokens (input, output, cache read, cache written) and the catalog cost per model, today, over the last 7 days and
+  all time, for Pi, its agents and the memory's compactions. Days are the host's local days, counted from the first
+  launch with this version; earlier spend shows in "all time" only. New protocol op `usage`; `PROTOCOL` stays 4.
+- Searching the log (ADR 0040): `/find words` in the terminal UI and a "Search all messages" field in the web app's
+  Memory sheet list the messages that hold every word, newest first, each with its date, kind and a line around the
+  match; a hit opens the message whole. `"a phrase"` in double quotes matches as written and `kind:user` (or `pi`,
+  `tool`, `echo`, `work`, `note`) keeps one kind. It reads the log as written, not the summaries, and is for the
+  user only: Pi gets no search tool, since zoom stays the model's only way through its memory. New protocol op
+  `memory.search`, added without a version change.
 - Archiving agents (ADR 0034): the `/agents` panel, the web app's Agents sheet and `pi-durable serve agents
   --archive NAME | --archive-adhoc | --restore NAME` archive ad-hoc agents and restore them within the day. An
   archived agent is stopped, hidden and unreachable; a day later it is deleted as `delete_agent` does, its chat kept
   for `zoom`. New protocol ops `agents.archive` and `agents.restore`; `PROTOCOL` is 4, since `status.agents` now
   lists archived agents too: update clients and server together.
+- Terminal: `/steer message` sends a message into Pi's running work, which reads it between its steps, as the web
+  app's steer does; a plain message sent while Pi works still waits for its answer.
+- Terminal: the bell rings when a run of 30 seconds or more ends, so a terminal in another tab or window says Pi
+  is done (most terminals show it as a tab mark or a notification; `PI_DURABLE_BELL=off` silences it), and
+  terminals that take program status reports (OSC 7501) are told when Pi works and when it is done.
 - Terminal: a dim first line counts the history items the chat leaves out and points at /mem; the footer shows
   `↓ more below (pgdn)` while the chat is scrolled up; /effort opens on the current level.
 - Web app: warnings and errors are read out to screen readers; focus stays in the menu sheet when a level opens or
@@ -178,7 +207,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Breaking for rollbacks:** the Pi packages are pinned at 1.5.0 (ADR 0035). The first launch migrates
+- With a server, a message sent while Pi works is no longer refused (ADR 0042): when it is for the machine and
+  folder Pi's run executes on, it is queued behind the run, and the web app's "Steer Pi…" reaches the run between
+  its steps. Before, every send to a busy Pi on a server failed and had to be typed again. A message for another
+  destination is still refused, now naming both; a run never changes machine. The check and the admission are one
+  commit, with pi-durable 1.5's admission inside a commit.
+- The Pi packages are pinned at 1.5.2 (ADR 0037). It brings pi-durable's fix for a run that could hang while it
+  waited on parallel tool calls, fewer SQL statements per commit, and pi-ai 1.5.2's model catalog. Nothing
+  migrates: a 1.5.0 checkout still opens the chat. `--version`, `--help` and the unknown-model error name the
+  pinned release from one constant.
+- **Breaking for rollbacks:** the Pi packages were first moved to 1.5.0 (ADR 0035). The first launch migrates
   `chat.sqlite` to Durable SQLite schema 2, which 1.3.0 cannot open: back up first (`pi-durable backup`). The
   terminal UI is built from Pi's conversation view instead of the removed `watchEvents()`, and the tools' schemas
   come from `@earendil-works/pi-schema`, unchanged on the wire.

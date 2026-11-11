@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, test, type TestContext } from 'node:test';
-import type { JsonValue } from '@earendil-works/chord';
+import type { JsonValue } from '@earendil-works/chord/json';
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import {

@@ -32,14 +32,15 @@ export const SSH_SERVER_LINE_MAX = 32 * 1024 * 1024;
 const WRITE_MAX = 16 * 1024 * 1024;
 const STDERR_MAX = 4096;
 const quote = (word: string): string => `'${word.replaceAll("'", "'\\''")}'`;
-const clean = (text: string): string => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+/** `text` (ssh's stderr) on one line, without escape sequences or control characters, at most 1024 characters. */
+export const clean = (text: string): string => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
   .replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 1024);
 
 /**
  * How to fix a failed SSH start, from ssh's stderr and exit code, or ''. The connector runs ssh with BatchMode and strict
  * host keys, so a password prompt, a passphrase prompt or a new host key fails instead of asking.
  */
-function fixHint(target: SshTarget, stderr: string, code: number | null): string {
+export function fixHint(target: SshTarget, stderr: string, code: number | null): string {
   if (/Host key verification failed|host key is known|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(stderr)) {
     return ` Run ssh ${target.host} once to check and accept its host key; pi-durable never accepts one itself.`;
   }
@@ -53,6 +54,11 @@ function fixHint(target: SshTarget, stderr: string, code: number | null): string
   }
   return '';
 }
+
+/** ssh's options for every connection: no prompt, no new host key, no forwarding. `doctor --remote-check` probes with the same. */
+export const SSH_OPTIONS: readonly string[] = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ClearAllForwardings=yes',
+  '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no',
+  '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'ConnectTimeout=10'];
 
 function remoteCommand(target: SshTarget): string {
   // Restrict destinations to aliases, DNS/IP addresses and an optional SSH username. In particular, no options,
@@ -82,10 +88,7 @@ export function sshConnector(target: SshTarget, options: SshOptions = {}): Conne
   const startupMs = options.startupMs ?? 15_000, killMs = options.killMs ?? 1000;
   if (!Number.isInteger(startupMs) || startupMs < 1 || startupMs > 120_000
     || !Number.isInteger(killMs) || killMs < 1 || killMs > 30_000) throw new Error('Invalid SSH timeout');
-  const args = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ClearAllForwardings=yes',
-    '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no',
-    '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'ConnectTimeout=10',
-    '--', target.host, command];
+  const args = [...SSH_OPTIONS, '--', target.host, command];
   return events => new Promise<Channel>((resolve, reject) => {
     if (options.signal?.aborted) { reject(new Error('SSH connection cancelled')); return; }
     let child: ChildProcessWithoutNullStreams;

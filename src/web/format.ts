@@ -22,12 +22,12 @@ export function shortModel(model: string): string {
 
 /** One segment of the header's status line; `tone` picks its color. */
 export interface StatusPart {
-  readonly key: 'work' | 'queued' | 'memory' | 'failed' | 'agents';
+  readonly key: 'work' | 'queued' | 'memory' | 'failed' | 'agents' | 'schedules';
   readonly text: string;
   readonly tone: 'busy' | 'dim' | 'error';
 }
 
-/** The compact status under the header: work, queue, memory and agents, in the terminal footer's short forms. */
+/** The compact status under the header: work, queue, memory, agents and schedules, in the terminal footer's short forms. */
 export function statusParts(status: SessionStatus): StatusPart[] {
   const parts: StatusPart[] = [{ key: 'work', text: status.busy ? 'working' : 'idle', tone: status.busy ? 'busy' : 'dim' }];
   if (status.busy && status.queued) parts.push({ key: 'queued', text: `${status.queued} queued`, tone: 'dim' });
@@ -41,6 +41,8 @@ export function statusParts(status: SessionStatus): StatusPart[] {
     const busy = agents.filter(agent => agent.busy).length;
     parts.push({ key: 'agents', text: `${busy}/${agents.length} agents`, tone: busy ? 'busy' : 'dim' });
   }
+  const schedules = status.schedules?.length ?? 0;
+  if (schedules) parts.push({ key: 'schedules', text: `${schedules} scheduled`, tone: 'dim' });
   return parts;
 }
 
@@ -50,7 +52,7 @@ export function memoryHeader(memory: MemoryStats | undefined): string {
   return `${memory.messages} messages · ${(memory.viewBytes / 1024).toFixed(1)} KB view · ${memory.active} summarizing · ${memory.failed} failed`;
 }
 
-export const lineLabel = (line: ViewLine): string => `${line.id}+${line.n}`;
+export const lineLabel = (line: Pick<ViewLine, 'id' | 'n'>): string => `${line.id}+${line.n}`;
 
 /** The current model first, then available, then unavailable: the terminal picker's order. */
 export function sortModels(models: readonly ModelChoice[], current: string): ModelChoice[] {

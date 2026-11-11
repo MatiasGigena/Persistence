@@ -12,8 +12,9 @@ cd ~/pi-durable-instance
 npm ci --ignore-scripts
 ```
 
-The Pi packages are pinned at 1.5.0. Change a pin only on purpose, and say why in
-the commit and in [CHANGELOG.md](CHANGELOG.md).
+The Pi packages are pinned at 1.5.2. Change a pin only on purpose, and say why in
+the commit and in [CHANGELOG.md](CHANGELOG.md); move `SDK` in `src/runtime/sdk.ts` with them (a test holds
+the two together).
 
 ## Checks
 
@@ -48,6 +49,7 @@ test/host/       CLI parsing, paths, global chat, flock, shutdown, the UiSession
 test/runtime/    reopen, request IDs, recovery, tool opt-in, synchronous FULL, transcript
 test/memory/     log, tree, view, compactor, uniichat extension
 test/agents/     roles, messaging, delivery across close and SIGKILL
+test/schedule/   cron expressions, schedules firing once, late and repeating, cancelling, routing
 test/providers/  claude-cli with a fake CLI, stub MCP server, subscription check
 test/protocol/   wire messages and parsers, item diff and mirror (randomized, seeded)
 test/tools/      browser and its egress proxy, web_fetch, autoreview, show_image, code mode
@@ -56,6 +58,7 @@ test/server/     hub, auth, Unix socket and WebSocket transports, push, backups,
 test/client/     attach, remote session, SSH link and bridge, client config
 test/machines/   routing, the execution broker and the local executor
 test/web/        the web app's DOM-free modules: format, store, link, markdown, cache
+test/usage/      the usage report: daily buckets, sampling, compaction spend
 test/fixtures/   faux models, the fake claude CLI, child-process instances
 ```
 
@@ -89,15 +92,17 @@ Give each test its own temporary data directory.
 
 - Keep persisted identifiers stable. Existing databases and memory directories
   depend on them:
-  - extension names `uniichat`, `agents`, `browser`, `web-fetch`, `autoreview`, `show-image` and `codemode`;
-  - entry kinds `agents.report`, `agents.message`, `host.resume-boundary`;
-  - task kinds `agents.anchor` and `agents.deliver`, and their versions;
+  - extension names `uniichat`, `agents`, `schedule`, `browser`, `web-fetch`, `autoreview`, `show-image` and `codemode`;
+  - entry kinds `agents.report`, `agents.message`, `schedule.fire`, `host.resume-boundary`;
+  - task kinds `agents.anchor`, `agents.deliver` and `schedule.wake`, and their versions;
+  - the doc kind `schedule.registry`, its schedules' fields, and the request ID form `schedule:<task id>:<occurrence>` (ADR 0038);
   - the doc kind `agents.registry`, and its agents' fields, `standing`, `past`, `session` and `archivedAt` among them;
   - the `agents.deliver` task memo field `session` (the conversation a message delivery chose);
   - the optional `session` number (from 1) in `agents.report` entry data;
-  - the protocol ops `agents.archive` and `agents.restore` (ADR 0034);
+  - the protocol ops `agents.archive` and `agents.restore` (ADR 0034), `schedule.cancel` (ADR 0038) and `memory.search` (ADR 0040);
+  - the doc kind `host.usage`, its fields `since`, `last`, `days` and `extra`, and the protocol op `usage` (ADR 0039);
   - tool names `zoom`, `date`, `spawn_agent`, `list_agents`, `send_message`,
-    `last_message`, `stop_agent`, `delegate`, `web_fetch`, `autoreview`, and the browser's `browser_goto`,
+    `last_message`, `stop_agent`, `delegate`, `schedule`, `list_schedules`, `cancel_schedule`, `web_fetch`, `autoreview`, and the browser's `browser_goto`,
     `browser_eval`, `browser_console`, `browser_network`, `browser_fill`, `browser_click`,
     `browser_screenshot`, `browser_close`, `show_image`, and `codemode` (with pi-durable's `pi.codemode.*` docs);
   - memory kinds `user`, `pi`, `tool`, `echo`, `work`, `note`, and the `src` key formats;

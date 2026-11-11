@@ -16,6 +16,9 @@ test('statusParts is the compact header line', () => {
   assert.deepEqual(statusParts(STATUS).map(p => p.text), ['working', '2 queued', 'mem 37 KB', '1 failed', '1/2 agents']);
   assert.deepEqual(statusParts({ ...STATUS, busy: false, memory: undefined, agents: [] }).map(p => p.text), ['idle']);
   assert.equal(statusParts(STATUS).find(p => p.key === 'failed')?.tone, 'error');
+  const scheduled = { ...STATUS, schedules: [{ id: 1, text: 'a', at: 1 }, { id: 2, text: 'b', at: 2, cron: '0 9 * * *' }] };
+  assert.deepEqual(statusParts(scheduled).at(-1), { key: 'schedules', text: '2 scheduled', tone: 'dim' });
+  assert.equal(statusParts({ ...STATUS, schedules: [] }).some(p => p.key === 'schedules'), false);
 });
 
 test('archived agents are left out of the header line and the terminal footer', () => {

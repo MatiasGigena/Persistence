@@ -389,6 +389,15 @@ export class Hub implements PeerHub {
       stopAgents: async ({ name }) => ({ names: await this.requireSession().stopAgents(name) }),
       'agents.archive': (target, connection) => this.archive(connection, { archive: target }),
       'agents.restore': ({ name }, connection) => this.archive(connection, { restore: name }),
+      usage: async () => ({ report: await this.requireSession().usage() }),
+      'schedule.cancel': async ({ id }, connection) => {
+        await this.requireSession().cancelSchedule(id);
+        const { link } = connection;
+        this.options.log(`schedule #${id} cancelled, by ${link.who} (${link.peer})`);
+        // The client that asked says so itself; the others learn who did it.
+        for (const other of this.connections) if (other !== connection) other.notice(`Schedule #${id} cancelled, by ${whoOf(link)}.`, 'info');
+        return null;
+      },
       'feed.open': async ({ name }, connection) => {
         const feed = await this.openFeed(connection, name);
         if (feed === undefined) throw new OpError(ErrorCode.notFound, `No agent named ${name}.`);
@@ -409,6 +418,7 @@ export class Hub implements PeerHub {
       },
       'memory.view': async () => ({ lines: await this.requireSession().memoryView() }),
       'memory.zoom': async ({ id, n }) => ({ text: await this.requireSession().zoom(id, n) }),
+      'memory.search': async ({ query }) => this.requireSession().search(query),
       models: async () => ({ models: await this.requireSession().models() }),
       'model.set': async ({ provider, id }) => { await this.requireSession().setModel(provider, id); return null; },
       'tools.set': ({ enabled, confirm }, connection) => this.setTools(connection, enabled, confirm),

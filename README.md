@@ -1,7 +1,7 @@
 # Persistence
 
 One Pi chat in your terminal that never ends. It runs on the experimental
-[`@earendil-works/pi-durable@1.5.0`](https://github.com/earendil-works/pi/tree/v1.5.0/packages/durable)
+[`@earendil-works/pi-durable@1.5.2`](https://github.com/earendil-works/pi/tree/v1.5.2/packages/durable)
 SDK, keeps its memory with Victor Taelin's
 [UniiChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)
 recipe, and lets Pi start agents that work in the background.
@@ -22,6 +22,7 @@ npm ci --ignore-scripts
 npm exec -- pi                 # in Pi: /login, then exit
 mkdir -p ~/.local/bin
 ln -s "$HOME/pi-durable-instance/bin/pi-durable" "$HOME/.local/bin/pi-durable"
+pi-durable doctor              # checks the install: what is missing, and its fix
 cd /path/to/project && pi-durable
 ```
 
@@ -48,6 +49,7 @@ pi-durable --status                         # print storage and pending work; no
 pi-durable --resume                         # finish interrupted work, wait for agents, print history
 pi-durable --request-id my-job-1 --print 'Summarize the design'
 pi-durable --model openai/gpt-4o-mini --thinking off
+pi-durable doctor                           # check what this machine needs; reads only (--remote-check, --json)
 pi-durable --help                           # every flag
 ```
 
@@ -121,11 +123,13 @@ as the model takes; `/effort xhigh` sets it directly; saved as the default), `/t
 `y` enables read, write, edit and bash for this launch), `/tools off`, `/agents` (list
 agents, open any agent's live chat; `a` archives the selected one, `A` every ad-hoc one, and the Archived row
 restores them within the day), `/mem` (browse the memory view and zoom down to
-any message), `/status`, `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
+any message), `/find words` (search every message of the log, for you and not for Pi: `"a phrase"` in quotes,
+`kind:user` for one kind; Enter opens a hit whole), `/schedule` (Pi's scheduled wake-ups; `/schedule cancel N` removes one), `/status`, `/usage` (tokens and catalog cost per model: today, the last 7 days, all time), `/steer message` (Pi reads it between its steps, where a plain message sent while Pi works waits for its answer), `/stop` (interrupt Pi, as Esc does; `/stop all` also stops every agent, `/stop Name` one agent and its sub agents), `/exit`. A new model
 applies from the next message and becomes the default for launches without `--model`.
 Keys: Enter sends, Shift+Enter or Alt+Enter adds a line, Esc interrupts Pi, Ctrl+L
 picks a model, Ctrl+O expands tool output, Ctrl+T expands thinking, Ctrl+C twice (the footer says so after the first) or
-Ctrl+D exits (asking first while Pi or an agent is working). On a phone, see
+Ctrl+D exits (asking first while Pi or an agent is working). When a run of 30 seconds or more ends, the terminal bell
+rings, so a terminal in another tab says Pi is done (`PI_DURABLE_BELL=off` silences it). On a phone, see
 [Phone access](docs/operations.md#phone-access-sshmosh).
 `--plain` mode has `/history`, `/agents` and `/status`, but not `/mem`, `/model`, `/effort`, `/tools` or `/stop`; it says what to
 do instead. A line that starts with a path (`/etc/hosts is empty, why?`) is a message for Pi, not a command.
@@ -190,6 +194,15 @@ within that team. Delivery is exactly-once across crashes, not arbitrary shell e
 Agents work only while a host is open: in chat, their reports print as they arrive;
 after `-p`, run `pi-durable --resume` to let them finish. Details: [docs/agents.md](docs/agents.md).
 
+## Schedules
+
+Ask Pi to remind you of something or to check back on it later ("remind me on Friday at 10", "look at the build
+again in 20 minutes", "every weekday at 9, tell me what changed overnight"). Pi leaves itself a message with its
+`schedule` tool; when it is due, the message arrives as a new turn, `[Schedule #n] …`, and Pi answers it, also while
+you are away. With `pi-durable serve` and push notifications, your phone is told. `/schedule` lists the schedules
+and cancels one. Delivery is exactly-once across crashes; a host that was closed delivers late at its next launch.
+Details: [docs/schedules.md](docs/schedules.md).
+
 ## Safety
 
 Coding tools (read, write, edit, bash) are on for local launches and `pi-durable serve`, unless you pass
@@ -217,12 +230,15 @@ Reviewer's dedicated tool is an explicit integration with the installed autorevi
 ```
 bin/pi-durable      launcher: picks Node, runs src/cli.ts
 src/cli.ts          arguments, flock, spawns the host
-src/host/           terminal chat, /commands, reply watcher; CLI options and paths
-src/runtime/        Harness, extensions, Pi's agent config; resume and agent settling
+src/config/         CLI options, state paths, settings.json and the roster
+src/host/           terminal chat, /commands, reply watcher; pi-durable doctor
+src/session/        the host's state as a UiSession, shared by the terminal and the server
+src/runtime/        Harness, extensions, Pi's agent config; resume, agent settling, machine routing
 src/memory/         UniiChat memory: log, tree, view, compactor, extension
 src/agents/         standing roster, hierarchy, sessions and messaging
+src/schedule/       Pi's scheduled wake-ups: tools, cron, the wake task
+src/usage/          the usage report: spend per model, sampled into daily buckets
 src/tools/          browser, web_fetch and autoreview kits; show_image; code mode
-src/machines/       persistent target routing for runs and spawned agents
 src/client/         socket/SSH TUI, stdio bridge, local execution ledger
 src/protocol/       native chat and machine-execution messages
 src/server/         one writer, transports, execution broker, auth, backups, push
@@ -242,6 +258,7 @@ docs/               architecture, operations, models, memory, agents, decisions,
 - [docs/models.md](docs/models.md): model routes, the Claude policy, how `claude-cli` works
 - [docs/memory.md](docs/memory.md): UniiChat memory and recipe deviations
 - [docs/agents.md](docs/agents.md): agent roles, messaging, delivery and execution targets
+- [docs/schedules.md](docs/schedules.md): scheduled wake-ups: the tools, delivery, machines
 - [docs/protocol.md](docs/protocol.md): native socket, SSH and web protocol
 - [docs/decisions/](docs/decisions/): architecture decision records
 - [CONTRIBUTING.md](CONTRIBUTING.md): development, tests, rules
@@ -250,6 +267,6 @@ docs/               architecture, operations, models, memory, agents, decisions,
 
 ## Status
 
-Experimental and under active development. It depends on an experimental SDK pinned at 1.5.0.
+Experimental and under active development. It depends on an experimental SDK pinned at 1.5.2.
 Licensed under the [Apache License 2.0](LICENSE). Parts of `src/memory/` are adapted from
 [UniiChat](https://github.com/VictorTaelin/uniichat) under the Apache License 2.0; see [NOTICE](NOTICE).

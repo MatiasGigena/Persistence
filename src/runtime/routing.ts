@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import type { Context } from '@earendil-works/chord';
-import { ConversationBusy, defineDoc, defineDocFamily, GenerationTask, hook, LiveDoc, ROOT_CONVERSATION_ID, section } from '@earendil-works/pi-durable';
+import type { Context } from '@earendil-works/chord/context';
+import { defineDoc, defineDocFamily, GenerationTask, hook, LiveDoc, ROOT_CONVERSATION_ID, section } from '@earendil-works/pi-durable';
 import type {
-  ConversationId, Extension, Harness, JsonObject, Submission, ToolExecutionResult, ToolRegistration, Tx,
+  ConversationId, Extension, Harness, JsonObject, LiveState, Submission, ToolExecutionResult, ToolRegistration, Tx,
 } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { userInput } from './input.ts';
@@ -47,6 +47,15 @@ const requestKey = (id: string) => `request:${id}`;
 function sameTarget(first: MachineTarget, second: MachineTarget): boolean {
   return first.machineId === second.machineId && first.cwd === second.cwd && first.label === second.label;
 }
+/** How often `submit` looks again when Pi's run changed between reading its destination and admitting the message. */
+const ADMIT_TRIES = 5;
+/** Why a message for `wanted` cannot join the busy run on `running` (undefined: a run with no valid destination). */
+function busyText(running: MachineTarget | undefined, wanted: MachineTarget): string {
+  const where = (target: MachineTarget): string => `${target.label} (${target.cwd})`;
+  return running
+    ? `Pi is busy with a run on ${where(running)}; a message for ${where(wanted)} cannot join it. Wait for it to end, or stop it and send again.`
+    : 'Pi is busy with a run that has no machine destination, so nothing can join it. Wait for it to end, or stop it and send again.';
+}
 function requireSame(first: MachineTarget, second: MachineTarget): void {
   if (!sameTarget(first, second)) throw new Error('Machine destination mismatch: the persisted target is immutable.');
 }
@@ -54,6 +63,12 @@ function requireSame(first: MachineTarget, second: MachineTarget): void {
 export interface MachineRouting {
   readonly tools: Extension;
   initialize(context: Context): Promise<void>;
+  /**
+   * Admit a user message pinned to `options.target` (the server itself without one). An idle Pi starts a run. A busy
+   * one takes it as a follow-up, or with `steer` between its steps, only when its run executes on that same
+   * destination; any other is rejected, and no run ever changes destination (ADR 0042). A repeat of an admitted
+   * request ID resolves with its first submission.
+   */
   submit(text: string, options: SendOptions, context: Context): Promise<Submission>;
   /**
    * Preserve local tool implementations and protections, but explicitly refuse unsupported remote network kits. With
@@ -67,6 +82,13 @@ export interface MachineRouting {
   pinSpawn(tx: Tx, parent: ConversationId, child: ConversationId): Promise<void>;
   /** Persist a new root delivery's exact source-session route in the transaction that creates its task. */
   pinDelivery(tx: Tx, source: ConversationId, destination: ConversationId, requestId: string): Promise<void>;
+  /** The pinned destination of the root's current run, read in the commit of `tx`; undefined when it has none. */
+  runTarget(tx: Tx): Promise<MachineTarget | undefined>;
+  /**
+   * Bind root request `requestId` to `target` (the server itself without one) before it is submitted: write-once, as
+   * `submit` binds a user's message. For inputs the host itself schedules (src/schedule).
+   */
+  pinRequest(tx: Tx, requestId: string, target?: MachineTarget): Promise<void>;
 }
 
 /** Routing is launch-local policy around the original tools, not a replay-safety upgrade. */
@@ -178,6 +200,30 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
     })],
   };
 
+  /**
+   * The destination of the root's running `run`, read outside any commit: its pin once its first request stored one,
+   * else the one its inputs agree on (request bindings are write-once). Undefined when an input has none or they
+   * differ: such a run executes nothing, and takes no message.
+   */
+  const runDestination = async (run: NonNullable<LiveState['run']>, context: Context): Promise<Target | undefined> => {
+    const source = harness();
+    const stored = (await source.snapshot(RunRouteDoc, run.taskId, context))?.target;
+    if (stored) return detached(stored);
+    const routes = await Promise.all(run.inputs.map(async (id) => {
+      const requestId = (await (await source.submission(id, context))?.status(context))?.requestId;
+      return requestId === undefined ? undefined
+        : (await source.snapshot(SubmissionRouteDoc, ROOT_CONVERSATION_ID, requestKey(requestId), context))?.target;
+    }));
+    const [first] = routes;
+    return first && routes.every(route => route && sameTarget(route, first)) ? detached(first) : undefined;
+  };
+
+  /** The root's current run's pin, as its first request stored it. */
+  const runTarget = async (tx: Tx): Promise<Target | undefined> => {
+    const run = (await tx.doc(LiveDoc, ROOT_CONVERSATION_ID)).run;
+    return run ? (await tx.doc(RunRouteDoc, run.taskId)).target : undefined;
+  };
+
   return {
     tools,
     initialize: context => harness().commit(async tx => { await tx.doc(RoutingDoc); }, context),
@@ -202,8 +248,9 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
       if (!target.machineId || !target.cwd || !target.label) throw new Error('Invalid machine destination.');
       isHost(target); // throws for a server target other than this host
       const pinned = detached(target);
+      const source = harness();
       // A crash here leaves an unused mapping, not an unpinned submission. Retrying may only use this target.
-      await harness().commit(async tx => {
+      await source.commit(async tx => {
         const route = await tx.doc(SubmissionRouteDoc, ROOT_CONVERSATION_ID, requestKey(requestId), null);
         if (route.target) requireSame(route.target, pinned);
         else {
@@ -214,18 +261,30 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
           route.target = pinned;
         }
       }, context);
-      const root = await harness().root(context);
-      // pi-durable (admitSubmission) checks dedup first, then throws ConversationBusy before creating a rejected input.
-      // The public admission API cannot atomically compare a busy run's target and steer it. A separate
-      // snapshot check would race another run's admission, so routed follow-ups and steering both reject.
-      try {
-        return await root.submit({ type: 'input', content: userInput(text, images), requestId, whenBusy: 'reject' }, context);
-      } catch (error) {
-        if (steer && error instanceof ConversationBusy) {
-          throw new Error('Cannot steer a busy routed run; wait for it to finish and resend to the same machine.', { cause: error });
-        }
-        throw error;
+      const root = await source.root(context);
+      const content = userInput(text, images);
+      // A busy run takes the message only when it runs on the same destination: a follow-up waits for its answer, a steer
+      // joins it between its steps. The comparison and the admission are one commit (pi-durable's `submit(tx, …)`), so
+      // no other run can start, and no steer can land, between them. The run's destination is read first, outside the
+      // commit, as `resolve` reads it; the commit then admits only if the run is still the one that was read.
+      for (let attempt = 0; attempt < ADMIT_TRIES; attempt++) {
+        const run = (await source.snapshot(LiveDoc, ROOT_CONVERSATION_ID, context))?.run;
+        const running = run && await runDestination(run, context);
+        const admitted = await source.commit(async tx => {
+          // A repeat of an admitted request returns it, also while busy on another destination.
+          const existing = await tx.submissionByRequest(ROOT_CONVERSATION_ID, requestId);
+          if (existing) return existing.id;
+          const live = (await tx.doc(LiveDoc, ROOT_CONVERSATION_ID)).run;
+          if (live?.taskId !== run?.taskId || (live && run && !isDeepStrictEqual([...live.inputs], [...run.inputs]))) return undefined;
+          if (live && (!running || !sameTarget(running, pinned))) throw new Error(busyText(running, pinned));
+          return root.submit(tx, { type: 'input', content, requestId, whenBusy: live ? steer ? 'steer' : 'followUp' : 'reject' });
+        }, context);
+        if (admitted === undefined) continue;
+        const submission = await source.submission(admitted, context);
+        if (!submission) throw new Error('The admitted message was not found.');
+        return submission;
       }
+      throw new Error('Pi\'s run kept changing while the message was admitted; send it again.');
     },
     async pinDelivery(tx, source, destination, requestId) {
       if (destination !== ROOT_CONVERSATION_ID || source === ROOT_CONVERSATION_ID) return;
@@ -236,12 +295,15 @@ export function createMachineRouting({ dispatcher, cwd, harness: opened, allowTo
       if (route.target) requireSame(route.target, inherited);
       else route.target = detached(inherited);
     },
+    runTarget,
+    async pinRequest(tx, requestId, target = host) {
+      isHost(target); // throws for a server target other than this host
+      const route = await tx.doc(SubmissionRouteDoc, ROOT_CONVERSATION_ID, requestKey(requestId), null);
+      if (route.target) requireSame(route.target, target);
+      else route.target = detached(target);
+    },
     async pinSpawn(tx, parent, child) {
-      let inherited: Target | undefined;
-      if (parent === ROOT_CONVERSATION_ID) {
-        const run = (await tx.doc(LiveDoc, parent)).run;
-        if (run) inherited = (await tx.doc(RunRouteDoc, run.taskId)).target;
-      } else inherited = (await tx.doc(AgentRouteDoc, parent)).target;
+      const inherited = parent === ROOT_CONVERSATION_ID ? await runTarget(tx) : (await tx.doc(AgentRouteDoc, parent)).target;
       if (!inherited) throw new Error('Spawner has no pinned machine destination; spawning or delegation is blocked. Start from an explicitly targeted user turn.');
       const route = await tx.doc(AgentRouteDoc, child);
       if (route.target) requireSame(route.target, inherited);

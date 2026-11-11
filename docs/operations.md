@@ -151,8 +151,7 @@ disabled. `bridge` proxies stdin/stdout to the existing, owner-checked mode 600
 Unix socket; diagnostics go only to stderr. It opens no database, model runtime,
 Harness, flock, TCP listener or SSH forwarding port. The remote login shell must
 not print banners to stdout for noninteractive commands. Use the same application
-version on both ends (the same `PROTOCOL`); routed sends to a busy root are rejected
-rather than queued or steered. The client also
+version on both ends (the same `PROTOCOL`). The client also
 refuses a server without machine-routing capability before sending a message.
 
 ### Launch routing and permission
@@ -193,10 +192,12 @@ run them on the VPS through your normal SSH shell.
   restart. A standing agent's newly delegated session inherits the delegating run's
   pin; old sessions and their subs keep theirs. Sending an existing agent a
   message does not move it to your machine.
-- Routed user messages are refused while Pi's root run is busy. In particular,
-  another workstation cannot steer an active run onto its own files; wait for
-  the run to finish and send again. A rejected request ID remains bound to its
-  original destination.
+- While Pi works, a message for the machine and folder its run executes on is
+  queued behind the run (Esc withdraws it with the run), and the web app's steer
+  reaches the run between its steps (ADR 0042). A message for any other
+  destination is refused, naming both: another workstation, or the phone, cannot
+  steer an active run onto other files; wait for the run to finish, or stop it,
+  and send again. A rejected request ID remains bound to its original destination.
 - New agent messages/reports carry their exact source session's destination, so
   Pi can continue and delegate review after a report without changing machines.
   Unmapped legacy reports, mixed-machine inputs and older unpinned sessions cannot
@@ -306,7 +307,7 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
   (also in `settings.json`), else `high`. `--status` shows the model
   and where it came from (`modelSource`). See [models.md](models.md#switching-models).
   `--thinking` takes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
-- Models must exist in the pinned Pi 1.5.0 catalog, or be one of the `claude-cli`
+- Models must exist in the pinned Pi 1.5.2 catalog, or be one of the `claude-cli`
   aliases. Personal model overrides
   (`models.json`) are deliberately not loaded, and the host fetches no model list.
 - The compaction model is chosen from the turn model's provider: `gpt-6-luna` for
@@ -524,8 +525,10 @@ PI_DURABLE_ALLOW_LOGIN=me@github
 # PI_DURABLE_UNPROTECT=~/.ssh      # let the tools use these protected paths (':'-separated)
 # PI_DURABLE_PROTECT=~/secrets     # hide more paths from the tools (':'-separated)
 # PI_DURABLE_PUSH_PREVIEW=off      # on: notifications show the reply's first words
+# TZ=America/Argentina/Buenos_Aires  # the zone schedules and the times Pi sees are in; default: the system's
 # PI_DURABLE_DATA_DIR=/home/me/.local/state/pi-durable
 # PI_DURABLE_CHROMIUM=/opt/google/chrome/chrome  # the browser tools' Chromium, not a snap; default: Playwright's, in ~/.cache/ms-playwright
+# TZ=America/Argentina/Buenos_Aires  # the host's time zone, so the days /usage counts by; default: the system's
 ```
 
 A malformed value stops the server at start with a message naming the variable (see the journal).
@@ -571,6 +574,21 @@ pi-durable serve agents --restore Helper  # bring it back within the day (its st
 - The standing agents (Coder, Reviewer, Researcher) cannot be archived; remove one from the roster first.
 - Every archive and restore is shown to every client and written to the journal, naming who did it.
 
+### Usage
+
+`/usage` in the terminal UI, and Usage under Chat settings in the web app, show what the chat spent per model: input,
+output, cache read and cache written tokens, today, over the last 7 days and all time (ADR 0039). Pi, every agent
+and the memory's compactions are counted. A local launch has `/usage` too.
+
+- Costs are the model catalog's prices. On a subscription plan they are not what you pay; read the tokens.
+  `claude-cli` models report no cost, so theirs is left out.
+- Days are counted from the first launch with this version. What the chat spent before shows in "all time" only, and
+  the report's last line says when counting began.
+- A day is the host's local day. A server under systemd runs in the system's zone: set `TZ` in the
+  [environment file](#the-environment-file) (`TZ=America/Argentina/Buenos_Aires`) to count by your own.
+- The host samples the spend every five minutes and for each report, so spend made a few minutes before midnight may
+  count for the next day. 62 days are kept.
+
 ### Logs
 
 ```sh
@@ -596,7 +614,8 @@ Clients reconnect by themselves; the web app reloads when its files changed. If 
 
 An update that moves the Pi pins may migrate `chat.sqlite` when it next opens, and an older checkout cannot open a
 migrated chat. From Pi 1.3.0 to 1.5.0 the migration is one way (Durable SQLite schema 1 to 2; ADR 0035): run
-`pi-durable backup` before the update, and roll back by restoring that backup with the older checkout.
+`pi-durable backup` before the update, and roll back by restoring that backup with the older checkout. From 1.5.0 to
+1.5.2 nothing migrates (ADR 0037).
 
 ## Web access over Tailscale
 
@@ -669,9 +688,27 @@ the admin console, before enabling HTTPS.
 - The pairing screen keeps coming back: the device is not paired (or was revoked); pair it.
 - The server's log (`journalctl --user -u pi-durable`) shows `web: …` lines for pairings and failures.
 
+## Schedules
+
+Pi can leave itself a message for later, once or repeating ("remind me on Friday at 10", "every weekday at 9, tell me
+what changed overnight"); see [schedules.md](schedules.md). `/schedule` lists them and `/schedule cancel N` removes
+one; the web app lists them under `N scheduled`.
+
+- A schedule fires only while a host runs. Under `pi-durable serve` that is always; a local chat delivers what came
+  due while it was closed at its next launch, marked late.
+- Times are the host's local time. A VPS is usually on UTC: set your zone in `~/.config/pi-durable/env`
+  (`TZ=America/Argentina/Buenos_Aires`) and restart the service. Pi reads the zone from the time in each turn.
+- A schedule made from a workstation keeps that workstation for its tools: if the workstation is offline when the
+  schedule fires, Pi's run starts and waits at its first coding tool call, and the chat is busy until the
+  workstation connects or you stop the run. Schedule from the phone, or in a turn sent without a workstation, for
+  work that must run on the server.
+- Each wake-up is a model run against your plan or key. At most 32 schedules; a repeating one at most every 5
+  minutes.
+- Backups hold the schedules: they are tasks and a document in `chat.sqlite`.
+
 ## Push notifications
 
-`pi-durable serve` can notify a phone when Pi answers or an agent reports while no client is visible
+`pi-durable serve` can notify a phone when Pi answers, an agent reports or a schedule fires while no client is visible
 (ADR 0021). It needs the web app on its HTTPS origin (`PI_DURABLE_ORIGIN`).
 
 - Android (Chrome, Firefox) and desktop browsers subscribe from the web app. On iPhone and iPad, push works
@@ -703,7 +740,48 @@ The default path depends on `$HOME` and `XDG_STATE_HOME`; an explicit `--databas
 avoids those differences. Never let two hosts write the same database. The host is
 meant for a local filesystem, not shared or NFS multi-writer storage.
 
+## Checking an install (`pi-durable doctor`)
+
+`pi-durable doctor` checks what this machine needs to run the host, and says what is wrong and how to fix it
+(ADR 0041). Run it after an install or an update, on the server and on each workstation, and first when something
+does not work.
+
+```
+$ pi-durable doctor --local
+ok    Node.js: 22.23.1 (needs 22.19 or newer)
+ok    flock: on PATH (a local chat and serve lock the chat with it)
+ok    bubblewrap: bash runs in its sandbox
+skip  SSH keys: PI_DURABLE_SSH_KEYS is not set
+ok    settings.json: none at /home/me/.local/state/pi-durable/settings.json; the defaults apply
+ok    model openai-codex/gpt-6.1-sol (the default): credentials found
+warn  standing agents: Standing agent Reviewer cannot browse: Playwright's Chromium is not installed (…)
+      Fix: npx --no-install playwright-core install chromium in /home/me/pi-durable-instance, or set PI_DURABLE_CHROMIUM
+ok    autoreview: the skill at /home/me/.pi/agent/skills/autoreview, python3 and the Codex CLI found
+ok    chat: /home/me/.local/state/pi-durable/chat.sqlite, 192.0 KiB; no server answers on its socket
+ok    memory: 2 day files in /home/me/.local/state/pi-durable/chat.unii/main; view.json parses
+warn  backups: no backup in /home/me/.local/state/pi-durable/backups
+      Fix: pi-durable backup; for a daily one, the timer in contrib/systemd/ (docs/operations.md, Backups)
+skip  remote: --local bypasses a saved remote
+skip  server: no systemd user unit and no web settings here
+No problems, 2 warnings.
+```
+
+- `ok` is fine; `skip` does not apply on this machine, and says why; `warn` is what a launch would only warn about;
+  `FAIL` stops a launch or a tool. A `warn` or `FAIL` has a `Fix:` line. The exit status is 1 when a check FAILs.
+- It only reads: no lock, no database connection, no model request, nothing created. It is safe while the server
+  runs, and before anything is installed.
+- On a workstation with a saved remote it skips what the server needs (the model, the standing agents, backups) and
+  names the server; run `doctor` on the server for those, or `pi-durable doctor --local` for this machine's own chat.
+- `pi-durable doctor --remote-check` also tries the SSH login to the saved server, with the options the chat itself
+  uses (no prompt, known host keys only); it is the only check that leaves the machine.
+- `pi-durable doctor --json` prints the checks as a JSON array of `{id, level, subject, detail, fix?}`.
+- Under systemd the server reads `~/.config/pi-durable/env`; a shell does not, so the `server` check reads that file
+  itself, and the others see the shell's environment. A `PATH` set only in that file (for `claude`, say) is not the
+  doctor's.
+
 ## Troubleshooting
+
+Run [`pi-durable doctor`](#checking-an-install-pi-durable-doctor) first: it finds most of these.
 
 | Symptom | Cause and fix |
 |---|---|
@@ -717,7 +795,7 @@ meant for a local filesystem, not shared or NFS multi-writer storage.
 | `No Claude Code login for claude-cli` | Run `claude auth login` (or `claude`, then `/login`). More `claude-cli` symptoms are in [models.md](models.md#troubleshooting). |
 | `Refusing anthropic/…: its credential is a Claude subscription` | Use `--model claude-cli/…`, or a Console API key in `ANTHROPIC_API_KEY` after removing any stored Pi `anthropic` login. |
 | `Durable SQLite schema version 2 is newer than supported version 1` | A Pi 1.5.0 checkout already migrated this chat, and an older one cannot open it. Update the checkout, or restore a backup taken before the update. |
-| `Unknown model … in pinned Pi 1.5.0 catalog` | Pick a model from the Pi 1.5.0 catalog. Check `PI_DURABLE_MODEL` and `settings.json`. |
+| `Unknown model … in pinned Pi 1.5.2 catalog` | Pick a model from the Pi 1.5.2 catalog. Check `PI_DURABLE_MODEL` and `settings.json`. |
 | A launch fails with "This model was saved by /model in …/settings.json" | The saved default can no longer run. Pass `--model`, sign in again, or remove the `model` key from `settings.json`. Do not delete the file: it may also hold `thinkingLevel` and a custom `agents` roster. |
 | `…/settings.json is not valid JSON` | Fix the file; it may hold a custom `agents` roster, so delete it only if it has none. `--model` or `PI_DURABLE_MODEL` skip it meanwhile. |
 | "Standing agent … cannot browse: Playwright's Chromium is not installed" | Run `npx --no-install playwright-core install chromium` in the install dir, as the host's user, or set `PI_DURABLE_CHROMIUM`. |

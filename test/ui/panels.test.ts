@@ -8,7 +8,8 @@ import { confirm } from '../../src/ui/tui/panels/frame.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
 import { openMemoryPanel } from '../../src/ui/tui/panels/memory.ts';
 import { parseMessage, parseZoom } from '../../src/ui/text.ts';
-import type { AgentStatus, ArchiveTarget, ChatFeed, ChatItem, MemoryStats, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
+import type { AgentStatus, ArchiveTarget, ChatFeed, ChatItem, MemoryStats, ModelChoice, SearchResult, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
+import { openFindPanel } from '../../src/ui/tui/panels/find.ts';
 
 const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b' };
 const sgr = (on: number, off: number) => (text: string): string => `\x1b[${on}m${text}\x1b[${off}m`;
@@ -106,6 +107,8 @@ class FakeSession implements UiSession {
     }));
     return Promise.resolve(names);
   }
+  cancelSchedule(): Promise<void> { return Promise.resolve(); }
+  usage(): Promise<UsageReport> { return Promise.resolve({ today: [], week: [], all: [] }); }
   agentChat(name: string): Promise<ChatFeed | undefined> { return Promise.resolve(this.feeds.get(name)); }
   memoryView(): Promise<readonly ViewLine[]> { this.viewCalls++; return this.viewResult ?? Promise.resolve(this.view); }
   viewCalls = 0;
@@ -115,6 +118,10 @@ class FakeSession implements UiSession {
     const out = this.zooms.get(`${id}+${n}`);
     return out === undefined ? Promise.reject(new Error(`No line ${id}+${n}.`)) : Promise.resolve(out);
   }
+  /** The queries searched, and what each search returns. */
+  readonly searches: string[] = [];
+  found: Promise<SearchResult> = Promise.resolve({ hits: [], total: 0 });
+  search(query: string): Promise<SearchResult> { this.searches.push(query); return this.found; }
   onNotice(): () => void { return () => undefined; }
   models(): Promise<readonly ModelChoice[]> { return Promise.resolve([]); }
   setModel(): Promise<void> { return Promise.resolve(); }
@@ -463,6 +470,76 @@ describe('memory panel', () => {
   });
 });
 
+describe('find panel', () => {
+  const at = (day: number, hour: number): string => new Date(2026, 10, day, hour).toISOString();
+  const now = (): number => new Date(2026, 10, 14, 12).getTime();
+  const hits = [
+    { id: 1234, kind: 'user', date: at(12, 9), snippet: '…when do we deploy the harbor app?' },
+    { id: 87, kind: 'pi', date: at(3, 17), snippet: 'Deploy on Friday, after the tide tables.' },
+  ];
+
+  test('hits show their label dim and the snippet, newest first, under the count; Enter opens the message whole', async () => {
+    const session = new FakeSession(), h = harness(100, 20);
+    session.found = Promise.resolve({ hits, total: 2 });
+    session.zooms.set('87+1', '87+1 (page 1 of 2; zoom(87, 1, page) for the others)|pi: Deploy on Friday, after the tide tables.\n\nThe whole reply.');
+    const closed = openFindPanel(h.tui, session, theme, 'deploy', now);
+    assert.match(h.screen(), /╭─ Find ─/);
+    assert.match(h.screen(), /Loading…/, 'the panel opens at once, loading');
+    await tick();
+    assert.deepEqual(session.searches, ['deploy']);
+    const screen = h.screen();
+    assert.match(screen, /│ 2 matches for "deploy" +│/);
+    assert.match(screen, /→ #1234 · Thu 12 Nov 09:00 · user {2}…when do we deploy the harbor app\?/);
+    assert.match(screen, / {2}#87 · Tue 3 Nov 17:00 · pi {7}Deploy on Friday, after the tide tables\./, 'labels align');
+    assert.ok(h.raw().some(r => r.includes(`${theme.dim('#87 · Tue 3 Nov 17:00 · pi     ')}  Deploy on Friday`)));
+    assert.match(screen, /╰─ ↑↓ move · enter open · \/ filter · esc close ─/);
+    h.press(KEY.down, KEY.enter);
+    assert.match(h.screen(), /Find › 87\+1/);
+    assert.match(h.screen(), /Loading…/);
+    await tick();
+    assert.match(h.screen(), /\(page 1 of 2; zoom\(87, 1, page\) for the others\)/);
+    assert.match(h.screen(), /pi: Deploy on Friday, after the tide tables\.\s*│\n│\s+│\n│ The whole reply\./);
+    h.press(KEY.esc);
+    assert.match(h.screen(), /→ #87 · Tue 3 Nov 17:00 · pi/, 'Esc goes back to the hits, the selection kept');
+    h.press('/', 'h', 'a', 'r', 'b');
+    assert.doesNotMatch(h.screen(), /#87/);
+    h.press(KEY.esc, KEY.esc);
+    await closed;
+    assert.deepEqual(h.editor.keys, [], 'the panel took every key');
+    assert.deepEqual(session.searches, ['deploy'], 'one search per panel');
+  });
+
+  test('only some of many matches are listed, and the header says so; a message that fails to open shows why', async () => {
+    const session = new FakeSession(), h = harness(100, 20);
+    session.found = Promise.resolve({ hits, total: 312 });
+    const closed = openFindPanel(h.tui, session, theme, 'deploy', now);
+    await tick();
+    assert.match(h.screen(), /2 of 312 matches for "deploy" \(newest first\)/);
+    h.press(KEY.enter);
+    await tick();
+    assert.match(h.screen(), /No line 1234\+1\./);
+    h.press(KEY.esc, KEY.esc);
+    await closed;
+  });
+
+  test('no match says so with a hint, and a refused search shows its reason', async () => {
+    const session = new FakeSession(), h = harness();
+    const none = openFindPanel(h.tui, session, theme, '"tide tables" kind:user', now);
+    await tick();
+    assert.match(h.screen(), /No message matches "tide tables" kind:user\./);
+    assert.match(h.screen(), /Try other words, "a phrase" in quotes, or kind:user\./);
+    h.press(KEY.enter, KEY.esc);
+    await none;
+    session.found = Promise.reject(new Error('Memory is not open (inspection only).'));
+    const refused = openFindPanel(h.tui, session, theme, 'deploy', now);
+    await tick();
+    assert.match(h.screen(), /Search: deploy/);
+    assert.ok(h.raw().some(r => r.includes(theme.error('Memory is not open (inspection only).'))), 'the reason is an error');
+    h.press(KEY.esc);
+    await refused;
+  });
+});
+
 describe('panels on a phone', () => {
   const sizes = [[40, 15], [56, 20], [120, 24]] as const;
   const fitsExactly = (lines: readonly string[], width: number): void => {
@@ -501,6 +578,27 @@ describe('panels on a phone', () => {
       assert.equal(detail === text, columns < 60, screen.join('\n'));
       assert.match(screen[1] ?? '', columns < 60 ? /│ 9 msgs · 3\.0 KB · 1 sum · 2 failed +│/ : /9 messages · 3\.0 KB view · 1 summarizing · 2 failed/);
       assert.match(screen.at(-1) ?? '', columns < 60 ? /enter open · \/ filter · esc close/ : /↑↓ move · enter open · \/ filter · esc close/);
+      h.press(KEY.esc);
+      await closed;
+      stop?.();
+    }
+  });
+
+  test('find rows are cut; a narrow screen lists the labels and shows the selected hit\'s snippet above the hint', async () => {
+    const snippet = '…the deploy went wrong on friday night, and the harbor app stayed down until monday…';
+    for (const [columns, rows] of sizes) {
+      const session = new FakeSession(), h = harness(columns, rows);
+      session.found = Promise.resolve({ hits: [{ id: 1234, kind: 'user', date: new Date(2026, 10, 12, 9).toISOString(), snippet }], total: 1 });
+      const closed = openFindPanel(h.tui, session, theme, 'deploy', () => new Date(2026, 10, 14, 12).getTime());
+      await tick();
+      fitsExactly(h.raw(), columns);
+      assert.equal(h.raw().length, rows);
+      const screen = h.screen().split('\n');
+      const row = screen.find(line => line.includes('→')) ?? '';
+      assert.match(row, columns < 60 ? /│ → #1234 · Thu 12 Nov 09:00 · user +│/ : /→ #1234 · Thu 12 Nov 09:00 · user {2}…the deploy went wrong/);
+      const detail = screen.slice(-4, -1).map(line => line.slice(2, -2).trim()).filter(Boolean).join(' ');
+      assert.equal(detail === snippet, columns < 60, screen.join('\n'));
+      assert.match(screen[1] ?? '', /│ 1 match for "deploy" +│/);
       h.press(KEY.esc);
       await closed;
       stop?.();

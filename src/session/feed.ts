@@ -1,6 +1,8 @@
 // One conversation as a ChatFeed: pi-durable's conversation view (entries, `pi.live`, `pi.inbox`, `pi.agent`) folded
 // into ChatItems.
-import type { Context, JsonRepresentation, WatchCall, WatchHandle } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
+import type { WatchCall, WatchHandle } from '@earendil-works/chord/watch';
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
 import { AgentDoc, InboxDoc, LiveDoc } from '@earendil-works/pi-durable';
 import type {
@@ -8,6 +10,7 @@ import type {
   RunFailure, ToolSlot,
 } from '@earendil-works/pi-durable';
 import { agentInputOf, text } from '../agents/entries.ts';
+import { fireName, scheduleFireOf } from '../schedule/entries.ts';
 import { isRecord } from '../protocol/util.ts';
 import type { ChatFeed, ChatItem } from '../protocol/session.ts';
 import type { ChatImage } from '../protocol/images.ts';
@@ -193,6 +196,9 @@ export class ConversationFeed implements ChatFeed {
   private entry(entry: EntryRecord): void {
     const input = agentInputOf(entry);
     if (input) return this.push({ kind: 'report', id: `e${entry.id}`, from: input.from, text: input.text });
+    // A scheduled wake-up (ADR 0038) shows as a report too, from "Schedule #n": no new item kind for clients to learn.
+    const fire = scheduleFireOf(entry);
+    if (fire) return this.push({ kind: 'report', id: `e${entry.id}`, from: fireName(fire.id), text: fire.text });
     (entry.model ?? []).forEach((message, m) => {
       const id = m === 0 ? `e${entry.id}` : `e${entry.id}.${m}`;
       if (message.role === 'user') this.push(withImages({ kind: 'user', id, text: text(message.content) }, imagesOf(message.content)));

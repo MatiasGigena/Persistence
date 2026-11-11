@@ -12,6 +12,7 @@ import type { Instance } from '../runtime/runtime.ts';
 import { isWork, resumeInstance, settleAgents } from '../runtime/recovery.ts';
 import { accessProblem, catalogProblem, checkAccess } from '../runtime/models.ts';
 import { agentInputOf, assistantText, listAgents, text } from '../agents/index.ts';
+import { fireName, scheduleFireOf } from '../schedule/entries.ts';
 import { claudeCliProvider } from '../providers/claude-cli.ts';
 import { backupOffline } from '../server/backup.ts';
 import { formatBytes } from '../ui/text.ts';
@@ -26,9 +27,13 @@ import type { ModelSource } from '../config/options.ts';
 
 // Internal entry point: src/cli.ts owns the database flock for this process.
 
-/** An agent's report as its name and text: what the terminal UI shows, without the note to Pi its model text ends with. */
+/**
+ * An agent's report, or a scheduled wake-up, as its name and text: what the terminal UI shows, without the note to Pi
+ * its model text ends with.
+ */
 function reportOf(entry: EntryRecord): { name: string; text: string } | undefined {
-  const input = agentInputOf(entry);
+  const input = agentInputOf(entry), fire = scheduleFireOf(entry);
+  if (fire) return { name: fireName(fire.id), text: fire.text };
   return input?.kind === 'report' ? { name: input.from, text: input.text } : undefined;
 }
 

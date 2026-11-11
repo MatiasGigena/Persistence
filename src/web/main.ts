@@ -12,6 +12,7 @@ import type { LinkState, SocketEvents, SocketHandle } from './link.ts';
 import { agentsView } from './panels/agents.ts';
 import { chatSettingsView, prefetchSettings } from './panels/chat-settings.ts';
 import { memoryView } from './panels/memory.ts';
+import { schedulesView } from './panels/schedules.ts';
 import { byId, Sheet } from './panels/sheet.ts';
 import type { PanelContext } from './panels/sheet.ts';
 import { syncPush } from './push.ts';
@@ -304,7 +305,8 @@ function start(): void {
     composer.draw();
     pulse.classList.toggle('is-busy', status.busy || activeAgents(status.agents).some(a => a.busy));
     statusLine.replaceChildren(...statusParts(status).map(part => {
-      const opens = part.key === 'agents' ? agentsView : part.key === 'memory' || part.key === 'failed' ? memoryView : undefined;
+      const opens = part.key === 'agents' ? agentsView : part.key === 'memory' || part.key === 'failed' ? memoryView
+        : part.key === 'schedules' ? schedulesView : undefined;
       const node = opens ? el('button', `status-part tone-${part.tone}`, part.text) : el('span', `status-part tone-${part.tone}`, part.text);
       if (opens && node instanceof HTMLButtonElement) {
         node.type = 'button';

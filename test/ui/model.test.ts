@@ -7,7 +7,7 @@ import { runTui, TOOLS_QUESTION } from '../../src/ui/tui/app.ts';
 import type { PanelTheme } from '../../src/ui/tui/panels/frame.ts';
 import { openModelPanel } from '../../src/ui/tui/panels/model.ts';
 import { theme as appTheme } from '../../src/ui/tui/theme.ts';
-import type { ChatFeed, ChatItem, ModelChoice, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
+import type { ChatFeed, ChatItem, ModelChoice, SearchResult, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
 
 const KEY = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b', backspace: '\x7f', ctrlL: '\x0c' };
 const sgr = (on: number, off: number) => (text: string): string => `\x1b[${on}m${text}\x1b[${off}m`;
@@ -53,9 +53,12 @@ class FakeSession implements UiSession {
   }
   archiveAgents(): Promise<readonly string[]> { return Promise.resolve([]); }
   restoreAgent(): Promise<readonly string[]> { return Promise.resolve([]); }
+  cancelSchedule(): Promise<void> { return Promise.resolve(); }
+  usage(): Promise<UsageReport> { return Promise.resolve({ today: [], week: [], all: [] }); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
   zoom(): Promise<string> { return Promise.resolve(''); }
+  search(): Promise<SearchResult> { return Promise.resolve({ hits: [], total: 0 }); }
   onNotice(): () => void { return () => undefined; }
   models(): Promise<readonly ModelChoice[]> { return this.list; }
   setModel(provider: string, id: string): Promise<void> {
@@ -363,10 +366,10 @@ describe('/model and /tools in the chat', () => {
     const session = new FakeSession();
     const { terminal, done } = await startTui(session);
     terminal.type('/help', KEY.enter);
-    await until(() => /\/model {3}pick a model/.test(terminal.text()), 'the help');
-    assert.match(terminal.text(), /\/model {3}pick a model \(ctrl\+l\)/);
-    assert.match(terminal.text(), /\/tools {3}coding tools: on, off/);
-    assert.match(terminal.text(), /\/stop {4}stop Pi \(esc\) · all · Name/);
+    await until(() => /\/model +pick a model/.test(terminal.text()), 'the help');
+    assert.match(terminal.text(), /\/model +pick a model \(ctrl\+l\)/);
+    assert.match(terminal.text(), /\/tools +coding tools: on, off/);
+    assert.match(terminal.text(), /\/stop +stop Pi \(esc\) · all · Name/);
     assert.ok(TOOLS_QUESTION.includes('user permissions'));
     terminal.type('/exit', KEY.enter);
     await done;

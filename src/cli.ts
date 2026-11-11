@@ -7,6 +7,7 @@ import { remoteChat } from './client/remote.ts';
 import { HELP, VERSION, parseArgs, resolveOptions } from './config/options.ts';
 import { resolveSocketPath, statePaths } from './config/paths.ts';
 import { errorCode, errorMessage } from './protocol/util.ts';
+import { SDK } from './runtime/sdk.ts';
 import type { Config } from './config/options.ts';
 import { agentsCommand, backupOverSocket, devicesCommand, NoServer, pairCommand } from './client/admin.ts';
 import { formatBytes } from './ui/text.ts';
@@ -27,7 +28,9 @@ process.umask(0o077);
 try {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) { console.log(HELP); }
-  else if (options.version) { console.log(`pi-durable ${VERSION} (SDK 1.5.0)`); }
+  else if (options.version) { console.log(`pi-durable ${VERSION} (SDK ${SDK})`); }
+  // Before the Node check (doctor's first line), remote selection and the local chat: doctor only reads, on any machine.
+  else if (options.command === 'doctor') process.exitCode = await (await import('./host/doctor.ts')).doctor(options);
   else {
     const [major = 0, minor = 0] = process.versions.node.split('.').map(Number);
     if (major < 22 || (major === 22 && minor < 19)) throw new Error('Node.js >=22.19.0 is required');

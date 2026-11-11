@@ -1,10 +1,12 @@
 // Memory: Pi's memory view, one row per line. A line zooms into its two halves, and a single message (n = 1) opens
-// whole; breadcrumbs lead back up. The top level reloads when the memory's counters change while it is open.
+// whole; breadcrumbs lead back up. The top level reloads when the memory's counters change while it is open. Its
+// "Search all messages" field searches the log as written (ADR 0040), where "Filter lines" only narrows the lines shown.
 import { el } from '../chat-view.ts';
 import { lineLabel, memoryHeader } from '../format.ts';
-import { parseMessage, parseZoom } from '../../ui/text.ts';
+import { hitLabel, parseMessage, parseZoom, SEARCH_HINT, searchHeader } from '../../ui/text.ts';
 import { errorMessage } from '../../protocol/util.ts';
 import { RequestError } from '../../protocol/request-error.ts';
+import { LIMITS } from '../../protocol/messages.ts';
 import type { ViewLine } from '../../protocol/session.ts';
 import { fadeIn, renderRows, skeletonLines, skeletonRows } from './sheet.ts';
 import type { PanelContext, View } from './sheet.ts';
@@ -27,13 +29,15 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
       search.type = 'search';
       search.placeholder = 'Filter lines';
       search.setAttribute('aria-label', 'Filter lines');
+      const find = searchForm(ctx);
+      find.hidden = !ctx.store.status?.memory;
       const list = el('ul', 'rows rows-dense');
       const state = el('p', 'sheet-note');
       state.hidden = true;
       // Until the first lines come: rows shaped as lines, and no filter yet.
       search.hidden = true;
       skeletonRows(list, 6);
-      body.append(header, search, list, state);
+      body.append(header, ...top ? [find] : [], search, list, state);
       let lines: readonly ViewLine[] = [];
       /** `retry`: the load failed as the link was down; it runs again once the link is back. */
       let loading = false, again = false, loaded = false, entered = false, retry = false;
@@ -94,6 +98,7 @@ function linesView(ctx: PanelContext, title: string, load: () => Promise<readonl
         if (memory === shownMemory) return;
         shownMemory = memory;
         header.textContent = memoryHeader(ctx.store.status?.memory);
+        find.hidden = !ctx.store.status?.memory;
         reload();
       });
       // Lines kept from the last opening, the memory unchanged since: shown at once, scrolled to the end once the
@@ -118,8 +123,73 @@ function zoomView(ctx: PanelContext, line: ViewLine): View {
   return linesView(ctx, lineLabel(line), () => ctx.link.request('memory.zoom', { id: line.id, n: line.n }).then(r => parseZoom(r.text)), false);
 }
 
+/** The top level's "Search all messages" field: submitting it opens the messages that hold its words. */
+function searchForm(ctx: PanelContext): HTMLFormElement {
+  const form = el('form', 'search-form');
+  form.setAttribute('role', 'search');
+  const input = el('input', 'search');
+  input.type = 'search';
+  input.placeholder = 'Search all messages';
+  input.setAttribute('aria-label', 'Search all messages');
+  input.maxLength = LIMITS.searchQuery;
+  input.enterKeyHint = 'search';
+  const submit = el('button', 'btn btn-quiet', 'Search');
+  submit.type = 'submit';
+  form.append(input, submit);
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const query = input.value.trim();
+    if (query) ctx.sheet.push(searchView(ctx, query));
+  });
+  return form;
+}
+
+/** The messages that hold `query`'s words, newest first; a row opens its message whole. */
+function searchView(ctx: PanelContext, query: string): View {
+  let unsubscribe = (): void => undefined;
+  return {
+    title: 'Search',
+    render(body) {
+      const header = el('p', 'sheet-note');
+      const list = el('ul', 'rows rows-dense');
+      const state = el('p', 'sheet-note');
+      body.append(header, list, state);
+      /** Set when the search failed as the link was down; it runs again once the link is back. */
+      let retry = false;
+      const load = (): void => {
+        header.hidden = state.hidden = true;
+        skeletonRows(list, 6, { detail: true });
+        ctx.link.request('memory.search', { query }).then(
+          ({ hits, total }) => {
+            const now = Date.now();
+            header.textContent = searchHeader(query, hits.length, total);
+            header.hidden = false;
+            fadeIn(header);
+            renderRows(list, hits.map(hit => ({ key: String(hit.id), label: hit.snippet, detail: hitLabel(hit, now), className: 'row-line' })),
+              key => ctx.sheet.push(messageView(ctx, { id: Number(key), n: 1 })), 'top');
+            state.textContent = total ? '' : SEARCH_HINT;
+            state.classList.remove('is-error');
+            state.hidden = total > 0;
+          },
+          (error: unknown) => {
+            retry = error instanceof RequestError && error.code === 'disconnected';
+            renderRows(list, [], () => undefined);
+            state.textContent = errorMessage(error);
+            state.classList.add('is-error');
+            state.hidden = false;
+            fadeIn(state);
+          },
+        );
+      };
+      unsubscribe = ctx.store.subscribe(() => { if (retry && ctx.link.state === 'ready') { retry = false; load(); } });
+      load();
+    },
+    dispose() { unsubscribe(); },
+  };
+}
+
 /** One message, whole. */
-function messageView(ctx: PanelContext, line: ViewLine): View {
+function messageView(ctx: PanelContext, line: Pick<ViewLine, 'id' | 'n'>): View {
   let unsubscribe = (): void => undefined;
   return {
     title: lineLabel(line),

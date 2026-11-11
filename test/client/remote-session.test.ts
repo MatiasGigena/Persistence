@@ -11,7 +11,7 @@ import { Hub } from '../../src/server/hub.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
 import type { ChatItem, NoticeLevel } from '../../src/protocol/session.ts';
 import { FakeServer } from '../fixtures/fake-server.ts';
-import { fakeLink, fakeSession } from '../fixtures/server-fakes.ts';
+import { fakeLink, fakeSession, USAGE } from '../fixtures/server-fakes.ts';
 import type { FakeServerOptions } from '../fixtures/fake-server.ts';
 import { memoryConnector } from './memory-link.ts';
 import type { MemoryConnector } from './memory-link.ts';
@@ -117,11 +117,16 @@ test('status and notices flow; tools on carries the confirmation, off does not',
 });
 
 test('requests map to ops, and failures reject with the server\'s readable message', async () => {
-  const { server, session } = await attach({ agents: { Bob: [] } }, { requestTimeoutMs: 100 });
+  const { server, session, requests } = await attach({ agents: { Bob: [] } }, { requestTimeoutMs: 100 });
   assert.deepEqual(await session.memoryView(), [{ id: 0, n: 1, text: 'hello' }, { id: 1, n: 1, text: 'world' }]);
   assert.equal(await session.zoom(1, 1), 'zoomed world');
   await assert.rejects(session.zoom(9, 9), (error: unknown) => error instanceof RequestError && error.code === 'not_found'
     && /No line 9\+9/.test(error.message));
+  assert.deepEqual(await session.search('WORLD'), { hits: [{ id: 1, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: 'world' }], total: 1 });
+  assert.deepEqual(await session.search('o'), { hits: [{ id: 1, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: 'world' },
+    { id: 0, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: 'hello' }], total: 2 });
+  await assert.rejects(session.search('  '), { code: 'bad_request' });
+  assert.deepEqual(requests('memory.search'), [{ query: 'WORLD' }, { query: 'o' }, { query: '  ' }]);
   assert.equal((await session.models()).length, 3);
   await session.setModel('faux', 'model-2');
   await until(() => session.status().model === 'faux/model-2', 'the model');
@@ -280,6 +285,16 @@ test('archive and restore go to the real hub as agents.archive and agents.restor
   assert.deepEqual(await session.archiveAgents({ adhoc: true }), ['Bob']);
   assert.deepEqual(sent, ['agents.archive', 'agents.archive', 'agents.restore', 'agents.restore', 'agents.archive']);
   assert.deepEqual(state.calls, ['archive bob', 'archive Coder', 'restore Nobody', 'restore Bob', 'archive adhoc']);
+  // Schedules come with the status, and a cancel goes as schedule.cancel.
+  state.set({ schedules: [{ id: 3, text: 'Check the deploy.', at: 2_000_000 }] });
+  await until(() => session.status().schedules?.length === 1, 'the schedule in the status');
+  await session.cancelSchedule(3);
+  await until(() => session.status().schedules?.length === 0, 'the schedule gone from the status');
+  await assert.rejects(session.cancelSchedule(3), { code: 'not_found', message: 'No schedule #3.' });
+  assert.deepEqual(sent.slice(-2), ['schedule.cancel', 'schedule.cancel']);
+  // The usage report comes whole through the parser, fractional cost and all.
+  assert.deepEqual(await session.usage(), USAGE);
+  assert.equal(sent.at(-1), 'usage');
   await session.close();
   await hub.close(CloseCode.restart, 'done');
 });

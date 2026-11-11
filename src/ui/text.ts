@@ -3,7 +3,7 @@
 // the browser at /ui/text.ts (ADR 0020). Rendering (color, width, markup) stays with each front end.
 import { ARCHIVE_TTL_MS } from '../protocol/messages.ts';
 import { isRecord } from '../protocol/util.ts';
-import type { SessionStatus, ViewLine } from '../protocol/session.ts';
+import type { ScheduleStatus, SearchHit, SessionStatus, UsageReport, UsageRow, ViewLine } from '../protocol/session.ts';
 
 // Control characters other than newline and tab, and terminal escapes, never reach the summary.
 const CONTROL = /\u001b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u0008\u000b-\u001f\u007f]/g;
@@ -122,8 +122,119 @@ export function archivedText(names: readonly string[], restored = false): string
   return `${restored ? 'Restored' : 'Archived'} ${names.join(', ')}.`;
 }
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const two = (n: number): string => String(n).padStart(2, '0');
+
+/**
+ * A time as a client shows it, in the client's own zone, read against `now`: "today 09:00", "tomorrow 09:00",
+ * "Thu 12 Nov 09:00", with the year when it is another one.
+ */
+export function whenText(at: number, now: number): string {
+  const date = new Date(at), today = new Date(now);
+  const time = `${two(date.getHours())}:${two(date.getMinutes())}`;
+  const midnight = (day: Date): number => new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+  const days = Math.round((midnight(date) - midnight(today)) / 86_400_000);
+  if (days === 0) return `today ${time}`;
+  if (days === 1) return `tomorrow ${time}`;
+  const year = date.getFullYear() === today.getFullYear() ? '' : ` ${date.getFullYear()}`;
+  return `${WEEKDAYS[date.getDay()] ?? ''} ${date.getDate()} ${MONTHS[date.getMonth()] ?? ''}${year} ${time}`;
+}
+
+/** When a schedule fires: "today 09:00", or for a repeating one "cron 0 9 * * 1-5 · next today 09:00". */
+export function scheduleWhen(schedule: Pick<ScheduleStatus, 'at' | 'cron'>, now: number): string {
+  const when = whenText(schedule.at, now);
+  return schedule.cron === undefined ? when : `cron ${schedule.cron} · next ${when}`;
+}
+
+/** What /schedule prints: one line per scheduled wake-up, soonest first, and how to cancel one. */
+export function schedulesText(schedules: readonly ScheduleStatus[], now: number): string {
+  if (!schedules.length) return 'No schedules. Ask Pi to remind you of something, or to check back on it later.';
+  return [...schedules.map(each => `#${each.id} · ${scheduleWhen(each, now)} · ${each.text}`),
+    '/schedule cancel N cancels one; ask Pi for a new one.'].join('\n');
+}
+
+const TOKEN_UNITS = ['k', 'M', 'B', 'T'];
+
+/** A token count in at most three digits and a unit: 999, 1.2k, 80.4k, 900k, 1.2M, 3.4B. */
+export function tokenCount(count: number): string {
+  let value = Math.round(count), unit = -1;
+  const shown = (): number => value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  while (shown() >= 1000 && unit < TOKEN_UNITS.length - 1) { value /= 1000; unit++; }
+  return `${shown()}${TOKEN_UNITS[unit] ?? ''}`;
+}
+
+/**
+ * A cost in US dollars, to the cent: "$4.21"; "<$0.01" for less than half a cent; '' for none, which is what a
+ * provider that prices nothing reports (claude-cli, on a plan).
+ */
+export const costText = (cost: number): string => cost <= 0 ? '' : cost < 0.005 ? '<$0.01' : `$${cost.toFixed(2)}`;
+
+/** A usage row without its model: a period's sum is one. */
+export type UsageCounts = Omit<UsageRow, 'model'>;
+
+/** The periods of a usage report, in the order shown, with their labels. */
+export const USAGE_PERIODS: readonly (readonly [key: 'today' | 'week' | 'all', label: string])[] = [
+  ['today', 'today'], ['week', '7 days'], ['all', 'all time'],
+];
+
+/** The sum of a period's rows. */
+export function usageSum(rows: readonly UsageCounts[]): UsageCounts {
+  return rows.reduce<UsageCounts>((sum, row) => ({
+    input: sum.input + row.input, output: sum.output + row.output, cacheRead: sum.cacheRead + row.cacheRead,
+    cacheWrite: sum.cacheWrite + row.cacheWrite, cost: sum.cost + row.cost,
+  }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 });
+}
+
+/** A row's tokens: "in 1.2M · out 80.4k · cache 3.4M read, 210k written"; the cache part names only what was used. */
+export function usageTokens(row: UsageCounts): string {
+  const cache = [row.cacheRead ? `${tokenCount(row.cacheRead)} read` : '', row.cacheWrite ? `${tokenCount(row.cacheWrite)} written` : ''].filter(Boolean);
+  return [`in ${tokenCount(row.input)}`, `out ${tokenCount(row.output)}`, ...cache.length ? [`cache ${cache.join(', ')}`] : []].join(' · ');
+}
+
+/** What a usage report ends with: what its costs are, and since when its days are counted (in the client's zone). */
+export function usageNote(report: Pick<UsageReport, 'since'>, now: number): string {
+  return 'Costs are catalog prices; on a subscription plan they are not what you pay.'
+    + (report.since === undefined ? '' : ` Daily counting began ${whenText(report.since, now)}.`);
+}
+
+/**
+ * What /usage prints: per period its sum, then one indented line per model, the most tokens first, each with its cost
+ * when it has one; "nothing yet" for a period without spend; then `usageNote`.
+ */
+export function usageText(report: UsageReport, now: number): string {
+  const width = Math.max(0, ...USAGE_PERIODS.flatMap(([key]) => report[key].map(row => row.model.length)));
+  const spend = (row: UsageCounts): string => [usageTokens(row), costText(row.cost)].filter(Boolean).join(' · ');
+  return [...USAGE_PERIODS.flatMap(([key, label]) => {
+    const rows = report[key];
+    return [`${label.padEnd(9)}${rows.length ? spend(usageSum(rows)) : 'nothing yet'}`, ...rows.map(row => `  ${row.model.padEnd(width)}  ${spend(row)}`)];
+  }), usageNote(report, now)].join('\n');
+}
+
+/** How to search, for /find without words and a search that found nothing. */
+export const SEARCH_USAGE = 'Search the log: /find words, with "a phrase" in double quotes, and kind:user (or pi, tool, echo, work, note) for one kind.';
+
+/** Under a search that found nothing. */
+export const SEARCH_HINT = 'Try other words, "a phrase" in quotes, or kind:user.';
+
+/** A search hit's label: `#1234 · Thu 12 Nov 09:00 · user`, the time in the client's own zone, read against `now`. */
+export function hitLabel(hit: Pick<SearchHit, 'id' | 'kind' | 'date'>, now: number): string {
+  return `#${hit.id} · ${whenText(Date.parse(hit.date), now)} · ${hit.kind}`;
+}
+
+/**
+ * What heads a search's results: `12 matches for "deploy"`, `50 of 312 matches for "deploy" (newest first)` when only
+ * `shown` of them are listed, or `No message matches "deploy".`. A query with a quoted phrase shows as typed.
+ */
+export function searchHeader(query: string, shown: number, total: number): string {
+  const line = oneLine(query), asked = line.includes('"') ? line : `"${line}"`;
+  if (!total) return `No message matches ${asked}.`;
+  if (shown < total) return `${shown} of ${total} matches for ${asked} (newest first)`;
+  return `${total} ${total === 1 ? 'match' : 'matches'} for ${asked}`;
+}
+
 /** The full status block that /status prints, in the terminal and the web app. */
-export function statusText(status: SessionStatus): string {
+export function statusText(status: SessionStatus, now: number = Date.now()): string {
   const { memory } = status;
   const agents = activeAgents(status.agents), archived = status.agents.length - agents.length;
   const lines = [
@@ -138,6 +249,8 @@ export function statusText(status: SessionStatus): string {
     ? `agents ${agents.map(agent => `${agent.name} (${agent.role}, ${agent.busy ? 'busy' : 'idle'})`).join(', ')}`
     : 'agents none');
   if (archived) lines.push(`archived ${archived}`);
+  const [next] = status.schedules ?? [];
+  if (next) lines.push(`schedules ${status.schedules?.length ?? 0} · next #${next.id} ${whenText(next.at, now)}`);
   return lines.join('\n');
 }
 

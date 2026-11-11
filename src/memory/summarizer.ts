@@ -31,9 +31,11 @@ export interface PiAiSummarizerOptions {
   maxTokens?: number | undefined;
   timeoutMs?: number;
   sessionId?: string;
+  /** Called with each reply's usage, a failed reply's too: pi-durable's `pi.usage` never sees these calls. */
+  onUsage?: ((model: ModelRef, usage: Usage) => void) | undefined;
 }
 
-// Cheapest sensible model per provider in the pinned pi-ai 1.5.0 catalog: gpt-6-luna is $0.10/$0.50 per M tokens
+// Cheapest sensible model per provider in the pinned pi-ai catalog: gpt-6-luna is $0.10/$0.50 per M tokens
 // (cache read $0.01), against $2/$10 for the host's default gpt-6.1-sol, with the same 272k window and reasoning.
 // Claude Haiku 5.5 is the same price on the API; through claude-cli it spends the least of the plan's limits.
 export const CHEAP_MODELS: Readonly<Record<string, string>> = { 'openai-codex': 'gpt-6-luna', openai: 'gpt-6-luna', 'claude-cli': 'haiku', anthropic: 'claude-haiku-5-5' };
@@ -57,7 +59,7 @@ export function defaultCompactionModel(turnModel: ModelRef | undefined, models: 
  * enforced by the caller, so `maxTokens` stays modest (reasoning tokens count toward it on OpenAI).
  */
 export function createPiAiSummarizer({
-  models, model, reasoning = 'low', maxTokens, timeoutMs = 120_000, sessionId = 'uniichat-compactor',
+  models, model, reasoning = 'low', maxTokens, timeoutMs = 120_000, sessionId = 'uniichat-compactor', onUsage,
 }: PiAiSummarizerOptions): (systemPrompt: string, messages: readonly CompactionMessage[], options?: Partial<SummarizeOptions>) => Promise<string> {
   return async (systemPrompt, messages, { signal, tools } = {}) => {
     if (!model) throw new Error('unii: no compaction model configured');
@@ -79,6 +81,8 @@ export function createPiAiSummarizer({
       ...(tools?.length ? { toolChoice: 'none' } : {}),
       sessionId,
     });
+    // Before the stop reason is read: a failed attempt spent its tokens too.
+    onUsage?.(model, reply.usage);
     if (reply.stopReason === 'error' || reply.stopReason === 'aborted') {
       const message = reply.errorMessage ?? `compaction ended with ${reply.stopReason}`;
       throw reply.stopReason === 'error' && REFUSALS.has(reply.rawStopReason ?? '') ? new CompactionRefused(message) : new Error(message);

@@ -7,13 +7,14 @@ import {
 import type { AutocompleteItem, Component, SlashCommand, Terminal, TUI } from '@earendil-works/pi-tui';
 import type { AttachedLink, ChatItem, UiSession } from '../../protocol/session.ts';
 import { ChatView } from './chat.ts';
-import { statusText, toolSummary } from '../text.ts';
+import { schedulesText, SEARCH_USAGE, statusText, toolSummary, usageText } from '../text.ts';
 import type { NoticeLevel } from './chat.ts';
 import { Footer, spinnerInterval } from './footer.ts';
 import { openAgentsPanel } from './panels/agents.ts';
 import { activeAgents } from '../text.ts';
 import { confirm } from './panels/frame.ts';
 import { openMemoryPanel } from './panels/memory.ts';
+import { openFindPanel } from './panels/find.ts';
 import { openEffortPanel } from './panels/effort.ts';
 import { openModelPanel } from './panels/model.ts';
 import { modelRef } from '../text.ts';
@@ -34,8 +35,10 @@ export interface TuiInfo {
   readonly terminal?: Terminal;
   /** Called once the TUI is up, with the way to show host text while it runs. */
   readonly onStart?: (show: ShowNotice) => void;
-  /** Read for SSH_CONNECTION, which slows the spinner. Default: process.env. */
+  /** Read for SSH_CONNECTION, which slows the spinner, and PI_DURABLE_BELL (`off`: no bell). Default: process.env. */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** A run of Pi at least this long rings the bell when it ends; default BELL_AFTER_MS. Tests shorten it. */
+  readonly bellAfterMs?: number;
   /**
    * Set when the session is a server's, over its socket: /exit, Ctrl+D and Ctrl+C twice detach at once (the server
    * keeps working, so nothing asks first), the footer shows "reconnecting…" while the link is down, and the TUI exits
@@ -56,18 +59,24 @@ export const COMMANDS: readonly SlashCommand[] = [
   { name: 'tools', description: 'Coding tools for this launch: on or off', argumentHint: '[on|off]' },
   { name: 'agents', description: 'Agents and their conversations' },
   { name: 'mem', description: "Pi's memory view" },
+  { name: 'find', description: 'Search every message of the log', argumentHint: 'words "a phrase" kind:user' },
+  { name: 'schedule', description: "Pi's scheduled wake-ups; /schedule cancel N removes one", argumentHint: '[cancel N]' },
   { name: 'status', description: 'Model, work, memory and agents' },
+  { name: 'usage', description: 'Tokens and cost per model: today, 7 days, all time' },
+  { name: 'steer', description: "Send a message into Pi's running work, between its steps", argumentHint: 'message' },
   { name: 'stop', description: 'Interrupt Pi, as Esc does; /stop all or /stop Name stops agents' },
   { name: 'exit', description: 'Close; unfinished work resumes next launch' },
 ];
 
 type HelpPair = readonly [name: string, description: string];
 
+// In pairs, as a wide terminal shows them: the left of each pair has the long descriptions, so two columns fit 72.
 const HELP_COMMANDS: readonly HelpPair[] = [
   ['/model', 'pick a model (ctrl+l)'], ['/effort', 'reasoning effort'], ['/tools', 'coding tools: on, off'],
-  ['/agents', 'agents and their chats'], ['/mem', 'the memory view'],
-  ['/status', 'model, work, memory'], ['/stop', 'stop Pi (esc) · all · Name'],
-  ['/exit', 'close (ctrl+d when empty)'],
+  ['/agents', 'agents and their chats'], ['/mem', 'the memory view'], ['/find', 'search the log'],
+  ['/schedule', 'wake-ups · cancel N'], ['/usage', 'tokens per model'],
+  ['/stop', 'stop Pi (esc) · all · Name'], ['/status', 'model, work, memory'],
+  ['/exit', 'close (ctrl+d when empty)'], ['/steer', 'into the running work'],
 ];
 const HELP_KEYS: readonly HelpPair[] = [
   ['enter', 'send'], ['alt+enter', 'newline (shift+enter)'],
@@ -109,6 +118,14 @@ export const EXIT_QUESTION = 'Pi or agents are working. Exit anyway? Work resume
 
 /** Shown, and left in scrollback, when an attached TUI's link closes for good. */
 export const LINK_CLOSED = 'The connection to the server closed; detached. Pi keeps working on the server.';
+
+/**
+ * A run of Pi at least this long rings the terminal bell when it ends: long enough that the user looked away. Most
+ * terminals turn the bell into a tab mark or a desktop notification. PI_DURABLE_BELL=off silences it.
+ */
+export const BELL_AFTER_MS = 30_000;
+/** The program name in status reports to the terminal (OSC 7501). */
+const APP = 'pi-durable';
 
 /** Two Ctrl+C presses within this many ms exit. */
 const DOUBLE_CTRL_C = 1000;
@@ -267,6 +284,25 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     if (busy && !spinner) spinner = setInterval(() => { footer.tick(); render(); }, spinnerInterval(env, terminal.columns)).unref();
     if (!busy && spinner) { clearInterval(spinner); spinner = undefined; }
   };
+  /** When Pi's current run started here, to tell a long one from a quick answer. */
+  let busySince: number | undefined;
+  const bellAfter = info.bellAfterMs ?? BELL_AFTER_MS, bell = env['PI_DURABLE_BELL']?.toLowerCase() !== 'off';
+  /**
+   * Tells the terminal what Pi is doing (pi-tui sends it only to terminals that take OSC 7501), and rings the bell
+   * when a long run ends, so a terminal in another tab or behind another window says Pi is done.
+   */
+  const attention = (): void => {
+    const busy = session.status().busy;
+    if (busy && busySince === undefined) {
+      busySince = Date.now();
+      terminal.setProgramStatus({ state: 'working', app: APP });
+    } else if (!busy && busySince !== undefined) {
+      const long = Date.now() - busySince >= bellAfter;
+      busySince = undefined;
+      terminal.setProgramStatus({ state: long ? 'done' : 'idle', app: APP });
+      if (long && bell) terminal.write('\x07');
+    }
+  };
 
   const { promise: closed, resolve } = Promise.withResolvers<void>();
   const onLink = (): void => {
@@ -276,7 +312,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   };
   const unsubscribes = [
     session.chat.subscribe(() => { chat.sync(); render(); }),
-    session.onStatus(() => { spin(); render(); }),
+    session.onStatus(() => { spin(); attention(); render(); }),
     session.onNotice((text, level) => show(text, level)),
     ...attached ? [attached.onChange(onLink)] : [],
   ];
@@ -290,6 +326,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     info.signal?.removeEventListener('abort', onAbort);
     process.off('exit', restore);
     for (let i = 0; i < 32 && tui.hasOverlay(); i++) tui.hideOverlay();
+    terminal.setProgramStatus({ state: 'clear' });
     // Leave the chat, without the footer and editor, in the main screen's scrollback.
     tui.setLayoutRoot(document);
     tui.stop();
@@ -375,17 +412,40 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     else show(on ? 'Coding tools on for this launch: read, write, edit, bash. /tools off turns them off.'
       : 'Coding tools off. /tools on enables read, write, edit and bash for this launch.');
   };
+  const schedule = (arg: string): void => {
+    if (!arg) { show(schedulesText(session.status().schedules ?? [], Date.now())); return; }
+    const id = /^cancel\s+#?(\d+)$/i.exec(arg)?.[1];
+    if (id === undefined) { show('Usage: /schedule, or /schedule cancel N.', 'warn'); return; }
+    session.cancelSchedule(Number(id)).then(
+      () => show(`Schedule #${id} cancelled.`),
+      (error: unknown) => show(`Not cancelled: ${errorMessage(error)}`, 'error'));
+  };
+  const find = (query: string): void => {
+    if (query) panel((ui, chatSession, panelTheme) => openFindPanel(ui, chatSession, panelTheme, query));
+    else show(SEARCH_USAGE);
+  };
+  /** `/steer text`: a busy Pi reads it between its steps instead of after its answer; an idle Pi just gets the message. */
+  const steer = (text: string): void => {
+    if (!text) { show('Usage: /steer message. Pi reads it between its steps; a plain message waits for its answer.', 'warn'); return; }
+    session.send(text, { steer: true }).catch((error: unknown) => show(`Not sent: ${errorMessage(error)} (↑ brings the message back)`, 'error'));
+  };
   const command = (line: string): void => {
     const name = line.slice(1).split(/\s/, 1)[0] ?? '';
     const arg = line.slice(1 + name.length).trim();
     if (name === 'help') show(helpText(terminal.columns, attached !== undefined));
     else if (name === 'stop') { if (!arg) idleStop(); stop(arg); }
+    else if (name === 'steer') steer(arg);
     else if (name === 'model') model(arg);
     else if (name === 'effort' || name === 'thinking') effort(arg.toLowerCase());
     else if (name === 'tools') tools(arg.toLowerCase());
     else if (name === 'status') show(statusText(session.status()));
+    else if (name === 'usage') {
+      session.usage().then(report => show(usageText(report, Date.now())), (error: unknown) => show(`Usage failed: ${errorMessage(error)}`, 'error'));
+    }
     else if (name === 'agents') panel(openAgentsPanel);
     else if (name === 'mem') panel(openMemoryPanel);
+    else if (name === 'find') find(arg);
+    else if (name === 'schedule' || name === 'schedules') schedule(arg);
     else if (name === 'exit' || name === 'quit') void exit();
     else show(`Unknown command ${line.split(/\s/, 1)[0] ?? line}. /help lists them.`, 'warn');
   };
@@ -432,6 +492,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
     tui.setFocus(editor);
     tui.start();
     spin();
+    attention();
     info.onStart?.(show);
     if (attached?.state() === 'closed') onLink();
   } catch (error) {

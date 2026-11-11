@@ -1,6 +1,6 @@
 // The Deliver task: every input to an agent travels in one, keyed by its task ID, so a restart resumes it and nothing is
 // delivered twice; its answer is reported to the parent by the next Deliver task, created in the same commit.
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import { AssistantEntry, ROOT_CONVERSATION_ID, defineTask } from '@earendil-works/pi-durable';
 import type { ConversationId, Cursor, NextTaskState, SettledSubmissionRecord, TaskId, TaskRuntime, Tx } from '@earendil-works/pi-durable';
 import { REPORT_KIND, assistantText } from './entries.ts';

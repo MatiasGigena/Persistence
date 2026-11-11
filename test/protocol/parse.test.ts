@@ -23,6 +23,7 @@ const STATUS: SessionStatus = {
   agents: [{ name: 'Bob', role: 'main', parent: 'Pi', busy: true }, { name: 'Kid', role: 'sub', parent: 'Bob', busy: false },
     { name: 'Old', role: 'main', parent: 'Pi', busy: false, archivedAt: 1_800_000_000_000 },
     { name: 'Coder', role: 'main', parent: 'Pi', busy: false, standing: true }],
+  schedules: [{ id: 3, text: 'Check the deploy.', at: 1_800_000_000_000 }, { id: 4, text: 'Morning summary.', at: 1_800_000_060_000, cron: '0 9 * * 1-5' }],
 };
 
 /** One request per op: the type makes this table list every op. */
@@ -53,7 +54,9 @@ const REQUESTS: { readonly [O in Op]: RequestOf<O> } = {
   'machine.register': { t: 'req', id: 18, op: 'machine.register', params: { registration: {
     target: { machineId: 'pc-1', cwd: '/projects', label: 'PC' }, enabled: false } } },
   'machine.set': { t: 'req', id: 19, op: 'machine.set', params: { enabled: true, confirm: 'enable-tools' } },
-  'machine.list': { t: 'req', id: 20, op: 'machine.list', params: {} },
+  'machine.list': { t: 'req', id: 20, op: 'machine.list', params: {} },  'schedule.cancel': { t: 'req', id: 43, op: 'schedule.cancel', params: { id: 3 } },
+  usage: { t: 'req', id: 44, op: 'usage', params: {} },
+  'memory.search': { t: 'req', id: 45, op: 'memory.search', params: { query: '"exactly this" deploy kind:user' } },
 };
 
 /** One successful response per op. */
@@ -87,6 +90,16 @@ const RESPONSES: { readonly [O in Op]: ResponseOf<O> } = {
   'machine.register': { t: 'res', id: 18, op: 'machine.register', ok: true, result: null },
   'machine.set': { t: 'res', id: 19, op: 'machine.set', ok: true, result: null },
   'machine.list': { t: 'res', id: 20, op: 'machine.list', ok: true, result: { machines: [] } },
+  'schedule.cancel': { t: 'res', id: 43, op: 'schedule.cancel', ok: true, result: null },
+  usage: { t: 'res', id: 44, op: 'usage', ok: true, result: { report: {
+    today: [{ model: 'claude-cli/opus', input: 1200, output: 80, cacheRead: 3400, cacheWrite: 210, cost: 0.0421 }],
+    week: [{ model: 'claude-cli/opus', input: 9000, output: 610, cacheRead: 34_000, cacheWrite: 2100, cost: 4.21 },
+      { model: 'openai-codex/gpt-6.1-sol', input: 500, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0 }],
+    all: [], since: 1_800_000_000_000,
+  } } },
+  'memory.search': { t: 'res', id: 45, op: 'memory.search', ok: true, result: { total: 312, hits: [
+    { id: 1234, kind: 'user', date: '2026-11-12T12:00:00.000Z', snippet: '…when do we deploy?' }, { id: 7, kind: 'pi', date: '2026-01-02T03:04:05.000Z', snippet: 'Deploy at nine.' },
+  ] } },
 };
 
 const CLIENT: readonly ClientMessage[] = [
@@ -202,6 +215,9 @@ describe('parsing', () => {
       ['{"t":"req","id":1,"op":"agents.restore","params":{}}', 'shape'],
       ['{"t":"req","id":1,"op":"agents.restore","params":{"adhoc":true}}', 'shape'],
       ['{"t":"req","id":1,"op":"agents.restore","params":{"name":"  "}}', 'shape'],
+      ['{"t":"req","id":1,"op":"schedule.cancel","params":{}}', 'shape'],
+      ['{"t":"req","id":1,"op":"schedule.cancel","params":{"id":0}}', 'shape'],
+      ['{"t":"req","id":1,"op":"schedule.cancel","params":{"id":"3"}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.open","params":{}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.close","params":{"feed":null}}', 'shape'],
       ['{"t":"req","id":1,"op":"feed.resync","params":{"feed":1}}', 'shape'],
@@ -217,6 +233,10 @@ describe('parsing', () => {
       ['{"t":"req","id":1,"op":"push.unsubscribe","params":{}}', 'shape'],
       ['{"t":"req","id":1,"op":"admin.backup","params":{"out":false}}', 'shape'],
       ['{"t":"req","id":1,"op":"admin.revoke","params":{}}', 'shape'],
+      ['{"t":"req","id":1,"op":"memory.search","params":{}}', 'shape'],
+      ['{"t":"req","id":1,"op":"memory.search","params":{"query":7}}', 'shape'],
+      ['{"t":"req","id":1,"op":"memory.search","params":{"query":" \\n "}}', 'shape'],
+      [`{"t":"req","id":1,"op":"memory.search","params":{"query":"${'x'.repeat(LIMITS.searchQuery + 1)}"}}`, 'shape'],
       [`{"t":"req","id":1,"op":"send","params":{"text":"${'x'.repeat(LIMITS.clientMessage)}"}}`, 'too_large'],
     ];
     for (const [text, why] of cases) assert.equal(invalid(parseClientMessage(text)), why, text.slice(0, 120));
@@ -224,6 +244,8 @@ describe('parsing', () => {
 
   test('malformed server messages are refused, nested items and ops included', () => {
     const item = '{"kind":"user","id":"u","text":"t"}';
+    /** A usage row as JSON, with `change` over a valid one. */
+    const usageRow = (change: object): string => JSON.stringify({ model: 'p/m', input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.5, ...change });
     const cases: readonly (readonly [string, ParseError['invalid']])[] = [
       ['{"t":"welcome","protocol":2}', 'shape'],
       ['{"t":"welcome","protocol":2,"server":"s","boot":"b","assets":"a","peer":"lan","cwd":"/","tools":{"remote":"confirm","idleMinutes":30}}', 'shape'],
@@ -266,11 +288,24 @@ describe('parsing', () => {
       ['{"t":"status","status":{"model":"m","thinkingLevel":"off","toolsEnabled":false,"busy":false,"queued":0,"agents":[{"name":"B","role":"main","parent":"Pi","busy":false,"archivedAt":"today"}]}}', 'shape'],
       ['{"t":"status","status":{"model":"m","thinkingLevel":"off","toolsEnabled":false,"busy":false,"queued":0,"agents":[{"name":"B","role":"main","parent":"Pi","busy":false,"standing":false}]}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"memory.view","result":{"lines":[{"id":0,"n":0,"text":"x"}]}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"usage","result":{}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[]}}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[],"all":[],"since":"today"}}}', 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[${usageRow({ model: 5 })}],"week":[],"all":[]}}}`, 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[${usageRow({ input: -1 })}],"all":[]}}}`, 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[],"all":[${usageRow({ cost: '4.21' })}]}}}`, 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[],"all":[${usageRow({ cacheRead: undefined })}]}}}`, 'shape'],
+      [`{"t":"res","id":1,"ok":true,"op":"usage","result":{"report":{"today":[],"week":[],"all":[${usageRow({ output: null })}]}}}`, 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"memory.zoom","result":null}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"models","result":{"models":[{"provider":"p","id":"i","name":"n"}]}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"admin.backup","result":{"path":"/b"}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"admin.pair","result":{"code":"c","expiresAt":"later"}}', 'shape'],
       ['{"t":"res","id":1,"ok":true,"op":"admin.devices","result":{"devices":[{"name":"p"}]}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"memory.search","result":{"hits":[]}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"memory.search","result":{"hits":{},"total":0}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"memory.search","result":{"hits":[{"id":1,"kind":"user","date":"d"}],"total":1}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"memory.search","result":{"hits":[{"id":"1","kind":"user","date":"d","snippet":"s"}],"total":1}}', 'shape'],
+      ['{"t":"res","id":1,"ok":true,"op":"memory.search","result":{"hits":[],"total":-1}}', 'shape'],
       ['{"t":"res","id":1,"ok":false}', 'shape'], ['{"t":"res","id":1,"ok":false,"error":{"code":"failed"}}', 'shape'],
       ['{"t":"res","id":-2,"ok":false,"error":{"code":"failed","message":"m"}}', 'shape'],
       ['not json', 'json'], ['[]', 'shape'], ['{"t":null}', 'shape'],

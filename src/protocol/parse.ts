@@ -3,9 +3,9 @@
 import { ENABLE_TOOLS, ERROR_CODES, LIMITS, NOTICE_LEVELS, OPS } from './messages.ts';
 import { executionId, machineCall, machineRegistration, machineTarget, machineToolResult } from './machines.ts';
 import type { AppendField, ClientMessage, Device, ErrorCode, ItemOp, Op, PushSubscriptionJson, RequestOf, ResponseOf, ServerMessage, ToolsPolicy } from './messages.ts';
-import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, SessionStatus, ViewLine } from './session.ts';
+import type { AgentStatus, ArchiveTarget, ChatItem, MemoryStats, ModelChoice, ScheduleStatus, SearchHit, SessionStatus, UsageReport, UsageRow, ViewLine } from './session.ts';
 import type { ChatImage } from './images.ts';
-import { bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
+import { amount, bool, errorMessage, int, isRecord, list, obj, oneOf, optBool, optStr, ShapeError, str, withOptional } from './util.ts';
 import type { Obj } from './util.ts';
 
 /**
@@ -68,6 +68,23 @@ function agentStatus(x: unknown): AgentStatus {
   return withOptional(base, 'archivedAt', o.archivedAt === undefined ? undefined : int(o, 'archivedAt'));
 }
 
+function scheduleStatus(x: unknown): ScheduleStatus {
+  const o = obj(x, 'schedule');
+  return withOptional({ id: int(o, 'id', 1), text: str(o, 'text'), at: int(o, 'at') }, 'cron', optStr(o, 'cron'));
+}
+
+function usageRow(x: unknown): UsageRow {
+  const o = obj(x, 'usage row');
+  return { model: str(o, 'model'), input: amount(o, 'input'), output: amount(o, 'output'), cacheRead: amount(o, 'cacheRead'),
+    cacheWrite: amount(o, 'cacheWrite'), cost: amount(o, 'cost') };
+}
+
+function usageReport(x: unknown): UsageReport {
+  const o = obj(x, 'report');
+  return withOptional({ today: list(o, 'today', usageRow), week: list(o, 'week', usageRow), all: list(o, 'all', usageRow) },
+    'since', o.since === undefined ? undefined : int(o, 'since'));
+}
+
 /** `agents.archive`'s params: exactly one of a nonempty `name` or `adhoc: true`. */
 function archiveTarget(p: Obj): ArchiveTarget {
   if (p.name !== undefined && p.adhoc !== undefined) throw new ShapeError('give either name or adhoc, not both');
@@ -93,6 +110,7 @@ export function sessionStatus(x: unknown): SessionStatus {
     busy: bool(o, 'busy'), queued: int(o, 'queued'),
     memory: o.memory === undefined || o.memory === null ? undefined : memoryStats(o.memory),
     agents: list(o, 'agents', agentStatus),
+    ...o.schedules === undefined ? {} : { schedules: list(o, 'schedules', scheduleStatus) },
     ...o.machine === undefined ? {} : { machine: machineTarget(o.machine) },
   };
 }
@@ -100,6 +118,19 @@ export function sessionStatus(x: unknown): SessionStatus {
 function viewLine(x: unknown): ViewLine {
   const o = obj(x, 'line');
   return { id: int(o, 'id'), n: int(o, 'n', 1), text: str(o, 'text') };
+}
+
+/** `memory.search`'s query: not blank, and at most LIMITS.searchQuery characters. */
+function searchQuery(p: Obj): string {
+  const v = str(p, 'query');
+  if (!v.trim()) throw new ShapeError('query must not be empty');
+  if (v.length > LIMITS.searchQuery) throw new ShapeError(`query must be at most ${LIMITS.searchQuery} characters`);
+  return v;
+}
+
+function searchHit(x: unknown): SearchHit {
+  const o = obj(x, 'hit');
+  return { id: int(o, 'id'), kind: str(o, 'kind'), date: str(o, 'date'), snippet: str(o, 'snippet') };
 }
 
 function modelChoice(x: unknown): ModelChoice {
@@ -155,6 +186,7 @@ const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
   stopAgents: (id, p) => ({ t: 'req', id, op: 'stopAgents', params: withOptional({}, 'name', optStr(p, 'name')) }),
   'agents.archive': (id, p) => ({ t: 'req', id, op: 'agents.archive', params: archiveTarget(p) }),
   'agents.restore': (id, p) => ({ t: 'req', id, op: 'agents.restore', params: { name: agentName(p) } }),
+  'schedule.cancel': (id, p) => ({ t: 'req', id, op: 'schedule.cancel', params: { id: int(p, 'id', 1) } }),
   'feed.open': (id, p) => ({ t: 'req', id, op: 'feed.open', params: { name: str(p, 'name') } }),
   'feed.close': (id, p) => ({ t: 'req', id, op: 'feed.close', params: { feed: str(p, 'feed') } }),
   'feed.resync': (id, p) => ({ t: 'req', id, op: 'feed.resync', params: { feed: str(p, 'feed') } }),
@@ -172,6 +204,8 @@ const REQUEST: { readonly [O in Op]: (id: number, p: Obj) => RequestOf<O> } = {
   'admin.pair': id => ({ t: 'req', id, op: 'admin.pair', params: {} }),
   'admin.devices': id => ({ t: 'req', id, op: 'admin.devices', params: {} }),
   'admin.revoke': (id, p) => ({ t: 'req', id, op: 'admin.revoke', params: { name: str(p, 'name') } }),
+  usage: id => ({ t: 'req', id, op: 'usage', params: {} }),
+  'memory.search': (id, p) => ({ t: 'req', id, op: 'memory.search', params: { query: searchQuery(p) } }),
 };
 
 /** Each op's successful response, from its id and raw result. */
@@ -185,6 +219,7 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   stopAgents: (id, r) => ({ t: 'res', id, op: 'stopAgents', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
   'agents.archive': (id, r) => ({ t: 'res', id, op: 'agents.archive', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
   'agents.restore': (id, r) => ({ t: 'res', id, op: 'agents.restore', ok: true, result: { names: list(obj(r, 'result'), 'names', name) } }),
+  'schedule.cancel': id => ({ t: 'res', id, op: 'schedule.cancel', ok: true, result: null }),
   'feed.open': (id, r) => ({ t: 'res', id, op: 'feed.open', ok: true, result: { feed: str(obj(r, 'result'), 'feed') } }),
   'feed.close': id => ({ t: 'res', id, op: 'feed.close', ok: true, result: null }),
   'feed.resync': id => ({ t: 'res', id, op: 'feed.resync', ok: true, result: null }),
@@ -208,6 +243,11 @@ const RESPONSE: { readonly [O in Op]: (id: number, r: unknown) => ResponseOf<O> 
   },
   'admin.devices': (id, r) => ({ t: 'res', id, op: 'admin.devices', ok: true, result: { devices: list(obj(r, 'result'), 'devices', device) } }),
   'admin.revoke': id => ({ t: 'res', id, op: 'admin.revoke', ok: true, result: null }),
+  usage: (id, r) => ({ t: 'res', id, op: 'usage', ok: true, result: { report: usageReport(obj(r, 'result').report) } }),
+  'memory.search': (id, r) => {
+    const o = obj(r, 'result');
+    return { t: 'res', id, op: 'memory.search', ok: true, result: { hits: list(o, 'hits', searchHit), total: int(o, 'total') } };
+  },
 };
 
 /** A string list item: an agent's name or a thinking level. */

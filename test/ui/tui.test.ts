@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { drawn, until } from '../fixtures/until.ts';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { Terminal } from '@earendil-works/pi-tui';
-import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SessionStatus, UiSession, ViewLine } from '../../src/protocol/session.ts';
+import type { AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SearchResult, SessionStatus, UiSession, UsageReport, ViewLine } from '../../src/protocol/session.ts';
 import { EXIT_QUESTION, LINK_CLOSED, commands, currentStep, editorLines, helpText, isCommand, runTui } from '../../src/ui/tui/app.ts';
 import { statusText } from '../../src/ui/text.ts';
 import type { TuiInfo } from '../../src/ui/tui/app.ts';
@@ -50,7 +50,11 @@ class FakeSession implements UiSession {
     this.current = { ...this.current, ...change };
     for (const listener of this.listeners) listener();
   }
-  send(text: string): Promise<void> { this.sent.push(text); return Promise.resolve(); }
+  readonly steered: string[] = [];
+  send(text: string, options: { readonly steer?: boolean } = {}): Promise<void> {
+    (options.steer ? this.steered : this.sent).push(text);
+    return Promise.resolve();
+  }
   abort(): Promise<void> { this.aborts++; return Promise.resolve(); }
   stopped: (string | undefined)[] = [];
   stopAgents(name?: string): Promise<readonly string[]> {
@@ -59,9 +63,25 @@ class FakeSession implements UiSession {
   }
   archiveAgents(): Promise<readonly string[]> { return Promise.resolve([]); }
   restoreAgent(): Promise<readonly string[]> { return Promise.resolve([]); }
+  cancelled: number[] = [];
+  cancelSchedule(id: number): Promise<void> {
+    if (!(this.current.schedules ?? []).some(each => each.id === id)) return Promise.reject(new Error(`No schedule #${id}.`));
+    this.cancelled.push(id);
+    this.update({ schedules: (this.current.schedules ?? []).filter(each => each.id !== id) });
+    return Promise.resolve();
+  }
+  /** What usage() resolves with; an Error rejects it. */
+  report: UsageReport | Error = { today: [], week: [], all: [] };
+  usage(): Promise<UsageReport> { return this.report instanceof Error ? Promise.reject(this.report) : Promise.resolve(this.report); }
   agentChat(): Promise<ChatFeed | undefined> { return Promise.resolve(undefined); }
   memoryView(): Promise<readonly ViewLine[]> { return Promise.resolve([]); }
-  zoom(): Promise<string> { return Promise.resolve(''); }
+  zoom(id: number): Promise<string> { return Promise.resolve(`${id}+1|user: the whole message ${id}`); }
+  readonly searches: string[] = [];
+  search(query: string): Promise<SearchResult> {
+    this.searches.push(query);
+    if (query === 'kind:user') return Promise.reject(new Error('Search for at least one word.'));
+    return Promise.resolve({ hits: [{ id: 41, kind: 'user', date: new Date().toISOString(), snippet: `…about the ${query} then…` }], total: 1 });
+  }
   private readonly noticeListeners = new Set<(text: string, level: NoticeLevel) => void>();
   onNotice(listener: (text: string, level: NoticeLevel) => void): () => void {
     this.noticeListeners.add(listener);
@@ -97,7 +117,8 @@ class FakeTerminal implements Terminal {
   clearScreen(): void {}
   setTitle(): void {}
   setProgress(): void {}
-  setProgramStatus(): void {}
+  readonly states: string[] = [];
+  setProgramStatus(status: { readonly state: string }): void { this.states.push(status.state); }
   type(...keys: string[]): void {
     if (!this.onInput) throw new Error('terminal not started');
     for (const key of keys) for (const data of key.length > 1 && !key.startsWith('\x1b') ? [...key] : [key]) this.onInput(data);
@@ -519,7 +540,7 @@ test('/help is one column below 72 columns, and two from there', () => {
   for (const width of WIDTHS) {
     const lines = helpText(width).split('\n');
     fits(lines.slice(0, -1), Math.min(width, 72));
-    assert.ok(lines.some(line => (width < 72 ? /^\/stop {4}stop Pi \(esc\) · all · Name$/ : /^\/stop {4}stop Pi \(esc\) · all · Name +\/exit {4}close/).test(line)), lines.join('\n'));
+    assert.ok(lines.some(line => (width < 72 ? /^\/stop +stop Pi \(esc\) · all · Name$/ : /^\/stop +stop Pi \(esc\) · all · Name +\/status +model, work, memory$/).test(line)), lines.join('\n'));
     const view = new ChatView(new FakeFeed(), theme);
     view.notice(helpText(width));
     fits(view.render(width), width);
@@ -572,6 +593,129 @@ test('/stop interrupts Pi, as Esc does', async () => {
   await drawn(terminal, mark);
   assert.equal(session.aborts, 4);
   assert.doesNotMatch(stripTerminalSequences(terminal.output.slice(mark)), /Pi is idle|Nothing to stop/, 'silent while Pi works');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('a long run rings the bell when it ends and tells the terminal what Pi is doing; a quick one and PI_DURABLE_BELL=off do not ring', async () => {
+  // Bare bells: a BEL that ends an OSC sequence (a prompt mark, a link) is not one.
+  const bells = (terminal: FakeTerminal): number => terminal.output.replace(/\x1b\][^\x07\x1b]*\x07/g, '').split('\x07').length - 1;
+  // Every run counts as long.
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session, undefined, new FakeTerminal(), { bellAfterMs: 0 });
+  const before = bells(terminal);
+  session.update({ busy: true });
+  session.update({ queued: 1 });
+  assert.equal(bells(terminal), before, 'no bell while Pi works');
+  session.update({ busy: false });
+  assert.equal(bells(terminal), before + 1);
+  session.update({ queued: 0 });
+  assert.equal(bells(terminal), before + 1, 'once per run');
+  assert.deepEqual(terminal.states, ['working', 'done']);
+  terminal.type('/exit', '\r');
+  await done;
+  assert.deepEqual(terminal.states, ['working', 'done', 'clear'], 'the status is cleared on exit');
+
+  // The default threshold: a quick answer is not a reason to look.
+  const quick = new FakeSession();
+  const second = await startTui(quick);
+  const quiet = bells(second.terminal);
+  quick.update({ busy: true });
+  quick.update({ busy: false });
+  assert.equal(bells(second.terminal), quiet);
+  assert.deepEqual(second.terminal.states, ['working', 'idle']);
+  second.terminal.type('/exit', '\r');
+  await second.done;
+
+  const silent = new FakeSession();
+  const third = await startTui(silent, undefined, new FakeTerminal(), { bellAfterMs: 0, env: { PI_DURABLE_BELL: 'off' } });
+  const none = bells(third.terminal);
+  silent.update({ busy: true });
+  silent.update({ busy: false });
+  assert.equal(bells(third.terminal), none);
+  assert.deepEqual(third.terminal.states, ['working', 'done'], 'the status report stays');
+  third.terminal.type('/exit', '\r');
+  await third.done;
+});
+
+test('/schedule lists Pi\'s wake-ups, and /schedule cancel N removes one', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/schedule', '\r');
+  await until(() => /No schedules\. Ask Pi to remind you/.test(terminal.text()), 'the empty list');
+  const tomorrow = Date.now() + 86_400_000;
+  session.update({ schedules: [{ id: 3, text: 'Check the deploy.', at: tomorrow }, { id: 4, text: 'Morning summary.', at: tomorrow, cron: '0 9 * * *' }] });
+  terminal.type('/schedule', '\r');
+  await until(() => /#4 · cron 0 9 \* \* \* · next /.test(terminal.text()), 'the list');
+  assert.match(terminal.text(), /#3 · [^·]+ · Check the deploy\./);
+  terminal.type('/schedule cancel #3', '\r');
+  await until(() => /Schedule #3 cancelled\./.test(terminal.text()), 'the cancel');
+  terminal.type('/schedule cancel 3', '\r');
+  await until(() => /Not cancelled: No schedule #3\./.test(terminal.text()), 'the refusal');
+  terminal.type('/schedule drop 4', '\r');
+  await until(() => /Usage: \/schedule, or \/schedule cancel N\./.test(terminal.text()), 'the usage');
+  assert.deepEqual(session.cancelled, [3]);
+  assert.deepEqual(session.sent, [], 'none of it is sent to Pi');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('/usage prints the report per model, and says when it fails', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/usage', '\r');
+  await until(() => /all time nothing yet/.test(terminal.text()), 'the empty report');
+  assert.match(terminal.text(), /today {4}nothing yet/);
+  assert.match(terminal.text(), /Costs are catalog prices; on a subscription plan they are not what you pay\./);
+  const opus = { model: 'claude-cli/opus', input: 900_000, output: 61_000, cacheRead: 3_400_000, cacheWrite: 210_000, cost: 3.8 };
+  session.report = { today: [opus], week: [opus], all: [opus, { model: 'faux/luna', input: 1200, output: 80, cacheRead: 0, cacheWrite: 0, cost: 0.004 }],
+    since: Date.now() - 60_000 };
+  terminal.type('/usage', '\r');
+  await until(() => /faux\/luna +in 1\.2k · out 80 · <\$0\.01/.test(terminal.text()), 'the report');
+  assert.match(terminal.text(), /today {4}in 900k · out 61k · cache 3\.4M read, 210k written · \$3\.80/);
+  assert.match(terminal.text(), / {2}claude-cli\/opus {2}in 900k · out 61k · cache 3\.4M read, 210k written · \$3\.80/);
+  assert.match(terminal.text(), /Daily counting began today \d\d:\d\d\./);
+  session.report = new Error('The server is busy.');
+  terminal.type('/usage', '\r');
+  await until(() => /Usage failed: The server is busy\./.test(terminal.text()), 'the failure');
+  assert.deepEqual(session.sent, [], 'none of it is sent to Pi');
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('/find words opens the hits, Enter the message whole, and Esc goes back and closes; /find alone says how', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/find', '\r');
+  await until(() => /Search the log: \/find words, with "a phrase" in double quotes, and kind:user/.test(terminal.text()), 'the usage');
+  assert.deepEqual(session.searches, [], 'nothing is searched without words');
+  terminal.type('/find  "tide tables" Deploy', '\r');
+  await until(() => /1 match for "tide tables" Deploy/.test(terminal.text()), 'the hits');
+  assert.deepEqual(session.searches, ['"tide tables" Deploy'], 'the words go as typed');
+  assert.match(terminal.text(), /#41 · today \d\d:\d\d · user {2}…about the "tide tables" Deploy then…/);
+  terminal.type('\r');
+  await until(() => /user: the whole message 41/.test(terminal.text()), 'the message');
+  assert.match(terminal.text(), /Find › 41\+1/);
+  terminal.type('\x1b', '\x1b'); // back to the hits, then close: neither Esc reaches Pi
+  terminal.type('/find kind:user', '\r');
+  await until(() => /Search for at least one word\./.test(terminal.text()), 'the refusal');
+  terminal.type('\x1b');
+  terminal.type('after find', '\r');
+  assert.deepEqual(session.sent, ['after find'], 'the editor has focus back, and no command went to Pi');
+  assert.equal(session.aborts, 0);
+  terminal.type('/exit', '\r');
+  await done;
+});
+
+test('/steer sends its message as a steer; alone it says how', async () => {
+  const session = new FakeSession();
+  const { terminal, done } = await startTui(session);
+  terminal.type('/steer use pnpm, not npm', '\r');
+  terminal.type('/steer', '\r');
+  await until(() => /Usage: \/steer message\./.test(terminal.text()), 'the usage');
+  terminal.type('a plain message', '\r');
+  assert.deepEqual(session.steered, ['use pnpm, not npm']);
+  assert.deepEqual(session.sent, ['a plain message']);
   terminal.type('/exit', '\r');
   await done;
 });

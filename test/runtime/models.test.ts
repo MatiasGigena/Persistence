@@ -13,6 +13,7 @@ import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex';
 import { claudeCliProvider } from '../../src/providers/claude-cli.ts';
 import { imagesProblem, modelChooser } from '../../src/runtime/models.ts';
+import { SDK } from '../../src/runtime/sdk.ts';
 import { userInput } from '../../src/runtime/input.ts';
 import type { ModelOption } from '../../src/runtime/models.ts';
 
@@ -85,7 +86,7 @@ describe('model chooser', { timeout: 30_000 }, () => {
     const { models } = await catalog(t, { loggedIn: false });
     const chooser = modelChooser(models, { authFile: '/x/auth.json' });
     await assert.rejects(chooser.check({ provider: 'claude-cli', modelId: 'gpt' }), /Unknown model claude-cli\/gpt\. Use opus, sonnet, haiku or fable\./);
-    await assert.rejects(chooser.check({ provider: 'nobody', modelId: 'x' }), /Unknown model nobody\/x in pinned Pi 1\.5\.0 catalog/);
+    await assert.rejects(chooser.check({ provider: 'nobody', modelId: 'x' }), new RegExp(`Unknown model nobody/x in pinned Pi ${SDK.replaceAll('.', '\\.')} catalog`));
     await assert.rejects(chooser.check({ provider: 'claude-cli', modelId: 'haiku' }), /No Claude Code login for claude-cli/);
     await assert.rejects(chooser.check({ provider: 'openai-codex', modelId: 'gpt-6.1-sol' }), /No credentials for openai-codex\..*Auth file: \/x\/auth\.json/);
     // Pi's /login for anthropic is the Claude Pro/Max login the host refuses: point at an API key or claude-cli instead.

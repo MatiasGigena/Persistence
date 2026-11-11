@@ -180,7 +180,11 @@ with `archivedAt` (milliseconds since the epoch; a sub agent of an archived main
 show them apart, in an "Archived" section with their deletion time (`archivedAt + ARCHIVE_TTL_MS`, a day, from
 [messages.ts](../src/protocol/messages.ts)), and leave them out of counts and busy checks. An active agent has no
 `archivedAt` key. A standing agent (ADR 0027) carries `standing: true`, which an ad-hoc one leaves out, so a client
-knows which agents "archive all ad-hoc agents" would take.
+knows which agents "archive all ad-hoc agents" would take. `status.schedules` (ADR 0038) lists Pi's scheduled
+wake-ups, soonest first, each `{id, text, at, cron?}`: `text` is a one-line preview of at most 200 characters, `at`
+when it next fires, `cron` a repeating schedule's expression in the host's local time. The field is optional: a
+server from before ADR 0038 sends none, and a client then shows no schedules. A wake-up that fires is a `report`
+item in Pi's feed whose `from` is `Schedule #n`.
 
 ## Ops
 
@@ -194,11 +198,13 @@ knows which agents "archive all ad-hoc agents" would take.
 | `stopAgents` | `name?` | `{names}` | both | |
 | `agents.archive` | `name` or `adhoc: true` | `{names}` | both | `not_found`, `failed` |
 | `agents.restore` | `name` | `{names}` | both | `not_found`, `failed` |
+| `schedule.cancel` | `id` (≥ 1) | `null` | both | `not_found` |
 | `feed.open` | `name` | `{feed}` | both | `not_found` |
 | `feed.close` | `feed` | `null` | both | `not_found` |
 | `feed.resync` | `feed` | `null` | both | `not_found` |
 | `memory.view` | — | `{lines: ViewLine[]}` | both | |
 | `memory.zoom` | `id`, `n` (≥ 1) | `{text}` | both | `not_found`, `unavailable` |
+| `memory.search` | `query` (not blank, at most 500 characters) | `{hits: SearchHit[], total}` | both | `failed`, `unavailable` |
 | `models` | — | `{models: ModelChoice[]}` | both | |
 | `model.set` | `provider`, `id` | `null` | both | `failed` |
 | `tools.set` | `enabled`, `confirm?: 'enable-tools'` | `null` | both | `forbidden`, `failed` |
@@ -210,6 +216,7 @@ knows which agents "archive all ad-hoc agents" would take.
 | `admin.pair` | — | `{code, expiresAt, origin?}` | socket | `forbidden`, `unavailable` |
 | `admin.devices` | — | `{devices: {name, pairedAt, lastSeen?}[]}` | socket | `forbidden`, `unavailable` |
 | `admin.revoke` | `name` | `null` | socket | `forbidden`, `not_found`, `unavailable` |
+| `usage` | — | `{report: UsageReport}` | both | `failed` |
 
 Times are milliseconds since the epoch. Every op answers `bad_request` to malformed params, `unknown_op` when the
 server does not know it, and `unavailable` while the server shuts down. Each maps to one `UiSession` method:
@@ -221,10 +228,11 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   the send is `failed` and nothing is admitted. With `requestId` (1 to 128 characters, unique per
   message: e.g. `<client>-<random>-<counter>`), the server submits with pi-durable's request id, so a repeat is
   admitted once. A client resends a `send` whose `res` a dropped link lost only with its `requestId`. An idle Pi
-  starts a run. Machine-routed admission rejects a busy-root user send (including `steer: true`)
-  rather than queueing or steering it; rejection is a `failed` response. The optional `steer` field remains
-  parseable, but cannot override this policy. The web app may still request steering while Pi works, and receives
-  the same rejection. A remote TUI always
+  starts a run. A busy Pi queues the message behind its run, or with `steer: true` takes it between its steps.
+  With machine routing (ADR 0042) that holds only for a message whose destination is the busy run's own (machine,
+  folder and label): any other is `failed`, with a message naming both destinations (`Pi is busy with a run on
+  server (/srv/app); a message for My laptop (/home/me/app) cannot join it. …`), and nothing is admitted. A run never
+  changes destination. A remote TUI always
   supplies `target`; without it, a routed server uses its own server destination. Routing binds the request ID
   before admission, and a repeat ID cannot change destination, even if its original admission was rejected.
   See [Machine routing and execution](#machine-routing-and-execution).
@@ -242,6 +250,10 @@ server does not know it, and `unavailable` while the server shuts down. Each map
   - Every change that names an agent is broadcast as an `info` `notice` naming who made it (`Archived Helper, by
     phone.`), and written to the server's log, as tool switches are. Both peers may call them, so `pi-durable serve
     agents` uses them over the socket.
+- **`schedule.cancel`** is `UiSession.cancelSchedule` (ADR 0038): it removes the schedule `id` of `status.schedules`,
+  so it never fires again; an unknown id is `not_found` (`No schedule #3.`). The other clients get an `info`
+  `notice` naming who cancelled (`Schedule #3 cancelled, by phone.`), and the server logs it. There is no op that
+  creates a schedule: the user asks Pi.
 - **`feed.open`** opens an agent's conversation by name (case-insensitive) and returns its feed id, an opaque
   string (`ROOT_FEED`, `"root"`, is Pi's). A `snapshot` of it follows the `res`. Opening an open feed again returns
   the same id and sends a fresh snapshot. The server ends the feed with `feed.end` if the agent disappears: once
@@ -251,6 +263,21 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 - **`feed.resync`** asks for a fresh `snapshot` of a feed, after `applyOps` returned `'resync'`.
 - **`memory.view`** and **`memory.zoom`** are `UiSession.memoryView` and `zoom`. `memory.zoom` answers
   `not_found` for a line that does not exist, with the zoom tool's message (it names the tree's roots).
+- **`usage`** is `UiSession.usage` (ADR 0039). A `UsageReport` is `{today, week, all, since?}`: three lists of
+  `UsageRow`s, `{model, input, output, cacheRead, cacheWrite, cost}`, for the server's local day, its last 7 local
+  days (today included) and all time. `model` is `provider/model`; the counts are tokens, `input` without those read
+  from or written to a cache; `cost` is US dollars at catalog prices, a fraction, and 0 from a provider that prices nothing. Rows
+  come with the most tokens first, and a model that spent nothing in a period has no row. `since` is when the server
+  began counting by day; spend before it is only in `all`, and a chat never sampled has no `since`. The server
+  samples the spend before it answers, so the report is current.
+- **`memory.search`** is `UiSession.search`: the user's search of the memory's log as written
+  ([memory.md](memory.md#searching-the-log), ADR 0040). `query` is words that must all occur, whatever the case, with
+  `"a phrase"` in double quotes and an optional `kind:user` (or `pi`, `tool`, `echo`, `work`, `note`). `hits` are at
+  most 50 `SearchHit`s, newest first: `{id, kind, date, snippet}`, with `id` the message's (`memory.zoom` with
+  `n: 1` gives it whole), `date` its ISO 8601 time and `snippet` one line around the match; `total` counts every
+  match. A blank `query` or one over `LIMITS.searchQuery` (500 code units) is `bad_request`; one without a word, or
+  with an unknown kind, is `failed` with the reason; `unavailable` while the memory is not open. Pi cannot call it:
+  it is no tool. Added without a version change, so a server from before it answers `unknown_op`.
 - **`model.set`** is `UiSession.setModel`; `failed` carries the readable reason (unknown model, no credentials,
   or saved but not written as the default).
 - **`thinking.levels`** and **`thinking.set`** are `UiSession.thinkingLevels` and `setThinkingLevel`: the reasoning
@@ -298,9 +325,9 @@ server does not know it, and `unavailable` while the server shuts down. Each map
 `welcome.machines: true` advertises immutable run/session routing and execution
 connectors. It is optional for protocol compatibility, but the remote CLI
 requires it **before sending any user message**; matching the protocol alone does
-not replace this capability check. Routed admission rejects busy-root user sends
-rather than queueing or steering them, so clients and server must run the same
-version (see [Versioning](#versioning)).
+not replace this capability check. Routed admission queues or steers a user send to a
+busy root only when its destination is the run's own, and rejects any other (ADR 0042);
+clients and server run the same version (see [Versioning](#versioning)).
 
 A `MachineTarget` is `{machineId, cwd, label}`. Each field is a nonempty string
 without control characters: `machineId` is at most 128 code units, starting with
@@ -471,7 +498,10 @@ Any other code, or a close without `bye`: reconnect.
 
 - `PROTOCOL` is 4. `hello` and `welcome` carry it, and the server refuses another (4000), so clients and server
   are updated together. History: v3 made routed `send` admission reject user sends (steering included) while the root
-  is busy; v4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034).
+  is busy; v4 lists archived agents in `status.agents`, marked by `archivedAt` (ADR 0034). Added since, without a
+  bump: `status.schedules` and the op `schedule.cancel` (ADR 0038), and the ops `usage` (ADR 0039) and `memory.search`
+  (ADR 0040). Relaxed since, without a bump: a routed `send`
+  to a busy root is admitted when its destination is the run's own (ADR 0042), where v3 rejected every one.
 - Additive changes keep the version: a new message type, op, error code, close code or optional field. Receivers
   therefore ignore what they do not know: a message with an unknown `t` is ignored, unknown fields are dropped by
   the parser, an unknown op gets `unknown_op`, an unknown error code reads as `failed`.

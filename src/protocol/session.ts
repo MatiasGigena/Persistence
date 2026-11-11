@@ -37,6 +37,43 @@ export interface AgentStatus {
   readonly archivedAt?: number;
 }
 
+/** One scheduled wake-up (ADR 0038), as clients see it. */
+export interface ScheduleStatus {
+  readonly id: number;
+  /** The message Pi left itself, on one line, cut to a preview. */
+  readonly text: string;
+  /** When it next fires, milliseconds since the epoch. */
+  readonly at: number;
+  /** A repeating schedule's cron expression, in the host's local time; absent on a one-off. */
+  readonly cron?: string;
+}
+
+/** One model's spend over a period (ADR 0039): tokens by kind, and their cost in US dollars at catalog prices. */
+export interface UsageRow {
+  /** `provider/model`. */
+  readonly model: string;
+  /** Input tokens outside the cache: neither read from it nor written to it. */
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly cost: number;
+}
+
+/**
+ * What Pi, its agents and the memory's compactions spent, per model: rows with the most tokens first, models that
+ * spent nothing left out. Days are the host's local days.
+ */
+export interface UsageReport {
+  readonly today: readonly UsageRow[];
+  /** The last 7 local days, today included. */
+  readonly week: readonly UsageRow[];
+  /** All time. */
+  readonly all: readonly UsageRow[];
+  /** When daily counting began (ms since the epoch); spend before it is only in `all`. Absent before the first sample. */
+  readonly since?: number;
+}
+
 /** What to archive: one agent by name, or every ad-hoc main agent (not the standing ones). */
 export type ArchiveTarget = { readonly name: string } | { readonly adhoc: true };
 
@@ -74,6 +111,8 @@ export interface SessionStatus {
   readonly memory: MemoryStats | undefined;
   /** Every agent, archived ones included (with `archivedAt`): UIs list those apart and leave them out of counts. */
   readonly agents: readonly AgentStatus[];
+  /** Pi's scheduled wake-ups, soonest first; absent from a server older than ADR 0038, and then shown as none. */
+  readonly schedules?: readonly ScheduleStatus[];
 }
 
 /** A model Pi can switch to. */
@@ -93,6 +132,24 @@ export interface ViewLine {
   readonly id: number;
   readonly n: number;
   readonly text: string;
+}
+
+/** One message a search found (ADR 0040). */
+export interface SearchHit {
+  /** The message's id in the log: `zoom(id, 1)` opens it whole. */
+  readonly id: number;
+  /** Its memory kind: user, pi, tool, echo, work or note. */
+  readonly kind: string;
+  /** When it was logged, ISO 8601. */
+  readonly date: string;
+  /** One line of its text around the match, with … where it was cut. */
+  readonly snippet: string;
+}
+
+/** A search's matches, newest first and at most 50, and how many messages matched in all. */
+export interface SearchResult {
+  readonly hits: readonly SearchHit[];
+  readonly total: number;
 }
 
 /** What a conversation looks like to the UI: the root (Pi) or one agent. */
@@ -128,7 +185,8 @@ export interface UiSession {
    * Sends text to Pi: starts a run, or follows up the running one; with `steer`, a busy Pi gets it between its steps
    * instead of after its run. With `requestId`, a repeat of the same id is admitted once (pi-durable's submission
    * dedup), so a client may resend after losing the answer to a reconnect. `images` go to the model with the text;
-   * the text may then be empty. Rejects when Pi's model takes no images, rather than dropping them.
+   * the text may then be empty. Rejects when Pi's model takes no images, rather than dropping them, and, on a server
+   * that routes tools to machines, while Pi is busy with a run on another destination than this message's.
    */
   send(text: string, options?: SendOptions): Promise<void>;
   /** Interrupts Pi's running work (Esc). Durable work stays resumable. */
@@ -147,6 +205,10 @@ export interface UiSession {
   archiveAgents(target: ArchiveTarget): Promise<readonly string[]>;
   /** Restores an archived agent (with a main agent's sub agents). Resolves with the names restored; rejects readably. */
   restoreAgent(name: string): Promise<readonly string[]>;
+  /** Cancels schedule `id`, so it never fires again. Rejects with NotFound for an unknown id. */
+  cancelSchedule(id: number): Promise<void>;
+  /** Tokens and catalog cost per model: today, the last 7 days, and all time. */
+  usage(): Promise<UsageReport>;
   /** Opens one agent's conversation as a live feed, or undefined for an unknown name. */
   agentChat(name: string): Promise<ChatFeed | undefined>;
   /** The memory view, oldest first, as Pi sees it; empty while the memory is not open. */
@@ -156,6 +218,13 @@ export interface UiSession {
    * Rejects with a readable message for an unknown line, or while the memory is not open.
    */
   zoom(id: number, n: number): Promise<string>;
+  /**
+   * Searches the log as written, for the user (Pi has no such tool): the messages that hold every word of `query`,
+   * whatever the case. A part in double quotes is one phrase, and `kind:user` (or pi, tool, echo, work, note) limits
+   * the kind. Rejects with Unavailable while the memory is not open, and with a readable message for a query
+   * without a word or with an unknown kind.
+   */
+  search(query: string): Promise<SearchResult>;
   /** Models to pick from, the current one included. */
   models(): Promise<readonly ModelChoice[]>;
   /**

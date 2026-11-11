@@ -9,7 +9,7 @@ Which models the host can run, how each one is reached, and the rules that apply
 | `openai-codex/gpt-6.1-sol` (default) and other `openai-codex/…` | OpenAI through Pi's Codex provider | Pi's `/login` (`auth.json`) | your ChatGPT plan |
 | `claude-cli/opus`, `claude-cli/sonnet`, `claude-cli/haiku`, `claude-cli/fable` | Claude through the official `claude` CLI | the CLI's own login (`claude auth login`) | your Claude plan's usage limits |
 | `anthropic/claude-sonnet-5-5` and other `anthropic/…` | the Anthropic API through pi-ai | an API key from the Claude Console, in `ANTHROPIC_API_KEY` | your API account |
-| any other pi-ai 1.5.0 provider | that provider | its Pi login or API-key variable | that provider |
+| any other pi-ai 1.5.2 provider | that provider | its Pi login or API-key variable | that provider |
 
 The `claude-cli` model IDs are the CLI's own aliases, so each follows the CLI to the newest model of its family. With
 Claude Code 2.1.303 they resolve to Claude Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1.

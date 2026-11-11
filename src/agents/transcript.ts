@@ -1,5 +1,5 @@
 // An agent's whole chat as text, in pages: what zoom("Name") answers.
-import type { Context } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
 import { ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable';
 import type { Cursor, EntryRecord } from '@earendil-works/pi-durable';
 import { MESSAGE_KIND, agentInputOf, text } from './entries.ts';

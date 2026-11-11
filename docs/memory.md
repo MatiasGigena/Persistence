@@ -24,6 +24,7 @@ record that decides what the model sees.
 - [The compactor](#the-compactor)
 - [A turn's request](#a-turns-request)
 - [Tools: zoom and date](#tools-zoom-and-date)
+- [Searching the log](#searching-the-log)
 - [On-disk layout](#on-disk-layout)
 - [Module map](#module-map)
 - [Deviations from UniiChat](#deviations-from-uniichat)
@@ -58,7 +59,7 @@ warning; a line that parses but lacks one of these fields (with its type) is dro
 | `pi` | Pi's assistant messages | the text blocks, joined by newlines; thinking is never logged |
 | `tool` | each tool call in an assistant message | `` `${name} ${JSON.stringify(arguments)}` `` |
 | `echo` | each tool result | `` `${toolName}: ${isError ? 'error: ' : ''}${text}` ``; image blocks become `[image]` |
-| `work` | an input entry of kind `agents.report`, or `memory.report()` | as Pi sees the report: `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with the entry's `data.session` (a standing agent's session) (upstream `report_text`); `append` rejects a `work` text that does not start with `[Name]` |
+| `work` | an input entry of kind `agents.report` or `schedule.fire`, or `memory.report()` | a scheduled wake-up as Pi sees it, `[Schedule #n] text` and its line of context ([schedules.md](schedules.md)); a report as Pi sees it: `[Name]\ntext\n\nFull chat: zoom("Name")`, or `zoom("Name#n")` with the entry's `data.session` (a standing agent's session) (upstream `report_text`); `append` rejects a `work` text that does not start with `[Name]` |
 | `note` | nothing in this host | reserved for memories imported from before the chat |
 
 Each `tool` record comes right before its `echo` (call, result, call, result), as upstream logs a call with its
@@ -252,7 +253,7 @@ retried. See [ADR 0007](decisions/0007-cheap-compaction-model.md).
 | any other | the turn model itself |
 
 The turn model comes from `--model PROVIDER/ID`, else `PI_DURABLE_MODEL`, else the model last chosen with `/model`
-(`settings.json`), else `openai-codex/gpt-6.1-sol`. So the default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.5.0
+(`settings.json`), else `openai-codex/gpt-6.1-sol`. So the default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.5.2
 catalog it costs $0.10/$0.50 per million tokens (cache read $0.01), against $2/$10 for `gpt-6.1-sol`, with the same
 272k window.
 
@@ -273,6 +274,9 @@ it, and `openMemory(dir, { summarize })` replaces the summarizer entirely. The d
 - a 120 s timeout;
 - `sessionId: 'uniichat-compactor'`.
 
+Its `onUsage` option gets each reply's usage, a failed reply's too. The host passes one (`openMemory(dir, { onUsage })`)
+so that `/usage` counts the compactions, which pi-durable never sees (ADR 0039).
+
 ### Closing
 
 `close(graceMs = 5000)` stops new work, gives calls in flight up to 5 s, aborts the rest and saves. An aborted node
@@ -290,8 +294,10 @@ The extension's `beforeRequest` hook replaces every request of a Pi run with:
   `agents` (Pi's role text) and `instructions` (the host's instructions for this launch).
 - **view**: `memory.render(k)`, the view of messages `[0, k)`.
 - **turn state**: `<turn>\nnow: 2026-10-19 13:54:01 -03:00 (Monday)\n</turn>`, plus a line
-  `agents at work: A, B` (or `none`) when the host passes `atWork()`. Dates and state never go into the system
-  prompt.
+  `agents at work: A, B` (or `none`) when the host passes `atWork()`, and the lines of the host's `turnState()`: this
+  host adds `schedules: #3 2026-11-12 09:00:00 -03:00 (Thursday); #4 cron "0 9 * * 1-5", next …` while Pi has
+  schedules ([schedules.md](schedules.md)), the soonest five and a count of the rest, and nothing when it has none.
+  Dates and state never go into the system prompt.
 - **previous exchange**: the last user or work message(s) and the `pi` reply that ends right before `k`, whole, in
   `<previous_exchange>` tags. It is omitted when message `k-1` is not a `pi` reply, or when the block would exceed
   16,000 bytes. Tool steps between them are left out.
@@ -356,6 +362,36 @@ The tool's output is limited to 256 KiB and 100,000 lines.
 `date(id)` returns the time of message `id` in the host's local zone, for example
 `2026-01-03 12:00:00 -03:00 (Saturday)`.
 
+## Searching the log
+
+The chat never ends and a client shows only its newest items, so the way back to "where did we talk about X" would
+otherwise be zooming the tree by hand. The user can search instead: `/find words` in the terminal UI, and the "Search
+all messages" field of the web app's Memory sheet. Both call `Memory.search(query)` (`src/memory/search.ts`) through
+`UiSession.search` ([ADR 0040](decisions/0040-search-the-log.md)).
+
+**This is for the user only. Pi has no search tool, and must not get one.** The recipe's prompt tells the model
+"Never grep or search memories manually; zoom is your only allowed mechanism" (`src/memory/prompt.ts`), and the
+search changes nothing the model sees: not its tools, its prompt, its view or the log.
+
+The search reads the log as written, not the summaries: a hit is a message whose own text holds the words, even
+when its view line no longer mentions them.
+
+| Query | Finds |
+|---|---|
+| `deploy friday` | Messages that hold both words, in any order. Every term must occur. |
+| `Deploy` | The same as `deploy`: case is ignored. A term matches inside a word too (`arbo` finds "harbor"). |
+| `"exactly this" deploy` | The phrase as written (spaces included), and `deploy`. |
+| `deploy kind:user` | Only messages of that [kind](#kinds): `user`, `pi`, `tool`, `echo`, `work` or `note`. |
+
+- A query needs at least one term; `kind:` alone is refused (`Search for at least one word.`), as is an unknown kind.
+- The answer is the 50 newest matches, newest first, and the count of all of them. Each hit carries the message id,
+  its kind, its date and a one-line snippet: about 160 characters around the first term's first occurrence, with `…`
+  where it was cut. `zoom(id, 1)` gives the message whole, which is what Enter on a hit (or a tap) opens.
+- A text logged as several messages (see [Clipping and splitting](#clipping-and-splitting)) is searched part by
+  part: each part is its own hit, and a phrase cut by the split is not found.
+- There is no index. A search lower-cases each record once and looks for substrings, in the host process, without
+  reading the disk: the log is already in memory. Nothing is written.
+
 ## On-disk layout
 
 The memory directory sits beside the database: the database path with `.sqlite` replaced by `.unii` (or `.unii`
@@ -380,11 +416,12 @@ Directories are created with mode 0700 and files with 0600. `view.json.<pid>.tmp
 | File | Contents |
 |---|---|
 | `src/memory/index.ts` | Public exports: `openMemory`, `Memory`, `KINDS`, `isKind`, `createUniiExtension`, `REPORT_KIND`, `createPiAiSummarizer`, `CompactionRefused`, `defaultCompactionModel`, `PROMPT`, and their types (`Kind`, `MemoryRecord`, `MemoryOptions`, `Summarizer`, `UniiExtensionOptions`, …). |
-| `src/memory/memory.ts` | `Memory`: the log, the tree, both views, the compactor queues, `render`, `settle`, `whole`, `say`, `zoom`, `date`, `previousExchange`, `status`; `openMemory` and its one-open-per-process guard. |
+| `src/memory/memory.ts` | `Memory`: the log, the tree, both views, the compactor queues, `render`, `settle`, `whole`, `say`, `zoom`, `date`, `search`, `previousExchange`, `status`; `openMemory` and its one-open-per-process guard. |
 | `src/memory/view.ts` | `View`: the sawtooth `fit` and the `due` order; node helpers `posStart`, `posEnd`, `posKey`, `posLabel`, `parentOf`; `cut` for a view ending before message k. |
 | `src/memory/prompt.ts` | The system prompt `PROMPT`, the compaction tasks `leafTask` and `mergeTask`, `tooLong`, the 512-dash `RULER`, the placeholder text; adapted from upstream's `prompt.txt` and `Memory.ts`. |
 | `src/memory/summarizer.ts` | The default pi-ai summarizer, `CompactionRefused` (an answer with no line), and the compaction model choice (`CHEAP_MODELS`, `defaultCompactionModel`). |
 | `src/memory/extension.ts` | The `uniichat` pi-durable extension: the request rewrite, the logging hooks, the `zoom` and `date` tools, the declined compactions. |
+| `src/memory/search.ts` | The user's search of the log: `parseQuery` (terms, phrases, `kind:`), `searchLog` (matches newest first, snippets), `SEARCH_LIMIT`. No tool of Pi's. |
 | `src/memory/util.ts` | `NODE`, `CAP`, `clip`, `split`, `cutLine`, `cleanLine`, `bytes`, `flat`, `hash`, date formatting. (`cutBytes` is in `src/protocol/util.ts`.) |
 
 ## Deviations from UniiChat
@@ -434,7 +471,7 @@ Upstream's hosting, billing, devices, computer use, iOS app and chat imports are
    from the user's message (pasted in the web app, ADR 0031): those go to the model with the run's message only,
    also when a huge message goes as its tail.
 9. **No cache marks.** Upstream's `view` sends the view in blocks of `BLOCK = 4` lines and marks the last whole block
-   for Anthropic's cache. Through pi-ai 1.5.0 that is impossible: `TextContent` has no cache field, and its Anthropic
+   for Anthropic's cache. Through pi-ai 1.5.2 that is impossible: `TextContent` has no cache field, and its Anthropic
    adapter places the breakpoints itself (system prompt, last tool, last user block). So on the Anthropic API each
    run's first request writes its view anew, while OpenAI and Codex prefix caching reuse it: the prefix is stable
    (constant system prompt and tools, a view that grows at its end), with pi-durable's per-conversation `sessionId`.

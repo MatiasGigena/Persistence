@@ -3,7 +3,8 @@
 ## Status
 
 Accepted, 2026-10-21. Extends [0018](0018-tui-attach.md),
-[0025](0025-protected-folders.md) and [0027](0027-standing-agents.md).
+[0025](0025-protected-folders.md) and [0027](0027-standing-agents.md). Amended by
+[0042](0042-routed-sends-join-their-run.md): a busy root takes a user send for its run's own destination.
 
 ## Context
 

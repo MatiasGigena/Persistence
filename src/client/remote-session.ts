@@ -8,7 +8,7 @@ import type {
 } from '../protocol/messages.ts';
 import { applyOps } from '../protocol/mirror.ts';
 import type {
-  ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SendOptions, SessionStatus, UiSession, ViewLine,
+  ArchiveTarget, AttachedLink, ChatFeed, ChatItem, LinkState, ModelChoice, NoticeLevel, SearchResult, SendOptions, SessionStatus, UiSession, UsageReport, ViewLine,
 } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import type { LinkStatus, Outgoing } from './unix-link.ts';
@@ -184,6 +184,10 @@ export class RemoteSession implements UiSession {
     return (await this.request('agents.restore', { name })).names;
   }
 
+  async cancelSchedule(id: number): Promise<void> { await this.request('schedule.cancel', { id }); }
+
+  async usage(): Promise<UsageReport> { return (await this.request('usage', {})).report; }
+
   async agentChat(name: string): Promise<ChatFeed | undefined> {
     const known = [...this.agents].find(mirror => !mirror.ended && mirror.name?.toLowerCase() === name.toLowerCase());
     if (known) return this.handle(known);
@@ -201,6 +205,8 @@ export class RemoteSession implements UiSession {
   async memoryView(): Promise<readonly ViewLine[]> { return (await this.request('memory.view', {})).lines; }
 
   async zoom(id: number, n: number): Promise<string> { return (await this.request('memory.zoom', { id, n })).text; }
+
+  search(query: string): Promise<SearchResult> { return this.request('memory.search', { query }); }
 
   async models(): Promise<readonly ModelChoice[]> { return (await this.request('models', {})).models; }
 

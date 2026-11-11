@@ -17,7 +17,7 @@
 // for push ops; `tools.remote` 'off' forbids web peers to enable tools.
 import { CloseCode, ENABLE_TOOLS, ROOT_FEED, SOCKET_ONLY, WEB_ONLY } from '../../src/protocol/messages.ts';
 import type { Device, ErrorCode, Op, Peer, PushSubscriptionJson, Request, ServerMessage, ToolsPolicy } from '../../src/protocol/messages.ts';
-import type { ChatItem, ModelChoice, NoticeLevel, SessionStatus, ViewLine } from '../../src/protocol/session.ts';
+import type { ChatItem, ModelChoice, NoticeLevel, SessionStatus, UsageReport, ViewLine } from '../../src/protocol/session.ts';
 import { diffItems, wireItem } from '../../src/protocol/diff.ts';
 import { isParseError, parseClientMessage, parseServerMessage } from '../../src/protocol/parse.ts';
 import { PROTOCOL } from '../../src/protocol/version.ts';
@@ -228,6 +228,8 @@ export class FakeServer {
   readonly devices: Device[] = [{ name: 'phone', pairedAt: 1 }];
   /** Machine connectors' registrations and grants, in the order they arrived (`machine.register`, `machine.set`). */
   readonly machines: { readonly op: 'machine.register' | 'machine.set'; readonly enabled: boolean }[] = [];
+  /** What `usage` answers. */
+  usage: UsageReport = { today: [], week: [], all: [] };
   readonly held = new Set<Op>();
   readonly queue: { readonly op: Op; readonly reply: () => void }[] = [];
   private items: readonly ChatItem[];
@@ -337,6 +339,13 @@ export class FakeServer {
         return;
       }
       case 'abort': this.aborts++; ok(); return;
+      case 'usage': ok({ report: this.usage }); return;
+      case 'schedule.cancel': {
+        const schedules = this.status.schedules ?? [];
+        if (!schedules.some(each => each.id === request.params.id)) { no('not_found', `No schedule #${request.params.id}`); return; }
+        ok(null, () => this.setStatus({ schedules: schedules.filter(each => each.id !== request.params.id) }));
+        return;
+      }
       case 'stopAgents': {
         const { name } = request.params;
         const names = name === undefined ? [...this.agents.keys()] : [this.agentNamed(name)].filter(each => each !== undefined);
@@ -370,6 +379,16 @@ export class FakeServer {
         const line = this.view.find(each => each.id === request.params.id && each.n === request.params.n);
         if (!line) { no('not_found', `No line ${request.params.id}+${request.params.n}; the roots are 0+1, 1+1`); return; }
         ok({ text: `zoomed ${line.text}` });
+        return;
+      }
+      case 'memory.search': {
+        // The view's lines stand in for the log: a line that holds the query is a hit, newest first.
+        const needle = request.params.query.toLowerCase();
+        if (!needle.trim() || needle.length > 500) { no('bad_request', 'The query must be 1 to 500 characters'); return; }
+        if (!this.status.memory) { no('unavailable', 'The memory is not open'); return; }
+        const hits = this.view.filter(line => line.text.toLowerCase().includes(needle)).reverse()
+          .map(line => ({ id: line.id, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: line.text }));
+        ok({ hits, total: hits.length });
         return;
       }
       case 'models': ok({ models: this.models }); return;

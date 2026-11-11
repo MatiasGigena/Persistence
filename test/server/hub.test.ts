@@ -9,7 +9,7 @@ import { MAX_IN_FLIGHT, SILENCE_MS, STATUS_MS } from '../../src/server/connectio
 import { Hub, PUSH_EVERY_MS, VISIBLE_MS } from '../../src/server/hub.ts';
 import type { HubOptions } from '../../src/server/hub.ts';
 import type { DeviceRegistry } from '../../src/server/link.ts';
-import { fakeLink, fakePush, fakeSession, FakeFeed } from '../fixtures/server-fakes.ts';
+import { fakeLink, fakePush, fakeSession, FakeFeed, USAGE } from '../fixtures/server-fakes.ts';
 import type { FakeLink } from '../fixtures/server-fakes.ts';
 
 const settle = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
@@ -394,6 +394,61 @@ test('agents.archive and agents.restore: forwarded from both peers, refusals map
     'archive adhoc']);
   assert.deepEqual(logged, ['archived Helper, by me@example.com/phone (web)', 'archived Temp, by socket (socket)', 'restored Helper, by socket (socket)',
     'archived Helper, by socket (socket)'], 'an archive of nothing is not logged');
+});
+
+test('schedule.cancel: forwarded from both peers, an unknown id is not_found, and the other clients learn who cancelled', async t => {
+  const { hub, session, logged, tick, connect, request } = setup(t);
+  session.set({ schedules: [{ id: 3, text: 'Check the deploy.', at: 2_000_000 }, { id: 4, text: 'Morning.', at: 3_000_000, cron: '0 9 * * *' }] });
+  hub.start(session);
+  const web = connect('web'), socket = connect('socket');
+  const cancelled = await request(web, 'schedule.cancel', { id: 3 });
+  assert.equal(cancelled?.t === 'res' && cancelled.ok && cancelled.op === 'schedule.cancel' && cancelled.result, null);
+  assert.ok(socket.got.some(m => m.t === 'notice' && m.text === 'Schedule #3 cancelled, by phone.' && m.level === 'info'));
+  assert.ok(!web.got.some(m => m.t === 'notice'), 'the client that cancelled says so itself');
+  await tick(1_000);
+  const status = web.got.findLast(m => m.t === 'status');
+  assert.deepEqual(status?.t === 'status' && status.status.schedules, [{ id: 4, text: 'Morning.', at: 3_000_000, cron: '0 9 * * *' }]);
+  const unknown = await request(socket, 'schedule.cancel', { id: 3 });
+  assert.deepEqual(unknown?.t === 'res' && !unknown.ok && unknown.error, { code: 'not_found', message: 'No schedule #3.' });
+  const bad = await request(socket, 'schedule.cancel', { id: 0 });
+  assert.equal(bad?.t === 'res' && !bad.ok && bad.error.code, 'bad_request');
+  assert.deepEqual(session.calls, ['cancelSchedule 3', 'cancelSchedule 3']);
+  assert.deepEqual(logged, ['schedule #3 cancelled, by me@example.com/phone (web)']);
+});
+
+test('usage: both peers get the session\'s report, and none before a session', async t => {
+  const { hub, session, connect, request } = setup(t);
+  const early = connect('socket');
+  const none = await request(early, 'usage', {});
+  assert.equal(none?.t === 'res' && !none.ok && none.error.code, 'unavailable');
+  hub.start(session);
+  for (const peer of [connect('web'), connect('socket')]) {
+    const answer = await request(peer, 'usage', {});
+    assert.deepEqual(answer?.t === 'res' && answer.ok && answer.op === 'usage' && answer.result, { report: USAGE });
+  }
+  assert.deepEqual(session.calls, ['usage', 'usage']);
+});
+
+test('memory.search: forwarded from both peers; a blank or overlong query is bad_request, one without a word failed, a closed memory unavailable', async t => {
+  const { hub, session, connect, request } = setup(t);
+  hub.start(session);
+  const web = connect('web'), socket = connect('socket');
+  const closed = await request(web, 'memory.search', { query: 'deploy' });
+  assert.deepEqual(closed?.t === 'res' && !closed.ok && closed.error, { code: 'unavailable', message: 'Memory is not open (inspection only).' });
+  session.set({ memory: { messages: 9, unsummarized: 0, active: 0, failed: 0, lastError: undefined, viewBytes: 300, viewLines: 4 } });
+  const hits = [{ id: 0, kind: 'user', date: '2026-11-12T09:00:00.000Z', snippet: '…say deploy again…' }];
+  assert.deepEqual(await request(web, 'memory.search', { query: 'deploy' }), { t: 'res', id: 2, op: 'memory.search', ok: true, result: { hits, total: 3 } });
+  const terminal = await request(socket, 'memory.search', { query: 'deploy', limit: 1 });
+  assert.deepEqual(terminal?.t === 'res' && terminal.ok && terminal.result, { hits, total: 3 });
+  for (const query of ['', ' \n ', 'x'.repeat(LIMITS.searchQuery + 1), 7]) {
+    const bad = await request(socket, 'memory.search', { query });
+    assert.equal(bad?.t === 'res' && !bad.ok && bad.error.code, 'bad_request', JSON.stringify(query).slice(0, 20));
+  }
+  const longest = await request(socket, 'memory.search', { query: 'x'.repeat(LIMITS.searchQuery) });
+  assert.equal(longest?.t === 'res' && longest.ok, true);
+  const filters = await request(socket, 'memory.search', { query: 'kind:user' });
+  assert.deepEqual(filters?.t === 'res' && !filters.ok && filters.error, { code: 'failed', message: 'Search for at least one word.' });
+  assert.deepEqual(session.calls, ['search deploy', 'search deploy', 'search deploy', `search ${'x'.repeat(LIMITS.searchQuery)}`, 'search kind:user']);
 });
 
 test('without idleMinutes (the default) the tools stay on however long nothing runs', async t => {

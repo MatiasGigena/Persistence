@@ -2,8 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Context } from '@earendil-works/chord';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context';
 import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, Harness } from '@earendil-works/pi-durable';
 import type {
@@ -20,6 +19,8 @@ import { LOCAL_KITS, rosterEntry } from '../agents/roster.ts';
 import { createPiAiSummarizer, createUniiExtension, defaultCompactionModel, JOBS, openMemory } from '../memory/index.ts';
 import type { Memory } from '../memory/index.ts';
 import { CLAUDE_CLI } from '../providers/claude-cli.ts';
+import { createScheduleExtension, listSchedules, schedulesLine } from '../schedule/index.ts';
+import { createUsageTracker, SAMPLE_MS } from '../usage/index.ts';
 import { createAutoreviewExtension } from '../tools/autoreview.ts';
 import { createBrowserExtension } from '../tools/browser.ts';
 import { createShowImageExtension } from '../tools/show-image.ts';
@@ -33,7 +34,7 @@ import { accessProblem, catalogProblem, checkAccess } from './models.ts';
 import type { CredentialStatus, CatalogModels } from './models.ts';
 import { createMachineRouting } from './routing.ts';
 import type { MachineRouting, RoutingDispatcher } from './routing.ts';
-import type { SendOptions } from '../protocol/session.ts';
+import type { SendOptions, UsageReport } from '../protocol/session.ts';
 import type { MachineTarget } from '../protocol/machines.ts';
 import { userInput } from './input.ts';
 import { errorMessage, isRecord } from '../protocol/util.ts';
@@ -93,10 +94,15 @@ export interface InstanceOptions {
   readonly dispatcher?: RoutingDispatcher;
   /** A code mode script's deadline when it sets none; default CODEMODE_TIMEOUT_MS. Tests shorten it. */
   readonly codemodeTimeoutMs?: number;
-  /** The time archived agents' age is measured with (ms since the epoch); default `Date.now`. Tests inject it. */
+  /**
+   * The host's clock (ms since the epoch): archived agents' age is measured with it, and it is the Harness's own, on
+   * which schedules sleep. Default `Date.now`. Tests inject it.
+   */
   readonly clock?: () => number;
   /** How often a work launch sweeps archived agents after its launch sweep; default an hour. Tests shorten it. */
   readonly sweepMs?: number;
+  /** How often a work launch samples the spend into its day (ADR 0039); default five minutes. Tests shorten it. */
+  readonly usageSampleMs?: number;
 }
 
 /** The opened root; `memory` is undefined when inspecting. */
@@ -132,7 +138,12 @@ export interface Instance {
    * no commit lands during it and, since it is synchronous, no memory write either. For online backups (ADR 0022).
    */
   exclusive<T>(step: (database: DatabaseSync) => T): Promise<T>;
-  /** Close the Harness, then every browser the `browser` kit launched, then Pi's SSH agent, then the memory. */
+  /**
+   * Tokens and catalog cost per model: today, the last 7 days, and all time (ADR 0039). A work launch samples first;
+   * an inspection reads what is stored and writes nothing.
+   */
+  usage(): Promise<UsageReport>;
+  /** Sample the spend, close the Harness, then every browser the `browser` kit launched, then Pi's SSH agent, then the memory. */
   close(): Promise<void>;
 }
 
@@ -163,7 +174,7 @@ async function openHostDatabase(path: string): Promise<HostDatabase> {
   }
 }
 
-/** Pi's enabled tools: memory and agent tools always, the coding tools only when `allowTools`. Agents copy them. */
+/** Pi's enabled tools: memory, agent and schedule tools always, the coding tools only when `allowTools`. Agents copy them. */
 export function piTools(always: readonly { readonly tools?: readonly ToolRegistration[] | undefined }[], allowTools: boolean,
   withTools: readonly { readonly tools?: readonly ToolRegistration[] | undefined }[] = []): ToolRegistration[] {
   return [...always.flatMap(extension => extension.tools ?? []),
@@ -353,15 +364,18 @@ export async function openInstance({
   codemodeTimeoutMs,
   clock = Date.now,
   sweepMs = SWEEP_MS,
+  usageSampleMs = SAMPLE_MS,
 }: InstanceOptions): Promise<Instance> {
   const context = BACKGROUND_CONTEXT;
   // Started even with the tools off: /tools on needs no restart. Inspection runs no tools.
   const fence = protection === 'unguarded' ? undefined : protection;
   const sshAgent = fence && configureAgent ? await startSshAgent(sshKeys, message => onWarning?.(message)) : undefined;
   const guarded = fence && sshAgent ? { ...fence, sshAgent: sshAgent.socket } : fence;
-  // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
-  const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models) }) : undefined;
   let opened: Harness | undefined;
+  // The spend per day (ADR 0039). Compactions call their model outside pi-durable, so the memory reports theirs here.
+  const usage = createUsageTracker({ harness: () => opened, context, clock, write: configureAgent });
+  // Inspection runs no turns or compactions, so it leaves the memory directory unopened.
+  const memory = configureAgent ? openMemory(memoryDir, { models, model, ...compactionFor(model, models), onUsage: usage.add }) : undefined;
   let toolsAllowed = allowTools;
   const routing = dispatcher ? createMachineRouting({ dispatcher, cwd, harness: () => opened, allowTools: () => toolsAllowed }) : undefined;
   const codingTools = routing?.tools ?? CodingTools;
@@ -372,9 +386,20 @@ export async function openInstance({
     },
     // Upstream's "Agents at work now", read from the agents' runs so it never drifts from them.
     atWork: async () => opened ? (await listAgents(opened, context)).filter(agent => agent.busy).map(agent => agent.name) : [],
+    // What is already scheduled (ADR 0038), so Pi neither schedules it twice nor needs a tool call to know.
+    turnState: async () => {
+      const line = opened ? schedulesLine(await listSchedules(opened, context)) : undefined;
+      return line === undefined ? [] : [line];
+    },
   });
-  // Spawned agents copy Pi's choices, then standing ones their roster entry's; the chat's memory is Pi's alone.
-  const childAgent: AgentChange = { extensions: { remove: [Unii] } };
+  // Scheduled wake-ups (ADR 0038) are Pi's: with routing, each keeps the machine of the run that made it.
+  const Schedule = createScheduleExtension({
+    abortTask: async (id, abortContext) => { await opened?.abortTask(id, abortContext); },
+    ...routing ? { routing: { current: tx => routing.runTarget(tx), pin: (tx, requestId, target) => routing.pinRequest(tx, requestId, target) } } : {},
+  });
+  // Spawned agents copy Pi's choices, then standing ones their roster entry's; the chat's memory and its schedules are
+  // Pi's alone.
+  const childAgent: AgentChange = { extensions: { remove: [Unii, Schedule] } };
   // Browser profiles live in the memory directory, which the coding tools cannot read or change (guard.ts); the
   // extensions have no shutdown hook, so close() closes the browsers. Neither opens anything until a tool runs. Every
   // session of an agent shares the agent's browser, so a standing agent's tasks neither lose its logins nor leak one
@@ -413,7 +438,7 @@ export async function openInstance({
     : whileAllowed(createShowImageExtension(), () => toolsAllowed);
   // Code mode comes and goes with the coding tools too: its scripts may call only SCRIPT_TOOLS, each a nested call that
   // resolves among the tools enabled when it runs and keeps its own guards and routing (ADR 0033).
-  const codemode = createCodemode({ others: [...Agents.tools ?? [], ...ShowImage.tools ?? [],
+  const codemode = createCodemode({ others: [...Agents.tools ?? [], ...Schedule.tools, ...ShowImage.tools ?? [],
     ...Object.values(kits).flatMap(kit => kit.tools)].map(tool => tool.name), allowed: () => toolsAllowed,
     ...codemodeTimeoutMs === undefined ? {} : { timeoutMs: codemodeTimeoutMs },
     // A script runs on the server; on a remote destination its output files would be paths the remote read cannot see.
@@ -432,14 +457,15 @@ export async function openInstance({
   registry.install(codingTools);
   registry.install(Unii);
   registry.install(Agents);
+  registry.install(Schedule);
   registry.install(ShowImage);
   registry.install(Codemode);
   for (const kit of Object.values(kits)) if (kit.extension && kit.extension !== codingTools) registry.install(kit.extension);
   /** Pi's tools and the instructions that describe them, with the coding tools on or off. */
   const toolChoice = (on: boolean): AgentChange => ({
-    tools: piTools([Unii, Agents], on, [ShowImage, Codemode]), instructions: piInstructions(cwd, on, routing !== undefined),
+    tools: piTools([Unii, Agents, Schedule], on, [ShowImage, Codemode]), instructions: piInstructions(cwd, on, routing !== undefined),
   });
-  const agent: AgentChange = { cwd, model, thinkingLevel, extensions: [codingTools, Unii, Agents, ShowImage, Codemode], modelTools: null,
+  const agent: AgentChange = { cwd, model, thinkingLevel, extensions: [codingTools, Unii, Agents, Schedule, ShowImage, Codemode], modelTools: null,
     ...toolChoice(allowTools) };
   // What the instance owns besides the harness; they share nothing, so they close together.
   const closeOwned = (): Promise<void> => closeAll([() => Browser.close(), () => codemode.close(), () => sshAgent?.close(), () => memory?.close()]);
@@ -447,6 +473,9 @@ export async function openInstance({
   // close() stops the roster checks, and drops what they would still warn.
   const checks = new AbortController();
   let sweeper: Sweeper | undefined;
+  let sampler: ReturnType<typeof setInterval> | undefined;
+  // A failed sample is reported, and the next one counts what it missed.
+  const sample = (): Promise<void> => usage.sample().catch((error: unknown) => { onReport?.(error); });
   let database: HostDatabase | undefined;
   let storage: SqliteStorage | undefined;
   try {
@@ -461,6 +490,8 @@ export async function openInstance({
       // pi-durable compacts agents, which have no view, so their contexts stay bounded (ADR 0015). Pi's own
       // compactions are declined by the uniichat extension: its view keeps Pi's context a constant size.
       settings: { compaction: { enabled: true }, restartLimit: Infinity },
+      // Sleeping schedules store their times on this clock (ADR 0038). An inspection runs no task, so it never reads it.
+      ...configureAgent ? { now: clock } : {},
     }, context);
     const root = await harness.root(context, configureAgent ? { agent } : undefined);
     if (routing && configureAgent) await routing.initialize(context);
@@ -472,6 +503,11 @@ export async function openInstance({
       // Agents spawned under an earlier launch must not keep its tool choices; the roster's standing agents exist.
       await syncAgents(harness, context, setup);
       sweeper = await startSweeper({ harness, context, clock, everyMs: sweepMs, forget: name => Browser.forget(name), onWarning, onReport });
+      // Now, so a chat's first sample (which only records the totals so far) comes before this launch spends; then
+      // every few minutes, so spend lands on the day it was made.
+      await sample();
+      sampler = setInterval(() => { void sample(); }, usageSampleMs);
+      sampler.unref();
       const missing = missingKits(roster, kits);
       if (missing.length) onWarning?.(`Standing agents run without tool kits this host lacks: ${missing.join('; ')}.`);
       // Not awaited: a credential check may take seconds (claude-cli asks its CLI), and only warns.
@@ -505,7 +541,7 @@ export async function openInstance({
       async setModel(next) {
         await reconfigure({ model: next });
         const { compactionModel, jobs } = compactionFor(next, models);
-        memory?.setSummarizer(createPiAiSummarizer({ models, model: compactionModel }), jobs);
+        memory?.setSummarizer(createPiAiSummarizer({ models, model: compactionModel, onUsage: usage.add }), jobs);
       },
       setThinkingLevel: level => reconfigure({ thinkingLevel: level }),
       async setTools(enabled) {
@@ -515,14 +551,18 @@ export async function openInstance({
         toolsAllowed = enabled;
       },
       exclusive: step => hostDatabase.exclusive(step),
+      usage: () => usage.report(),
       close: async () => {
         checks.abort();
         await sweeper?.stop();
+        clearInterval(sampler);
+        if (configureAgent) await sample();
         // The harness first, so no tool still runs; then the rest.
         try { await harness.close(context); } finally { await closeOwned(); }
       },
     };
   } catch (error) {
+    clearInterval(sampler);
     try {
       await sweeper?.stop();
       if (opened) await opened.close(context);

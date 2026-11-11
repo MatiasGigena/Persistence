@@ -4,7 +4,8 @@ import { Agent as HttpAgent, createServer, type IncomingMessage, request as http
 import { connect, isIP, type LookupFunction } from 'node:net';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
-import type { Context, JsonValue } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
+import type { JsonValue } from '@earendil-works/chord/json';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { ConversationId, Extension, ToolExecutionResult, ToolRegistration } from '@earendil-works/pi-durable';
 import { arr, bool, num, obj, opt, str, union } from '@earendil-works/pi-schema';
