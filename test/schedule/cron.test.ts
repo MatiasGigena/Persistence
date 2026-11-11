@@ -43,6 +43,16 @@ describe('cron expressions', () => {
     assert.equal(next('0 0 15 * 1', at(2026, 11, 15)), at(2026, 11, 16), 'then a Monday');
   });
 
+  test('a local time a clock change repeats fires once', t => {
+    const zone = process.env.TZ;
+    t.after(() => { if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone; });
+    process.env.TZ = 'America/New_York';
+    // 2026-11-01 01:00 EDT falls back to 01:00 EST: 01:30 happens twice, at 05:30 and 06:30 UTC.
+    const first = next('30 1 * * *', Date.parse('2026-10-31T12:00:00Z'));
+    assert.equal(first, Date.parse('2026-11-01T05:30:00Z'));
+    assert.equal(next('30 1 * * *', first ?? 0), Date.parse('2026-11-02T06:30:00Z'), 'the next day, not 01:30 EST');
+  });
+
   test('an expression that never matches gives undefined', () => {
     assert.equal(next('0 0 30 2 *', at(2026, 1, 1)), undefined);
     assert.equal(next('0 0 31 4,6,9,11 *', at(2026, 1, 1)), undefined);

@@ -92,6 +92,10 @@ function dayMatches(cron: Cron, date: Date): boolean {
  */
 export function nextAfter(cron: Cron, after: number): number | undefined {
   const limit = after + HORIZON_MS;
+  // The local wall-clock minute, so a time a clock change repeats is not matched again on its second pass.
+  const wall = (date: Date): number =>
+    (((date.getFullYear() * 12 + date.getMonth()) * 31 + date.getDate()) * 24 + date.getHours()) * 60 + date.getMinutes();
+  const afterWall = wall(new Date(after));
   // The start of the next minute.
   let at = Math.floor(after / 60_000) * 60_000 + 60_000;
   while (at <= limit) {
@@ -104,7 +108,7 @@ export function nextAfter(cron: Cron, after: number): number | undefined {
       at = forward(new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime(), 3_600_000);
     } else if (!cron.hours.has(date.getHours())) {
       at += (60 - date.getMinutes()) * 60_000;
-    } else if (!cron.minutes.has(date.getMinutes())) {
+    } else if (!cron.minutes.has(date.getMinutes()) || wall(date) <= afterWall) {
       at += 60_000;
     } else return at;
   }
