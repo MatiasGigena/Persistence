@@ -230,14 +230,15 @@ Reviewer's dedicated tool is an explicit integration with the installed autorevi
 ```
 bin/pi-durable      launcher: picks Node, runs src/cli.ts
 src/cli.ts          arguments, flock, spawns the host
-src/host/           terminal chat, /commands, reply watcher; CLI options and paths
-src/runtime/        Harness, extensions, Pi's agent config; resume and agent settling
+src/config/         CLI options, state paths, settings.json and the roster
+src/host/           terminal chat, /commands, reply watcher; pi-durable doctor
+src/session/        the host's state as a UiSession, shared by the terminal and the server
+src/runtime/        Harness, extensions, Pi's agent config; resume, agent settling, machine routing
 src/memory/         UniiChat memory: log, tree, view, compactor, extension
 src/agents/         standing roster, hierarchy, sessions and messaging
 src/schedule/       Pi's scheduled wake-ups: tools, cron, the wake task
 src/usage/          the usage report: spend per model, sampled into daily buckets
 src/tools/          browser, web_fetch and autoreview kits; show_image; code mode
-src/machines/       persistent target routing for runs and spawned agents
 src/client/         socket/SSH TUI, stdio bridge, local execution ledger
 src/protocol/       native chat and machine-execution messages
 src/server/         one writer, transports, execution broker, auth, backups, push

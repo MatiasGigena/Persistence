@@ -1,4 +1,4 @@
-// The user message a send becomes. A leaf, so routing (src/machines/) builds the same input as the runtime without
+// The user message a send becomes. A leaf, so routing (routing.ts) builds the same input as the runtime without
 // loading the model checks and providers.
 import type { UserInput } from '@earendil-works/pi-durable';
 import type { ChatImage } from '../protocol/images.ts';
