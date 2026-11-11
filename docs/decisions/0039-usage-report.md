@@ -52,7 +52,8 @@ the quota goes to.
   time, which were never recorded.
 - Spend is dated when it is sampled, not when it was made: up to five minutes before midnight may land on the next
   day, and what a host that crashed spent after its last sample lands on the day of its next launch. Compaction spend
-  that was not sampled before a crash is lost; the SDK's own totals lose nothing.
+  that was not sampled before a crash is lost, and so is a compaction's that ends during a close, after the last
+  sample (the memory closes after the Harness, which a sample needs); the SDK's own totals lose nothing.
 - The 7 days are calendar days of the host's zone, so they approximate a plan's weekly window rather than match it.
   Changing the host's zone moves only the buckets filled afterwards.
 - A sample reads one `pi.usage` document per conversation, so its cost grows with the number of agent sessions.
