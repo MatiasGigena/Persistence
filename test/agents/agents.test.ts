@@ -10,7 +10,7 @@ import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import {
   AssistantEntry, type ConversationId, createRegistry, type Cursor, defineEntry, type Entry, type EntryRecord,
-  type Harness, type JsonObject, LiveDoc, ROOT_CONVERSATION_ID, type TaskId, type ToolExecutionApi, type ToolExecutionResult,
+  type Harness, type JsonObject, LiveDoc, ROOT_CONVERSATION_ID, type TaskId, type ToolExecutionApi, type ToolExecutionResult, type ToolPark,
   type ToolRegistration, ToolResultEntry, type TypedEntry, UserEntry,
 } from '@earendil-works/pi-durable';
 import {
@@ -233,9 +233,9 @@ describe('multi-agent messaging (offline)', { concurrency: false, timeout: 60_00
         snapshot: harness.snapshot.bind(harness), snapshotAsOf: harness.snapshotAsOf.bind(harness),
         watchDoc: harness.watchDoc.bind(harness), commit: harness.commit.bind(harness),
         agent: unused, output: unused, retainedOutput: unused, diagnostic: unused, details: unused, memo: unused,
-        createTask: unused, getTask: unused, waitForTask: unused, conversation: unused, executeTool: unused, now: Date.now,
+        createTask: unused, getTask: unused, waitForTask: unused, conversation: unused, executeTool: unused, now: Date.now, wake: undefined, checkpoint: undefined, readSignal: unused,
       };
-      const text = (result: ToolExecutionResult) => firstText(result.output);
+      const text = (result: ToolExecutionResult | ToolPark) => firstText(result.output);
       const execute = async (name: string, args: JsonObject, conversationId = api.conversationId) => {
         const tool = tools[name];
         assert.ok(tool, `no tool ${name}`);

@@ -207,6 +207,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking for rollbacks:** the Pi packages are pinned at 1.6.0 (ADR 0043). The chat's tool and generation tasks
+  move to newer task versions that a 1.5.2 checkout blocks, so back up first (`pi-durable backup`) and roll back by
+  restoring that backup. It brings pi-ai 1.6.0's catalog (GPT-6.2 Astra and Sol; the default model is unchanged),
+  `read` no longer leaving a stale "does not support images" note for the model, and a terminal UI that no longer
+  renders the whole chat again on every scroll step. The `ws` override for Chord is gone: Chord now takes a range.
 - With a server, a message sent while Pi works is no longer refused (ADR 0042): when it is for the machine and
   folder Pi's run executes on, it is queued behind the run, and the web app's "Steer Pi…" reaches the run between
   its steps. Before, every send to a busy Pi on a server failed and had to be typed again. A message for another

@@ -12,7 +12,7 @@ cd ~/pi-durable-instance
 npm ci --ignore-scripts
 ```
 
-The Pi packages are pinned at 1.5.2. Change a pin only on purpose, and say why in
+The Pi packages are pinned at 1.6.0. Change a pin only on purpose, and say why in
 the commit and in [CHANGELOG.md](CHANGELOG.md); move `SDK` in `src/runtime/sdk.ts` with them (a test holds
 the two together).
 

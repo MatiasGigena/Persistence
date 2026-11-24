@@ -157,14 +157,14 @@ function harness(columns = 80, rows = 20) {
   return {
     tui, editor, options,
     /** The top overlay rendered at `width`. */
-    render: (width: number): string[] => panel().render(width),
+    render: (width: number): readonly string[] => panel().render(width),
     press: (...keys: string[]): void => { for (const k of keys) terminal.input(k); },
     /** The panel at the width pi-tui gives it (the whole terminal), styles kept. */
-    raw: (): string[] => panel().render(columns),
+    raw: (): readonly string[] => panel().render(columns),
     screen: (): string => panel().render(columns).map(stripTerminalSequences).join('\n'),
     /** The first overlay (the panel itself, under any confirmation box), as text. */
     base: (): string => (overlays[0]?.render(columns) ?? []).map(stripTerminalSequences).join('\n'),
-    baseRaw: (): string[] => overlays[0]?.render(columns) ?? [],
+    baseRaw: (): readonly string[] => overlays[0]?.render(columns) ?? [],
   };
 }
 

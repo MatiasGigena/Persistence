@@ -11,7 +11,7 @@ import { runInNewContext } from 'node:vm';
 import { describe, test } from 'node:test';
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from '@earendil-works/chord/context';
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
-import { type ConversationId, ROOT_CONVERSATION_ID, type ToolExecutionApi, type ToolExecutionResult } from '@earendil-works/pi-durable';
+import { type ConversationId, ROOT_CONVERSATION_ID, type ToolExecutionApi, type ToolExecutionResult, type ToolPark } from '@earendil-works/pi-durable';
 import { type BrowserContext, chromium } from 'playwright-core';
 import {
   browserAddressRefusal, type BrowserExtension, type BrowserOptions, createBrowserExtension, egressRefusal, evalSource,
@@ -28,14 +28,14 @@ const TOOLS = [
 const apiFor = (conversationId: ConversationId) => ({ conversationId }) as unknown as ToolExecutionApi;
 
 function caller(extension: BrowserExtension, conversationId: ConversationId = ROOT_CONVERSATION_ID) {
-  return (name: string, args: object = {}, context: Context = BACKGROUND_CONTEXT): Promise<ToolExecutionResult> => {
+  return (name: string, args: object = {}, context: Context = BACKGROUND_CONTEXT): Promise<ToolExecutionResult | ToolPark> => {
     const tool = extension.tools.find((t) => t.name === name);
     assert.ok(tool, name);
     return tool.execute(args, apiFor(conversationId), context);
   };
 }
 
-const textOf = (result: ToolExecutionResult): string =>
+const textOf = (result: ToolExecutionResult | ToolPark): string =>
   (result.output ?? []).filter((c): c is TextContent => c.type === 'text').map((c) => c.text).join('\n');
 
 /** Test DNS: these names only, the rest do not resolve. */

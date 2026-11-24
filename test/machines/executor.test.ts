@@ -66,7 +66,9 @@ test('native image reads retain image blocks and conservatively report unknown v
   await writeFile(join(cwd, 'pixel.png'), Buffer.from(png, 'base64'));
   const result = await executor.execute(call('image', 'read', { path: 'pixel.png' }));
   assert.deepEqual(result.output, [{ type: 'image', data: png, mimeType: 'image/png' }]);
-  assert.match(result.diagnostics?.[0]?.message ?? '', /does not support images/u);
+  // Pi 1.6.0 names a text-only model in the details instead of a diagnostic the model would read.
+  assert.deepEqual(result.details, { imageUnsupportedByModel: 'machine-text' });
+  assert.ok(!result.diagnostics?.some(d => /support images/u.test(d.message)), 'no stale note for the model');
 });
 
 test('native argument repair, validation, and exact edit failure are retained', async t => {
