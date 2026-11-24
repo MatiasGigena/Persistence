@@ -208,8 +208,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - The default model is `openai-codex/gpt-6.2-sol` (ADR 0043), at the same price and context window as
-  `gpt-6.1-sol`. A model chosen with `/model`, `PI_DURABLE_MODEL` or `--model` still wins; the standing agents keep
-  their own models.
+  `gpt-6.1-sol`. A model chosen with `/model`, `PI_DURABLE_MODEL` or `--model` still wins.
+- The standing agents Reviewer and Researcher run on `openai-codex/gpt-6.2-sol` (ADR 0043), existing ones from
+  their next launch. A custom roster in `settings.json` keeps the models it names.
 - **Breaking for rollbacks:** the Pi packages are pinned at 1.6.0 (ADR 0043). The chat's tool and generation tasks
   move to newer task versions that a 1.5.2 checkout blocks, so back up first (`pi-durable backup`) and roll back by
   restoring that backup. It brings pi-ai 1.6.0's catalog (GPT-6.2 Astra and Sol),

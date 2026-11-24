@@ -38,8 +38,8 @@ export const rosterEntry = (roster: Roster, name: string): StandingAgent | undef
 /** The built-in roster, used when settings.json has no `agents` key. */
 export const DEFAULT_ROSTER: Roster = {
   Coder: { model: { provider: 'claude-cli', modelId: 'opus' }, thinkingLevel: 'medium', tools: ['coding'] },
-  Reviewer: { model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, thinkingLevel: 'xhigh', tools: ['read', 'browser', 'autoreview'] },
-  Researcher: { model: { provider: 'openai-codex', modelId: 'gpt-6.1-sol' }, thinkingLevel: 'high', tools: ['web_fetch'] },
+  Reviewer: { model: { provider: 'openai-codex', modelId: 'gpt-6.2-sol' }, thinkingLevel: 'xhigh', tools: ['read', 'browser', 'autoreview'] },
+  Researcher: { model: { provider: 'openai-codex', modelId: 'gpt-6.2-sol' }, thinkingLevel: 'high', tools: ['web_fetch'] },
 };
 
 /**

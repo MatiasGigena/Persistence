@@ -88,8 +88,8 @@ and effort, not Pi's:
 | Agent | Model | Effort |
 |---|---|---|
 | `Coder` | `claude-cli/opus` | `medium` |
-| `Reviewer` | `openai-codex/gpt-6.1-sol` | `xhigh` |
-| `Researcher` | `openai-codex/gpt-6.1-sol` | `high` |
+| `Reviewer` | `openai-codex/gpt-6.2-sol` | `xhigh` |
+| `Researcher` | `openai-codex/gpt-6.2-sol` | `high` |
 
 - `settings.json`'s `"agents"` replaces this roster: each entry's `model` and `thinkingLevel` (default `high`), and
   optionally `subModel` and `subThinkingLevel` for the sub agents it spawns, which otherwise copy their main agent's.

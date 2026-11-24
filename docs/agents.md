@@ -80,8 +80,8 @@ commit (`syncAgents`), with registry field `standing: true`. The built-in roster
 | Name | Model | Effort | Tool kits |
 |---|---|---|---|
 | `Coder` | `claude-cli/opus` | `medium` | `coding` |
-| `Reviewer` | `openai-codex/gpt-6.1-sol` | `xhigh` | `read`, `browser`, `autoreview` |
-| `Researcher` | `openai-codex/gpt-6.1-sol` | `high` | `web_fetch` |
+| `Reviewer` | `openai-codex/gpt-6.2-sol` | `xhigh` | `read`, `browser`, `autoreview` |
+| `Researcher` | `openai-codex/gpt-6.2-sol` | `high` | `web_fetch` |
 
 `settings.json` may replace it with an `"agents"` object keyed by name: `model` and `tools` (kits) are required,
 `thinkingLevel` defaults to `high`, and `instructions` (added to the agent's role text), `subModel` and

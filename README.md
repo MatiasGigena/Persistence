@@ -164,8 +164,8 @@ Pi is the session agent, with a standing team (each configurable in `settings.js
 | Agent | Model | Effort | Kits |
 |---|---|---|---|
 | Coder | `claude-cli/opus` | `medium` | coding |
-| Reviewer | `openai-codex/gpt-6.1-sol` | `xhigh` | read, browser, autoreview |
-| Researcher | `openai-codex/gpt-6.1-sol` | `high` | web_fetch |
+| Reviewer | `openai-codex/gpt-6.2-sol` | `xhigh` | read, browser, autoreview |
+| Researcher | `openai-codex/gpt-6.2-sol` | `high` | web_fetch |
 
 `delegate` starts a fresh session for a standing agent's task; `send_message`
 steers its current task. Pi can also spawn ad-hoc main agents. Main agents spawn sub agents.
