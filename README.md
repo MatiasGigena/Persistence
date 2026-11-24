@@ -115,7 +115,7 @@ returns its original answer. Use a new ID for a new task, and never reuse an ID
 with a different prompt.
 
 Other flags: `--database PATH`, `--data-dir PATH`, `--cwd PATH`, `--auth-file PATH`,
-`-v`/`--version`. The default model is `openai-codex/gpt-6.1-sol` with thinking (reasoning effort) `high`.
+`-v`/`--version`. The default model is `openai-codex/gpt-6.2-sol` with thinking (reasoning effort) `high`.
 
 Chat commands: `/help`, `/model` (pick a model; type to filter, Enter switches),
 `/model provider/id` (switch directly), `/model WORD` (the picker, filtered by WORD), `/effort` (pick the reasoning effort: `low` to `max`,
@@ -138,7 +138,7 @@ Closing never discards unfinished work; the next launch resumes it.
 
 ## Models
 
-The default is `openai-codex/gpt-6.1-sol` with your Pi login. For Claude:
+The default is `openai-codex/gpt-6.2-sol` with your Pi login. For Claude:
 
 - `--model claude-cli/sonnet` (or `opus`, `haiku`, `fable`) uses your Claude plan through the official
   `claude` CLI. Sign in once with `claude auth login`. Claude only proposes tool calls; the host runs them.

@@ -15,7 +15,7 @@ import { DEFAULT_THINKING, parseModel, readRoster, readSettings } from './settin
 import type { Settings } from './settings.ts';
 
 export const VERSION = '0.1.0';
-export const DEFAULT_MODEL = 'openai-codex/gpt-6.1-sol';
+export const DEFAULT_MODEL = 'openai-codex/gpt-6.2-sol';
 export const HELP = `pi-durable — terminal host for Pi Durable ${SDK}
 
 Usage: pi-durable [options] [prompt]
@@ -45,7 +45,7 @@ A prompt whose first word is serve, backup, connect, bridge or doctor needs -p.
   --cwd PATH             Working directory (default: current directory)
   --model PROVIDER/ID    Model for this launch. Without it: PI_DURABLE_MODEL, else
                          the last /model choice (settings.json beside the
-                         database), else openai-codex/gpt-6.1-sol
+                         database), else openai-codex/gpt-6.2-sol
   --thinking LEVEL       Reasoning effort: off|minimal|low|medium|high|xhigh|max.
                          Without it: the last /effort choice (settings.json),
                          else high

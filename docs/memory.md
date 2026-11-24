@@ -253,9 +253,9 @@ retried. See [ADR 0007](decisions/0007-cheap-compaction-model.md).
 | any other | the turn model itself |
 
 The turn model comes from `--model PROVIDER/ID`, else `PI_DURABLE_MODEL`, else the model last chosen with `/model`
-(`settings.json`), else `openai-codex/gpt-6.1-sol`. So the default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.6.0
-catalog it costs $0.10/$0.50 per million tokens (cache read $0.01), against $2/$10 for `gpt-6.1-sol`, with the same
-272k window.
+(`settings.json`), else `openai-codex/gpt-6.2-sol`. So the default compaction model is `openai-codex/gpt-6-luna`. A source comment gives the reason: in the pinned pi-ai 1.6.0
+catalog it costs $0.10/$0.50 per million tokens (cache read $0.01), against $2/$10 for `gpt-6.2-sol`, with reasoning
+too and a 272k window.
 
 With `claude-cli`, every compaction is a full `claude` call that draws on the plan's usage limits, so the host opens the
 memory with `jobs: 2` (`src/runtime/runtime.ts`). Such calls get no tools, and the CLI ignores `maxTokens`. See [models.md](models.md).

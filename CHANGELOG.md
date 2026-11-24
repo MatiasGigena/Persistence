@@ -207,9 +207,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The default model is `openai-codex/gpt-6.2-sol` (ADR 0043), at the same price and context window as
+  `gpt-6.1-sol`. A model chosen with `/model`, `PI_DURABLE_MODEL` or `--model` still wins; the standing agents keep
+  their own models.
 - **Breaking for rollbacks:** the Pi packages are pinned at 1.6.0 (ADR 0043). The chat's tool and generation tasks
   move to newer task versions that a 1.5.2 checkout blocks, so back up first (`pi-durable backup`) and roll back by
-  restoring that backup. It brings pi-ai 1.6.0's catalog (GPT-6.2 Astra and Sol; the default model is unchanged),
+  restoring that backup. It brings pi-ai 1.6.0's catalog (GPT-6.2 Astra and Sol),
   `read` no longer leaving a stale "does not support images" note for the model, and a terminal UI that no longer
   renders the whole chat again on every scroll step. The `ws` override for Chord is gone: Chord now takes a range.
 - With a server, a message sent while Pi works is no longer refused (ADR 0042): when it is for the machine and

@@ -303,7 +303,7 @@ LANG=C.UTF-8 mosh --server='LANG=C.UTF-8 mosh-server' user@100.x.y.z -- tmux new
   [models.md](models.md).
 - Model: `--model PROVIDER/ID`, else `PI_DURABLE_MODEL=PROVIDER/ID`, else the model last
   chosen with `/model` in the terminal UI (saved in `settings.json`), else
-  `openai-codex/gpt-6.1-sol`. Thinking (reasoning effort): `--thinking`, else the level last chosen with `/effort`
+  `openai-codex/gpt-6.2-sol`. Thinking (reasoning effort): `--thinking`, else the level last chosen with `/effort`
   (also in `settings.json`), else `high`. `--status` shows the model
   and where it came from (`modelSource`). See [models.md](models.md#switching-models).
   `--thinking` takes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
@@ -511,7 +511,7 @@ systemctl --user status pi-durable
 start, without shell expansion, so write full paths). All are optional:
 
 ```sh
-# The model; else the last /model choice (settings.json), else openai-codex/gpt-6.1-sol.
+# The model; else the last /model choice (settings.json), else openai-codex/gpt-6.2-sol.
 PI_DURABLE_MODEL=claude-cli/sonnet
 # systemd's PATH may lack ~/.local/bin: add the directories of node and claude if they live there.
 PATH=/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin
@@ -755,7 +755,7 @@ ok    flock: on PATH (a local chat and serve lock the chat with it)
 ok    bubblewrap: bash runs in its sandbox
 skip  SSH keys: PI_DURABLE_SSH_KEYS is not set
 ok    settings.json: none at /home/me/.local/state/pi-durable/settings.json; the defaults apply
-ok    model openai-codex/gpt-6.1-sol (the default): credentials found
+ok    model openai-codex/gpt-6.2-sol (the default): credentials found
 warn  standing agents: Standing agent Reviewer cannot browse: Playwright's Chromium is not installed (…)
       Fix: npx --no-install playwright-core install chromium in /home/me/pi-durable-instance, or set PI_DURABLE_CHROMIUM
 ok    autoreview: the skill at /home/me/.pi/agent/skills/autoreview, python3 and the Codex CLI found
