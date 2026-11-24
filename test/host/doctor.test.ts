@@ -226,8 +226,8 @@ test('model: where it came from, a model outside the catalog, missing credential
     { env: { ...m.env, ...env }, home: m.home, models: offlineModels().models, access: () => Promise.resolve({ ok: true }), sandbox: () => Promise.resolve(undefined), ...more });
   assert.equal(one(await plain({ PI_DURABLE_MODEL: 'faux/faux-1' }), 'model').subject, 'model faux/faux-1 (PI_DURABLE_MODEL)');
   const unknown = one(await plain({}), 'model');
-  assert.deepEqual([unknown.level, unknown.subject], ['FAIL', 'model openai-codex/gpt-6.1-sol (the default)']);
-  assert.match(unknown.detail, /^Unknown model openai-codex\/gpt-6\.1-sol in pinned Pi [\d.]+ catalog$/);
+  assert.deepEqual([unknown.level, unknown.subject], ['FAIL', 'model openai-codex/gpt-6.2-sol (the default)']);
+  assert.match(unknown.detail, /^Unknown model openai-codex\/gpt-6\.2-sol in pinned Pi [\d.]+ catalog$/);
   assert.match(unknown.fix ?? '', /^Pick a model from the Pi [\d.]+ catalog; check PI_DURABLE_MODEL and settings\.json/);
   const malformed = one(await plain({ PI_DURABLE_MODEL: 'nonsense' }), 'model');
   assert.deepEqual([malformed.level, malformed.detail, malformed.fix], ['FAIL', 'PI_DURABLE_MODEL must be PROVIDER/MODEL_ID', 'Set PI_DURABLE_MODEL to PROVIDER/MODEL_ID, or unset it']);
@@ -527,7 +527,7 @@ test('the launcher: a PATH without flock, bwrap or claude exits 1 and creates no
   assert.match(text.stdout, /^ok    Node\.js: /);
   assert.match(text.stdout, /^FAIL  flock: not on PATH; a local chat and serve cannot start\n      Fix: Install util-linux/m);
   assert.match(text.stdout, /^FAIL  bubblewrap: bash is off\. bwrap is not installed\./m);
-  assert.match(text.stdout, /^FAIL  model openai-codex\/gpt-6\.1-sol \(the default\): No credentials for openai-codex\./m);
+  assert.match(text.stdout, /^FAIL  model openai-codex\/gpt-6\.2-sol \(the default\): No credentials for openai-codex\./m);
   assert.match(text.stdout, /^warn  standing agents: Standing agent Coder cannot run: No Claude Code login for claude-cli/m);
   assert.match(text.stdout, /^ok    chat: no saved chat yet /m);
   assert.match(text.stdout, /\n3 problems, \d+ warnings\.\n$/);

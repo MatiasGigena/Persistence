@@ -97,7 +97,7 @@ async function execute(instance: Instance, name: string, args: JsonObject, taskI
     commit: <T>(change: (tx: Tx) => T | Promise<T>, at: Context) => harness.commit((tx) => change(owned(tx)), at),
     conversation: harness.conversation.bind(harness),
     agent: unused, output: unused, retainedOutput: unused, diagnostic: unused, details: unused, memo: unused,
-    createTask: unused, getTask: unused, waitForTask: unused, executeTool: unused, now: Date.now,
+    createTask: unused, getTask: unused, waitForTask: unused, executeTool: unused, now: Date.now, wake: undefined, checkpoint: undefined, readSignal: unused,
   };
   const result = await tool.execute(args, api, context);
   const block = result.output?.[0];

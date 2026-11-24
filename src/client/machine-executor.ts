@@ -110,6 +110,8 @@ async function executeNative(call: MachineCall, signal: AbortSignal, guarded: Pr
   const api: ToolExecutionApi = {
     get taskId() { return unsupported(); }, get conversationId() { return unsupported(); },
     get registry() { return unsupported(); }, callId: call.id, models, env, now: () => Date.now(),
+    // A machine call runs once and never parks, so it is never woken.
+    wake: undefined, checkpoint: undefined, readSignal: unsupported,
     agent: () => Promise.resolve({ model: { provider: 'machine', modelId: 'machine-text' }, thinkingLevel: 'off',
       extensions: [], tools: [], callable: [], deferred: [], sections: [], cwd: call.target.cwd }),
     output: (chunk, skipped) => { output.push(chunk, skipped); },
@@ -124,7 +126,10 @@ async function executeNative(call: MachineCall, signal: AbortSignal, guarded: Pr
   try {
     signal.throwIfAborted();
     // The installed schema validator has established the registration's erased argument type.
-    result = await tool.execute(args, api, context);
+    const returned = await tool.execute(args, api, context);
+    // The coding tools never park (Pi 1.6.0's ToolPark); a park here would need the Harness this ledger has not.
+    if (returned.sleep !== undefined || returned.wait !== undefined) throw new Error('Machine tools cannot park');
+    result = returned;
   } catch (error) {
     result = { isError: true, diagnostics: [{ severity: 'error', code: signal.aborted ? 'CANCELLED' : 'tool_error', message: errorMessage(error) }] };
   } finally {

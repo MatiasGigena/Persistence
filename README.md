@@ -1,7 +1,7 @@
 # Persistence
 
 One Pi chat in your terminal that never ends. It runs on the experimental
-[`@earendil-works/pi-durable@1.5.2`](https://github.com/earendil-works/pi/tree/v1.5.2/packages/durable)
+[`@earendil-works/pi-durable@1.6.0`](https://github.com/earendil-works/pi/tree/v1.6.0/packages/durable)
 SDK, keeps its memory with Victor Taelin's
 [UniiChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)
 recipe, and lets Pi start agents that work in the background.
@@ -115,7 +115,7 @@ returns its original answer. Use a new ID for a new task, and never reuse an ID
 with a different prompt.
 
 Other flags: `--database PATH`, `--data-dir PATH`, `--cwd PATH`, `--auth-file PATH`,
-`-v`/`--version`. The default model is `openai-codex/gpt-6.1-sol` with thinking (reasoning effort) `high`.
+`-v`/`--version`. The default model is `openai-codex/gpt-6.2-sol` with thinking (reasoning effort) `high`.
 
 Chat commands: `/help`, `/model` (pick a model; type to filter, Enter switches),
 `/model provider/id` (switch directly), `/model WORD` (the picker, filtered by WORD), `/effort` (pick the reasoning effort: `low` to `max`,
@@ -138,7 +138,7 @@ Closing never discards unfinished work; the next launch resumes it.
 
 ## Models
 
-The default is `openai-codex/gpt-6.1-sol` with your Pi login. For Claude:
+The default is `openai-codex/gpt-6.2-sol` with your Pi login. For Claude:
 
 - `--model claude-cli/sonnet` (or `opus`, `haiku`, `fable`) uses your Claude plan through the official
   `claude` CLI. Sign in once with `claude auth login`. Claude only proposes tool calls; the host runs them.
@@ -164,8 +164,8 @@ Pi is the session agent, with a standing team (each configurable in `settings.js
 | Agent | Model | Effort | Kits |
 |---|---|---|---|
 | Coder | `claude-cli/opus` | `medium` | coding |
-| Reviewer | `openai-codex/gpt-6.1-sol` | `xhigh` | read, browser, autoreview |
-| Researcher | `openai-codex/gpt-6.1-sol` | `high` | web_fetch |
+| Reviewer | `openai-codex/gpt-6.2-sol` | `xhigh` | read, browser, autoreview |
+| Researcher | `openai-codex/gpt-6.2-sol` | `high` | web_fetch |
 
 `delegate` starts a fresh session for a standing agent's task; `send_message`
 steers its current task. Pi can also spawn ad-hoc main agents. Main agents spawn sub agents.
@@ -267,6 +267,6 @@ docs/               architecture, operations, models, memory, agents, decisions,
 
 ## Status
 
-Experimental and under active development. It depends on an experimental SDK pinned at 1.5.2.
+Experimental and under active development. It depends on an experimental SDK pinned at 1.6.0.
 Licensed under the [Apache License 2.0](LICENSE). Parts of `src/memory/` are adapted from
 [UniiChat](https://github.com/VictorTaelin/uniichat) under the Apache License 2.0; see [NOTICE](NOTICE).

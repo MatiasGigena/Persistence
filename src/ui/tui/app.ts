@@ -149,6 +149,26 @@ class Line implements Component {
   render(width: number): string[] { return width < this.minWidth ? [] : [truncateToWidth(this.text(), width, '…')]; }
 }
 
+/**
+ * The chat's scroll view, which calls `onFollowChange` when it starts or stops following the chat's end. Since Pi 1.6.0
+ * a frame that only moves the viewport reuses every component's last output, the footer's too; the footer marks a chat
+ * scrolled up, so that change needs a full render.
+ */
+class ChatScroll extends ScrollView {
+  onFollowChange: (() => void) | undefined;
+  private following = this.isFollowingEnd;
+  private check(): void {
+    if (this.isFollowingEnd === this.following) return;
+    this.following = this.isFollowingEnd;
+    this.onFollowChange?.();
+  }
+  override scrollTo(...args: Parameters<ScrollView['scrollTo']>): void { super.scrollTo(...args); this.check(); }
+  override scrollBy(lines: number): number { const rest = super.scrollBy(lines); this.check(); return rest; }
+  override scrollToStart(): void { super.scrollToStart(); this.check(); }
+  override scrollToEnd(): void { super.scrollToEnd(); this.check(); }
+  override updateLayout(...args: Parameters<ScrollView['updateLayout']>): void { super.updateLayout(...args); this.check(); }
+}
+
 /** Text lines the editor shows at most on a terminal `rows` high: about 30% of it, borders included. */
 export const editorLines = (rows: number): number => Math.max(2, Math.round(rows * 0.3) - 2);
 
@@ -264,7 +284,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   const document = new Container();
   document.addChild(header);
   document.addChild(chat);
-  const scroll = new ScrollView(document, { follow: 'end', primary: true, overscroll: 'chain' });
+  const scroll = new ChatScroll(document, { follow: 'end', primary: true, overscroll: 'chain' });
   const layout = new VStack([
     { component: scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
     { component: footer, basis: 'auto', shrink: 0 },
@@ -278,6 +298,7 @@ export async function runTui(session: UiSession, info: TuiInfo): Promise<void> {
   let confirming = false;
   let spinner: NodeJS.Timeout | undefined;
   const render = (): void => { if (running) tui.requestRender(); };
+  scroll.onFollowChange = render;
   const show: ShowNotice = (text, level = 'info') => { chat.notice(text, level); render(); };
   const spin = (): void => {
     const busy = session.status().busy;

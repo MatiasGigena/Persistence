@@ -91,7 +91,7 @@ class ItemBlock implements Component {
     return lines;
   }
 
-  private build(width: number): string[] {
+  private build(width: number): readonly string[] {
     const { theme } = this.state;
     const item = this.item;
     switch (item.kind) {

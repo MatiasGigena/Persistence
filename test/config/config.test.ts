@@ -70,7 +70,7 @@ test('the model: --model, else PI_DURABLE_MODEL, else settings.json, else the de
     return [`${config.model.provider}/${config.model.modelId}`, config.modelSource];
   };
   assert.equal(parseArgs([]).model, undefined, 'parseArgs reads no environment');
-  assert.deepEqual(await launch([]), ['openai-codex/gpt-6.1-sol', 'default']);
+  assert.deepEqual(await launch([]), ['openai-codex/gpt-6.2-sol', 'default']);
   assert.equal((await resolveOptions(parseArgs(['--database', join(folder, 'chat.sqlite'), '--cwd', folder]), {})).settingsPath, settingsPath);
   writeSettings(settingsPath, { model: { provider: 'claude-cli', modelId: 'sonnet' } });
   assert.equal((await stat(settingsPath)).mode & 0o777, 0o600);

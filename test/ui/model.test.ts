@@ -135,7 +135,7 @@ function harness(columns = 100, rows = 20) {
   return {
     tui, editor, terminal,
     // A panel fills the screen.
-    raw: (): string[] => panel().render(columns),
+    raw: (): readonly string[] => panel().render(columns),
     screen: (): string => panel().render(columns).map(stripTerminalSequences).join('\n'),
   };
 }

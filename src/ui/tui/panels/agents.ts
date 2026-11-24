@@ -144,7 +144,7 @@ export class ChatRenderer {
   private readonly theme: PanelTheme;
   private readonly markdown: MarkdownTheme;
   // Items are immutable and replaced on change, so an item's lines stay valid for its width.
-  private readonly cache = new WeakMap<ChatItem, { width: number; lines: string[] }>();
+  private readonly cache = new WeakMap<ChatItem, { width: number; lines: readonly string[] }>();
 
   constructor(theme: PanelTheme) {
     this.theme = theme;
@@ -164,7 +164,7 @@ export class ChatRenderer {
     return lines.length ? lines : [this.theme.dim('Nothing here yet.')];
   }
 
-  private item(item: ChatItem, width: number): string[] {
+  private item(item: ChatItem, width: number): readonly string[] {
     const { accent, dim, error } = this.theme;
     switch (item.kind) {
       case 'user': return wrap(item.text, width - 2).map((l, i) => `${i === 0 ? accent('›') : ' '} ${l}`);

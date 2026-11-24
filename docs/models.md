@@ -6,10 +6,10 @@ Which models the host can run, how each one is reached, and the rules that apply
 
 | `--model` | Reaches | Credential | Billed to |
 |---|---|---|---|
-| `openai-codex/gpt-6.1-sol` (default) and other `openai-codex/…` | OpenAI through Pi's Codex provider | Pi's `/login` (`auth.json`) | your ChatGPT plan |
+| `openai-codex/gpt-6.2-sol` (default) and other `openai-codex/…` | OpenAI through Pi's Codex provider | Pi's `/login` (`auth.json`) | your ChatGPT plan |
 | `claude-cli/opus`, `claude-cli/sonnet`, `claude-cli/haiku`, `claude-cli/fable` | Claude through the official `claude` CLI | the CLI's own login (`claude auth login`) | your Claude plan's usage limits |
 | `anthropic/claude-sonnet-5-5` and other `anthropic/…` | the Anthropic API through pi-ai | an API key from the Claude Console, in `ANTHROPIC_API_KEY` | your API account |
-| any other pi-ai 1.5.2 provider | that provider | its Pi login or API-key variable | that provider |
+| any other pi-ai 1.6.0 provider | that provider | its Pi login or API-key variable | that provider |
 
 The `claude-cli` model IDs are the CLI's own aliases, so each follows the CLI to the newest model of its family. With
 Claude Code 2.1.303 they resolve to Claude Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1.
@@ -57,7 +57,7 @@ In the terminal UI, `/model` switches Pi's model without a relaunch (`src/sessio
   }
   ```
 
-  A launch takes `--model`, else `PI_DURABLE_MODEL`, else `settings.json`, else `openai-codex/gpt-6.1-sol`.
+  A launch takes `--model`, else `PI_DURABLE_MODEL`, else `settings.json`, else `openai-codex/gpt-6.2-sol`.
   `--status` prints the model and its source (`modelSource`: `flag`, `env`, `settings` or `default`); so does the
   `--plain` banner. Only `/model` and `/effort` write the file. `--plain` chat has neither.
 
@@ -88,8 +88,8 @@ and effort, not Pi's:
 | Agent | Model | Effort |
 |---|---|---|
 | `Coder` | `claude-cli/opus` | `medium` |
-| `Reviewer` | `openai-codex/gpt-6.1-sol` | `xhigh` |
-| `Researcher` | `openai-codex/gpt-6.1-sol` | `high` |
+| `Reviewer` | `openai-codex/gpt-6.2-sol` | `xhigh` |
+| `Researcher` | `openai-codex/gpt-6.2-sol` | `high` |
 
 - `settings.json`'s `"agents"` replaces this roster: each entry's `model` and `thinkingLevel` (default `high`), and
   optionally `subModel` and `subThinkingLevel` for the sub agents it spawns, which otherwise copy their main agent's.

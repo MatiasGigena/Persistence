@@ -46,6 +46,7 @@ Short architecture decision records. Each has a status, the context, the decisio
 | [0040](0040-search-the-log.md) | The user searches the log by words; Pi gets no search tool |
 | [0041](0041-doctor.md) | `pi-durable doctor`: read-only checks of what a machine needs, each with its fix |
 | [0042](0042-routed-sends-join-their-run.md) | A routed send to a busy Pi queues or steers when its destination is the run's own (amends 0028) |
+| [0043](0043-pi-1-6-0.md) | Pi 1.6.0: tools may park, the TUI reuses output while scrolling, no `ws` override; tasks move one way |
 
 To add one, copy the format (`# NNNN. Title`, then Status, Context, Decision, Consequences) with the next number.
 A replaced decision keeps its file, with its status changed to "Superseded by NNNN".
